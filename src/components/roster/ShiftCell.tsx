@@ -1,4 +1,4 @@
-import { ShiftDay } from '@/lib/types'
+import { ShiftDay, ShiftType } from '@/lib/types'
 
 const SHIFT_CONFIG: Record<ShiftType, { label: string; bg: string; color: string }> = {
   A:     { label: 'A',     bg: '#DBEAFE', color: '#1D4ED8' },
@@ -14,10 +14,13 @@ const SHIFT_CONFIG: Record<ShiftType, { label: string; bg: string; color: string
 }
 
 export function ShiftCell({ shift }: { shift: ShiftDay }) {
-  const cfg = SHIFT_CONFIG[shift.type] ?? { label: shift.type, class: 'bg-gray-50 text-gray-400 border-gray-100' }
+  const cfg = SHIFT_CONFIG[shift.type] ?? { label: shift.type, bg: '#F3F4F6', color: '#9CA3AF' }
   return (
     <td className="border-r border-gray-100 p-1 min-w-24 align-top">
-      <div className={`rounded-md px-1.5 py-1 border text-[9px] font-bold text-center mb-1 ${cfg.class}`}>
+      <div
+        className="rounded-md px-1.5 py-1 text-[9px] font-bold text-center mb-1"
+        style={{ background: cfg.bg, color: cfg.color }}
+      >
         {cfg.label}
       </div>
       {shift.tasks?.map(t => (
