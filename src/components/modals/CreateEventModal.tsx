@@ -15,7 +15,7 @@ export function CreateEventModal({ open, onClose }: { open: boolean; onClose: ()
             <div className="w-11 h-11 rounded-xl flex items-center justify-center text-xl" style={{background:'#fce8f3'}}>📅</div>
             <div>
               <DialogTitle className="text-lg font-bold">Create Special Event</DialogTitle>
-              <p className="text-xs font-semibold mt-0.5" style={{color:'#E8187A'}}>LEAVE & TRAINING</p>
+              <p className="text-xs font-semibold mt-0.5" style={{color:'#f28f9e'}}>LEAVE & TRAINING</p>
             </div>
           </div>
         </DialogHeader>
@@ -47,8 +47,8 @@ export function CreateEventModal({ open, onClose }: { open: boolean; onClose: ()
                   className="py-2 rounded-xl text-xs font-medium border transition-all"
                   style={{
                     background:   eventType === t.value ? '#fce8f3' : '#F9FAFB',
-                    color:        eventType === t.value ? '#E8187A' : '#6B7280',
-                    borderColor:  eventType === t.value ? '#E8187A' : '#E5E7EB',
+                    color:        eventType === t.value ? '#f28f9e' : '#6B7280',
+                    borderColor:  eventType === t.value ? '#f28f9e' : '#E5E7EB',
                   }}
                 >
                   {t.icon} {t.label}
@@ -80,7 +80,7 @@ export function CreateEventModal({ open, onClose }: { open: boolean; onClose: ()
 
         <div className="flex gap-2 justify-end mt-5 pt-4 border-t border-gray-100">
           <Button variant="outline" onClick={onClose} className="rounded-xl text-xs">CANCEL</Button>
-          <Button onClick={onClose} className="rounded-xl text-xs text-white" style={{background:'#E8187A'}}>CONFIRM</Button>
+          <Button onClick={onClose} className="rounded-xl text-xs text-white" style={{background:'#f28f9e'}}>CONFIRM</Button>
         </div>
       </DialogContent>
     </Dialog>

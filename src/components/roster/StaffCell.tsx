@@ -22,7 +22,7 @@ const AVATAR_STYLE: Record<string, string> = {
 
 export function StaffCell({ staff }: { staff: Staff }) {
   const pct = (staff.hoursWorked / staff.hoursTotal) * 100
-  const barColor = pct >= 100 ? '#dc2626' : pct >= 90 ? '#d97706' : '#E8187A'
+  const barColor = pct >= 100 ? '#dc2626' : pct >= 90 ? '#d97706' : '#f28f9e'
 
   return (
     <td className="border-r border-gray-100 p-2.5 w-52 min-w-52 bg-white">

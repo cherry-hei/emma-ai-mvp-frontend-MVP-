@@ -6,13 +6,13 @@ const SHIFT_CONFIG: Record<ShiftType, { label: string; bg: string; color: string
   P: { label: 'P', bg: '#D1FAE5', color: '#065F46' },
   N: { label: 'N', bg: '#1a1a2e', color: '#fff' },
   OFF: { label: 'OFF', bg: '#F3F4F6', color: '#9CA3AF' },
-  REST: { label: 'REST', bg: '#FEF3C7', color: '#92400E' },
+  AL: { label: 'AL', bg: '#FEF3C7', color: '#92400E' },
   SLEEP: { label: 'SLEEP', bg: '#EDE9FE', color: '#5B21B6' },
-  ALERT: { label: '⚠', bg: '#FFE4E6', color: '#E8187A' },
+  ALERT: { label: '⚠', bg: '#FFE4E6', color: '#f28f9e' },
 }
 
 const ROLE_COLOR: Record<string, string> = {
-  RN: '#E8187A',
+  RN: '#f28f9e',
   EN: '#8B5CF6',
   HW: '#0EA5E9',
   PCW: '#10B981',

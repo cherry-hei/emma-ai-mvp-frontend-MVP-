@@ -11,7 +11,7 @@ export default function ROIPage() {
         </div>
         <button
           className="px-3 py-1.5 text-xs rounded-lg text-white font-medium"
-          style={{ background: '#E8187A' }}
+          style={{ background: '#f28f9e' }}
         >
           匯出報告
         </button>

@@ -15,7 +15,7 @@ export function CreateShiftModal({ open, onClose }: { open: boolean; onClose: ()
             <div className="w-11 h-11 rounded-xl flex items-center justify-center text-xl" style={{background:'#fce8f3'}}>✦</div>
             <div>
               <DialogTitle className="text-lg font-bold">Create Shift &amp; Assignment</DialogTitle>
-              <p className="text-xs font-semibold mt-0.5" style={{color:'#E8187A'}}>AI POWERED ADJUSTMENT</p>
+              <p className="text-xs font-semibold mt-0.5" style={{color:'#f28f9e'}}>AI POWERED ADJUSTMENT</p>
             </div>
           </div>
         </DialogHeader>
@@ -85,14 +85,14 @@ export function CreateShiftModal({ open, onClose }: { open: boolean; onClose: ()
           <div>
             <div className="flex items-center justify-between mb-2">
               <label className="text-[9px] font-bold text-gray-500 uppercase tracking-wider">Task Schedule</label>
-              <span className="text-[9px] font-bold px-2 py-0.5 rounded" style={{background:'#fce8f3',color:'#E8187A'}}>RN SPECIFIC TASKS</span>
+              <span className="text-[9px] font-bold px-2 py-0.5 rounded" style={{background:'#fce8f3',color:'#f28f9e'}}>RN SPECIFIC TASKS</span>
             </div>
             {[
               {time:'07:00–09:00', task:'Medication Checking'},
               {time:'09:00–11:00', task:'Audit & Documentation'},
             ].map(({time, task}) => (
               <div key={time} className="flex items-center gap-3 p-3 border border-gray-200 rounded-xl mb-2 bg-gray-50">
-                <span className="text-xs font-semibold w-24 flex-shrink-0" style={{color:'#E8187A'}}>{time}</span>
+                <span className="text-xs font-semibold w-24 flex-shrink-0" style={{color:'#f28f9e'}}>{time}</span>
                 <span className="text-sm flex-1">{task}</span>
                 <span className="text-gray-400 cursor-pointer">▾</span>
                 <span className="text-red-400 cursor-pointer text-xs">🗑</span>
@@ -102,7 +102,7 @@ export function CreateShiftModal({ open, onClose }: { open: boolean; onClose: ()
 
           {/* AI toggle */}
           <div className="flex items-center gap-3 p-3 rounded-xl" style={{background:'#fce8f3'}}>
-            <div className="w-8 h-8 rounded-lg flex items-center justify-center text-white text-sm" style={{background:'#E8187A'}}>🧠</div>
+            <div className="w-8 h-8 rounded-lg flex items-center justify-center text-white text-sm" style={{background:'#f28f9e'}}>🧠</div>
             <div className="flex-1">
               <div className="text-sm font-semibold">Emma AI Task Optimisation</div>
               <div className="text-[10px] text-gray-500 mt-0.5">Auto-distribute tasks based on staff competency</div>
@@ -110,7 +110,7 @@ export function CreateShiftModal({ open, onClose }: { open: boolean; onClose: ()
             <button
               onClick={() => setAiToggle(!aiToggle)}
               className="w-10 h-6 rounded-full transition-all relative"
-              style={{background: aiToggle ? '#E8187A' : '#d1d5db'}}
+              style={{background: aiToggle ? '#f28f9e' : '#d1d5db'}}
             >
               <span className="absolute top-1 w-4 h-4 rounded-full bg-white transition-all" style={{left: aiToggle ? '20px' : '4px'}}/>
             </button>
@@ -121,7 +121,7 @@ export function CreateShiftModal({ open, onClose }: { open: boolean; onClose: ()
           <button className="text-red-500 text-xs font-semibold flex items-center gap-1">🗑 DELETE SHIFT</button>
           <div className="flex gap-2">
             <Button variant="outline" onClick={onClose} className="rounded-xl text-xs">CANCEL</Button>
-            <Button onClick={onClose} className="rounded-xl text-xs text-white" style={{background:'#E8187A'}}>SAVE CHANGES</Button>
+            <Button onClick={onClose} className="rounded-xl text-xs text-white" style={{background:'#f28f9e'}}>SAVE CHANGES</Button>
           </div>
         </div>
       </DialogContent>

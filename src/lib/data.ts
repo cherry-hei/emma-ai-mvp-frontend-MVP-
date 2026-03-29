@@ -11,32 +11,42 @@ export const STAFF: Staff[] = [
 ]
 
 export const ROSTER: RosterRow[] = [
+  // Yu Yat Sze: 23/3=P, 24/3=A, 25/3=P, 26/3=AN, 27/3=SLEEP, 28/3=OFF, 29/3=AL
   { staffId:1, days:[
-    {type:'A',tasks:['Med Checking','ICP Review','FU Cgat']},
-    {type:'A',tasks:['Medication Mgmt']},
-    {type:'P',tasks:['Wound Care','ICP Update']},
-    {type:'OFF'},{type:'N',tasks:['Night Meds','Protocol Check']},
-    {type:'SLEEP'},{type:'REST'}
+    {type:'P', tasks:['Med Checking','ICP Review','FU Chat']},
+    {type:'A', tasks:['Medication Mgmt']},
+    {type:'P', tasks:['Wound Care','ICP Update']},
+    {type:'AN', tasks:['Night Meds','Protocol Check']},
+    {type:'SLEEP'},
+    {type:'OFF'},
+    {type:'AL'}
   ]},
+  // Leung Ka Kei: 23/3=OFF, 24/3=P, 25/3=P, 26/3=A, 27/3=P, 28/3=AN, 29/3=SLEEP
   { staffId:2, days:[
     {type:'OFF'},
-    {type:'P',tasks:['Wound Dressing','FU PGT']},
-    {type:'P',tasks:['Standard Care']},
-    {type:'A',tasks:['Wound Mgmt']},
-    {type:'A',tasks:['Transferring']},
-    {type:'P',tasks:['Patient Obs']},
-    {type:'P',tasks:['Dressing Change']}
+    {type:'P', tasks:['Wound Dressing','FU PGT']},
+    {type:'P', tasks:['Standard Care']},
+    {type:'A', tasks:['Wound Mgmt']},
+    {type:'P', tasks:['Transferring']},
+    {type:'AN', tasks:['Patient Obs']},
+    {type:'SLEEP'}
   ]},
+  // Wong Yat Sum: 23/3=A, 24/3=AN, 25/3=SLEEP, 26/3=OFF, 27/3=A, 28/3=A, 29/3=OFF
   { staffId:3, days:[
-    {type:'A',tasks:['Vital Signs','AOM (Oral)']},
-    {type:'A'},{type:'N'},{type:'SLEEP'},{type:'A'},{type:'A'},{type:'OFF'}
+    {type:'A', tasks:['Vital Signs','AOM (Oral)']},
+    {type:'AN'},
+    {type:'SLEEP'},
+    {type:'OFF'},
+    {type:'A'},
+    {type:'A'},
+    {type:'OFF'}
   ]},
   { staffId:4, days:[
-    {type:'P',tasks:['Oral Feeding','Diaper Change']},
+    {type:'P', tasks:['Oral Feeding','Diaper Change']},
     {type:'P'},{type:'REST'},{type:'P'},{type:'P'},{type:'A'},{type:'A'}
   ]},
   { staffId:5, days:[
-    {type:'A',tasks:['Rehab Session']},
+    {type:'A', tasks:['Rehab Session']},
     {type:'A'},{type:'A'},{type:'A'},{type:'A'},{type:'REST'},{type:'REST'}
   ]},
   { staffId:6, days:[
@@ -44,7 +54,7 @@ export const ROSTER: RosterRow[] = [
     {type:'ALERT'},{type:'REST'},{type:'N'},{type:'N'},{type:'N'}
   ]},
   { staffId:7, days:[
-    {type:'P',tasks:['Infection Control']},
+    {type:'P', tasks:['Infection Control']},
     {type:'P'},{type:'P'},{type:'P'},{type:'P'},{type:'A'},{type:'A'}
   ]},
 ]

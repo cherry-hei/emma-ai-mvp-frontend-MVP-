@@ -35,7 +35,7 @@ const SHIFT_HISTORY = [
   { date: '2026-03-15', shift: 'Night Shift', time: '22:00 - 07:00', ward: 'Ward A', resident: 'Wong S.L.' },
 ]
 const AVATARS = ['🧑‍⚕️','👩‍⚕️','👨‍⚕️','👩‍⚕️','🧑‍⚕️','👩‍⚕️','👨‍⚕️']
-const PINK = '#E8187A'
+const PINK = '#f28f9e'
 type StaffType = typeof STAFF[0]
 
 function ProfileModal({ staff, idx, onClose }: { staff: StaffType; idx: number; onClose: () => void }) {
