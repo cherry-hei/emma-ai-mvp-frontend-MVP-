@@ -1,4 +1,4 @@
-import { ShiftDay, ShiftType } from '@/lib/types'
+import { DayEntry, ShiftType } from '@/lib/types'
 
 const SHIFT_CONFIG: Record<ShiftType, { label: string; bg: string; color: string }> = {
   A:     { label: 'A',     bg: '#DBEAFE', color: '#1D4ED8' },
@@ -13,7 +13,7 @@ const SHIFT_CONFIG: Record<ShiftType, { label: string; bg: string; color: string
   ALERT: { label: '⚠',    bg: '#FFE4E6', color: '#f28f9e' },
 }
 
-export function ShiftCell({ shift }: { shift: ShiftDay }) {
+export function ShiftCell({ shift }: { shift: DayEntry }) {
   const cfg = SHIFT_CONFIG[shift.type] ?? { label: shift.type, bg: '#F3F4F6', color: '#9CA3AF' }
   return (
     <td className="border-r border-gray-100 p-1 min-w-24 align-top">

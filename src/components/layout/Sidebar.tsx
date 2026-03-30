@@ -81,7 +81,7 @@ export function Sidebar() {
         style={{ background: '#fff5f7', borderColor: '#fcd5dc' }}
       >
         <div className="text-xs font-semibold" style={{ color: PINK }}>⚑ 緊急警報</div>
-        <div className="text-[10px] mt-0.5" style={{ color: PINK_HOVER }}>夜更人手不足 — F3</div>
+        <div className="text-[10px] mt-0.5" style={{ color: PINK_HOVER }}>P更人手不足 — F3</div>
       </div>
 
       {/* New Request button */}

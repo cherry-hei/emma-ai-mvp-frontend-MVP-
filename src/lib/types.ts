@@ -1,25 +1,26 @@
-export type ShiftType = 'A' | 'B' | 'E' | 'P' | 'AN' | 'OFF' | 'AL' | 'SLEEP' | 'ALERT'
-export type RoleType = 'RN' | 'EN' | 'HW' | 'PCW' | 'PTA' | 'CW' | 'AW'
+// src/lib/types.ts
+
+export type ShiftType = 'A' | 'B' | 'E' | 'P' | 'N' | 'AN' | 'OFF' | 'AL' | 'SLEEP' | 'ALERT'
 
 export interface Staff {
   id: number
   name: string
   nameEn: string
-  role: RoleType
+  role: string
   ward: string
   floor: string
-  certs: string[]        // ← 保持 string[]
+  certs: string[]
   hoursWorked: number
   hoursTotal: number
   avatar: string
 }
 
-export interface ShiftDay {
+export interface DayEntry {
   type: ShiftType
-  tasks?: string[]       // ← 保持 string[]
+  tasks?: string[]
 }
 
 export interface RosterRow {
   staffId: number
-  days: ShiftDay[]
+  days: DayEntry[]
 }

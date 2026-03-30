@@ -2,13 +2,16 @@ import { STAFF, ROSTER, DAYS } from '@/lib/data'
 import { ShiftType } from '@/lib/types'
 
 const SHIFT_CONFIG: Record<ShiftType, { label: string; bg: string; color: string }> = {
-  A: { label: 'A', bg: '#DBEAFE', color: '#1D4ED8' },
-  P: { label: 'P', bg: '#D1FAE5', color: '#065F46' },
-  N: { label: 'N', bg: '#1a1a2e', color: '#fff' },
-  OFF: { label: 'OFF', bg: '#F3F4F6', color: '#9CA3AF' },
-  AL: { label: 'AL', bg: '#FEF3C7', color: '#92400E' },
-  SLEEP: { label: 'SLEEP', bg: '#EDE9FE', color: '#5B21B6' },
-  ALERT: { label: '⚠', bg: '#FFE4E6', color: '#f28f9e' },
+  A:     { label: 'A',   bg: '#DBEAFE', color: '#1D4ED8' },
+  B:     { label: 'B',   bg: '#FEE2E2', color: '#991B1B' },  // ← 補上
+  E:     { label: 'E',   bg: '#e8f5e9', color: '#3a6b42' },  // ← 補上
+  P:     { label: 'P',   bg: '#D1FAE5', color: '#065F46' },
+  N:     { label: 'N',   bg: '#1a1a2e', color: '#fff'    },
+  AN:    { label: 'A/N', bg: '#F3E8FF', color: '#6D28D9' },  // ← 補上
+  OFF:   { label: 'OFF', bg: '#F3F4F6', color: '#9CA3AF' },
+  AL:    { label: 'AL',  bg: '#FEF3C7', color: '#92400E' },
+  SLEEP: { label: 'SLP', bg: '#E0E7FF', color: '#3730A3' },
+  ALERT: { label: '⚠️',  bg: '#FEF2F2', color: '#DC2626' },
 }
 
 const ROLE_COLOR: Record<string, string> = {

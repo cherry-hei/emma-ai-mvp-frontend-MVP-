@@ -43,15 +43,15 @@ export const ROSTER: RosterRow[] = [
   ]},
   { staffId:4, days:[
     {type:'P', tasks:['Oral Feeding','Diaper Change']},
-    {type:'P'},{type:'REST'},{type:'P'},{type:'P'},{type:'A'},{type:'A'}
+    {type:'P'},{type:'OFF'},{type:'P'},{type:'P'},{type:'A'},{type:'A'}
   ]},
   { staffId:5, days:[
     {type:'A', tasks:['Rehab Session']},
-    {type:'A'},{type:'A'},{type:'A'},{type:'A'},{type:'REST'},{type:'REST'}
+    {type:'A'},{type:'A'},{type:'A'},{type:'A'},{type:'OFF'},{type:'OFF'}
   ]},
   { staffId:6, days:[
     {type:'N'},{type:'N'},
-    {type:'ALERT'},{type:'REST'},{type:'N'},{type:'N'},{type:'N'}
+    {type:'ALERT'},{type:'OFF'},{type:'N'},{type:'N'},{type:'N'}
   ]},
   { staffId:7, days:[
     {type:'P', tasks:['Infection Control']},
