@@ -21,6 +21,7 @@ type ShiftFormPayload = {
   timeStart: string
   timeEnd: string
   aiToggle: boolean
+  shiftType: string
   tasks: {
     id: string
     start: string
@@ -31,50 +32,23 @@ type ShiftFormPayload = {
   }[]
 }
 
-type InitialTask = {
-  id?: string
-  start?: string
-  end?: string
-  task?: string
-  customTask?: string
-}
-
-type InitialData = {
-  date?: string
-  position?: string
-  employee?: string
-  shiftCategory?: string
-  timeStart?: string
-  timeEnd?: string
-  tasks?: InitialTask[]
-}
-
 export interface CreateShiftModalProps {
-  open: boolean;
-  onClose: () => void;
-  mode: "create" | "edit";
-  initialShift: any;  // ← 暫用 any，之後再精確定義
-  onSaveChange: (payload: { shiftType: string }) => void;
-  onDeleteShift: () => void;
-  onSave?: () => void;           // ← 加這幾個
-  onSaveAndAI?: () => void;
-  onDelete?: () => void;
-  initialData?: {
-    tasks: Array<{ /* task 結構 */ }>;
-  };
+  open: boolean
+  onClose: () => void
+  mode: 'create' | 'edit'
+  initialShift: {
+    staffId: number
+    dayIndex: number
+    shiftType: string
+    tasks?: string[]
+  } | null
+  onSaveChange: (payload: { shiftType: string }) => void
+  onDeleteShift: () => void
 }
 
 const TASK_OPTIONS = [
-  '餵藥檢查',
-  '傷口護理',
-  '病人觀察',
-  '口腔餵食',
-  '更換尿片',
-  '復康訓練',
-  '感染控制',
-  '文件紀錄',
-  '巡房',
-  '量度生命表徵',
+  '餵藥檢查', '傷口護理', '病人觀察', '口腔餵食', '更換尿片',
+  '復康訓練', '感染控制', '文件紀錄', '巡房', '量度生命表徵',
 ]
 
 const POSITION_OPTIONS = [
@@ -104,33 +78,25 @@ const SHIFT_OPTIONS = [
   { value: 'emergency', label: '緊急補位' },
 ]
 
+const SHIFT_TYPE_MAP: Record<string, string> = {
+  A: 'morning', B: 'morning', E: 'afternoon', P: 'afternoon',
+  'A/N': 'night', AL: 'morning', OFF: 'morning', SLEEP: 'night',
+}
+
 function createDefaultTasks(): TaskRow[] {
   return [
-    {
-      id: '1',
-      start: '07:00',
-      end: '09:00',
-      task: '餵藥檢查',
-      customTask: '',
-    },
-    {
-      id: '2',
-      start: '09:00',
-      end: '11:00',
-      task: '文件紀錄',
-      customTask: '',
-    },
+    { id: '1', start: '07:00', end: '09:00', task: '餵藥檢查', customTask: '' },
+    { id: '2', start: '09:00', end: '11:00', task: '文件紀錄', customTask: '' },
   ]
 }
 
 export function CreateShiftModal({
   open,
   onClose,
-  onSave,
-  onSaveAndAI,
-  onDelete,
   mode = 'create',
-  initialData,
+  initialShift,
+  onSaveChange,
+  onDeleteShift,
 }: CreateShiftModalProps) {
   const [aiToggle, setAiToggle] = useState(true)
   const [date, setDate] = useState('2026-03-19')
@@ -143,31 +109,15 @@ export function CreateShiftModal({
 
   useEffect(() => {
     if (!open) return
-
-    setAiToggle(true)
-    setDate(initialData?.date || '2026-03-19')
-    setPosition(initialData?.position || 'rn')
-    setEmployee(initialData?.employee || 'yu')
-    setShiftCategory(initialData?.tasks?.map((t: any, index: number) => ({
-  // ... 你的邏輯
-})) || []
-    setTimeStart(initialData?.timeStart || '07:00')
-    setTimeEnd(initialData?.timeEnd || '15:00')
-
-    if (initialData?.tasks && initialData.tasks.length > 0) {
-      setTasks(
-        initialData.tasks.map((t, index) => ({
-          id: t.id || `${Date.now()}-${index}`,
-          start: t.start || '07:00',
-          end: t.end || '09:00',
-          task: t.task || '',
-          customTask: t.customTask || '',
-        }))
-      )
+    if (initialShift) {
+      setShiftCategory(SHIFT_TYPE_MAP[initialShift.shiftType] || 'morning')
     } else {
+      setShiftCategory('morning')
+      setTimeStart('07:00')
+      setTimeEnd('15:00')
       setTasks(createDefaultTasks())
     }
-  }, [open, initialData])
+  }, [open, initialShift])
 
   const filteredEmployees = useMemo(() => {
     const normalized = position === 'rn-senior' ? 'rn' : position
@@ -184,21 +134,14 @@ export function CreateShiftModal({
     return mode === 'edit' ? '編輯更期與工作安排' : '建立更期與工作安排'
   }, [mode])
 
-  const buildPayload = (): ShiftFormPayload => {
-    return {
-      date,
-      position,
-      employee,
-      shiftCategory,
-      timeStart,
-      timeEnd,
-      aiToggle,
-      tasks: tasks.map((t) => ({
-        ...t,
-        finalTask: t.task === '__custom__' ? t.customTask : t.task,
-      })),
-    }
-  }
+  const buildPayload = (): ShiftFormPayload => ({
+    date, position, employee, shiftCategory, timeStart, timeEnd, aiToggle,
+    shiftType: initialShift?.shiftType || shiftCategory,
+    tasks: tasks.map((t) => ({
+      ...t,
+      finalTask: t.task === '__custom__' ? t.customTask : t.task,
+    })),
+  })
 
   const updateTask = (id: string, patch: Partial<TaskRow>) => {
     setTasks((prev) => prev.map((row) => (row.id === id ? { ...row, ...patch } : row)))
@@ -207,13 +150,7 @@ export function CreateShiftModal({
   const addTaskRow = () => {
     setTasks((prev) => [
       ...prev,
-      {
-        id: `${Date.now()}`,
-        start: timeStart,
-        end: timeEnd,
-        task: '',
-        customTask: '',
-      },
+      { id: `${Date.now()}`, start: timeStart, end: timeEnd, task: '', customTask: '' },
     ])
   }
 
@@ -222,17 +159,17 @@ export function CreateShiftModal({
   }
 
   const handleSave = () => {
-    onSave?.(buildPayload())
+    onSaveChange(buildPayload())
     onClose()
   }
 
   const handleSaveAndAI = () => {
-    onSaveAndAI?.(buildPayload())
+    onSaveChange(buildPayload())
     onClose()
   }
 
   const handleDelete = () => {
-    onDelete?.()
+    onDeleteShift()
     onClose()
   }
 
@@ -280,9 +217,7 @@ export function CreateShiftModal({
                     </SelectTrigger>
                     <SelectContent>
                       {POSITION_OPTIONS.map((item) => (
-                        <SelectItem key={item.value} value={item.value}>
-                          {item.label}
-                        </SelectItem>
+                        <SelectItem key={item.value} value={item.value}>{item.label}</SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
@@ -296,14 +231,10 @@ export function CreateShiftModal({
                     </SelectTrigger>
                     <SelectContent>
                       {filteredEmployees.length === 0 ? (
-                        <SelectItem value="no-staff" disabled>
-                          此職位暫無員工
-                        </SelectItem>
+                        <SelectItem value="no-staff" disabled>此職位暫無員工</SelectItem>
                       ) : (
                         filteredEmployees.map((item) => (
-                          <SelectItem key={item.value} value={item.value}>
-                            {item.label}
-                          </SelectItem>
+                          <SelectItem key={item.value} value={item.value}>{item.label}</SelectItem>
                         ))
                       )}
                     </SelectContent>
@@ -316,15 +247,13 @@ export function CreateShiftModal({
                   <label className="text-[9px] font-bold text-gray-500 uppercase tracking-wider">時間範圍</label>
                   <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-2 mt-1.5 min-w-0">
                     <input
-                      type="time"
-                      value={timeStart}
+                      type="time" value={timeStart}
                       onChange={(e) => setTimeStart(e.target.value)}
                       className="min-w-0 w-full px-3 py-2 border border-gray-200 rounded-xl text-sm bg-gray-50 focus:outline-none"
                     />
                     <span className="text-xs text-gray-400 shrink-0">至</span>
                     <input
-                      type="time"
-                      value={timeEnd}
+                      type="time" value={timeEnd}
                       onChange={(e) => setTimeEnd(e.target.value)}
                       className="min-w-0 w-full px-3 py-2 border border-gray-200 rounded-xl text-sm bg-gray-50 focus:outline-none"
                     />
@@ -339,9 +268,7 @@ export function CreateShiftModal({
                     </SelectTrigger>
                     <SelectContent>
                       {SHIFT_OPTIONS.map((item) => (
-                        <SelectItem key={item.value} value={item.value}>
-                          {item.label}
-                        </SelectItem>
+                        <SelectItem key={item.value} value={item.value}>{item.label}</SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
@@ -351,37 +278,25 @@ export function CreateShiftModal({
               <div className="min-w-0">
                 <div className="flex flex-col gap-2 mb-2 sm:flex-row sm:items-center sm:justify-between">
                   <label className="text-[9px] font-bold text-gray-500 uppercase tracking-wider">工作時間表</label>
-                  <span
-                    className="text-[9px] font-bold px-2 py-0.5 rounded w-fit"
-                    style={{ background: '#fce8f3', color: '#E8187A' }}
-                  >
+                  <span className="text-[9px] font-bold px-2 py-0.5 rounded w-fit" style={{ background: '#fce8f3', color: '#E8187A' }}>
                     可調整時間及工作內容
                   </span>
                 </div>
 
                 <div className="space-y-2 min-w-0">
                   {tasks.map((row, index) => (
-                    <div
-                      key={row.id}
-                      className="border border-gray-200 rounded-xl p-3 bg-gray-50 min-w-0"
-                    >
+                    <div key={row.id} className="border border-gray-200 rounded-xl p-3 bg-gray-50 min-w-0">
                       <div className="grid grid-cols-1 gap-2 sm:grid-cols-[1fr_auto_1fr_auto] sm:items-center min-w-0">
-                        <input
-                          type="time"
-                          value={row.start}
+                        <input type="time" value={row.start}
                           onChange={(e) => updateTask(row.id, { start: e.target.value })}
                           className="min-w-0 w-full px-3 py-2 border border-gray-200 rounded-xl text-sm bg-white"
                         />
                         <span className="text-xs text-gray-400 shrink-0">至</span>
-                        <input
-                          type="time"
-                          value={row.end}
+                        <input type="time" value={row.end}
                           onChange={(e) => updateTask(row.id, { end: e.target.value })}
                           className="min-w-0 w-full px-3 py-2 border border-gray-200 rounded-xl text-sm bg-white"
                         />
-                        <button
-                          type="button"
-                          onClick={() => removeTaskRow(row.id)}
+                        <button type="button" onClick={() => removeTaskRow(row.id)}
                           className="text-xs font-semibold text-red-500 text-left sm:text-center"
                           disabled={tasks.length === 1}
                         >
@@ -391,27 +306,19 @@ export function CreateShiftModal({
 
                       <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2 min-w-0">
                         <div className="min-w-0">
-                          <Select
-                            value={row.task}
-                            onValueChange={(value) => updateTask(row.id, { task: value })}
-                          >
+                          <Select value={row.task} onValueChange={(value) => updateTask(row.id, { task: value })}>
                             <SelectTrigger className="rounded-xl bg-white border-gray-200 w-full min-w-0">
                               <SelectValue placeholder="選擇工作內容" />
                             </SelectTrigger>
                             <SelectContent>
                               {TASK_OPTIONS.map((item) => (
-                                <SelectItem key={item} value={item}>
-                                  {item}
-                                </SelectItem>
+                                <SelectItem key={item} value={item}>{item}</SelectItem>
                               ))}
                               <SelectItem value="__custom__">其他（自行輸入）</SelectItem>
                             </SelectContent>
                           </Select>
                         </div>
-
-                        <input
-                          type="text"
-                          value={row.customTask}
+                        <input type="text" value={row.customTask}
                           onChange={(e) => updateTask(row.id, { customTask: e.target.value })}
                           placeholder={row.task === '__custom__' ? '輸入自訂工作內容' : '可補充工作內容'}
                           className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm bg-white min-w-0"
@@ -420,47 +327,31 @@ export function CreateShiftModal({
 
                       <div className="mt-2 text-[11px] text-gray-500 break-words">
                         項目 {index + 1}：{row.start} - {row.end} ／
-                        {row.task === '__custom__'
-                          ? row.customTask || '未填寫自訂內容'
-                          : row.task || '未選擇工作內容'}
+                        {row.task === '__custom__' ? row.customTask || '未填寫自訂內容' : row.task || '未選擇工作內容'}
                       </div>
                     </div>
                   ))}
                 </div>
 
-                <button
-                  type="button"
-                  onClick={addTaskRow}
-                  className="mt-3 text-xs font-semibold"
-                  style={{ color: '#E8187A' }}
-                >
+                <button type="button" onClick={addTaskRow}
+                  className="mt-3 text-xs font-semibold" style={{ color: '#E8187A' }}>
                   + 新增工作項目
                 </button>
               </div>
 
               <div className="flex min-w-0 items-center gap-3 p-3 rounded-xl" style={{ background: '#fce8f3' }}>
-                <div
-                  className="w-8 h-8 rounded-lg flex items-center justify-center text-white text-sm shrink-0"
-                  style={{ background: '#E8187A' }}
-                >
+                <div className="w-8 h-8 rounded-lg flex items-center justify-center text-white text-sm shrink-0" style={{ background: '#E8187A' }}>
                   🧠
                 </div>
                 <div className="flex-1 min-w-0">
                   <div className="text-sm font-semibold break-words">Emma AI Task Optimisation</div>
-                  <div className="text-[10px] text-gray-500 mt-0.5 break-words">
-                    根據員工能力及更期內容提供 AI 重新編排建議
-                  </div>
+                  <div className="text-[10px] text-gray-500 mt-0.5 break-words">根據員工能力及更期內容提供 AI 重新編排建議</div>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => setAiToggle(!aiToggle)}
+                <button type="button" onClick={() => setAiToggle(!aiToggle)}
                   className="w-10 h-6 rounded-full transition-all relative shrink-0"
-                  style={{ background: aiToggle ? '#E8187A' : '#d1d5db' }}
-                >
-                  <span
-                    className="absolute top-1 w-4 h-4 rounded-full bg-white transition-all"
-                    style={{ left: aiToggle ? '20px' : '4px' }}
-                  />
+                  style={{ background: aiToggle ? '#E8187A' : '#d1d5db' }}>
+                  <span className="absolute top-1 w-4 h-4 rounded-full bg-white transition-all"
+                    style={{ left: aiToggle ? '20px' : '4px' }} />
                 </button>
               </div>
             </div>
@@ -468,13 +359,10 @@ export function CreateShiftModal({
 
           <div className="px-6 py-4 border-t border-gray-100 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
             <div className="w-full sm:w-auto">
-              {isEditMode && onDelete ? (
-                <Button
-                  variant="outline"
-                  onClick={handleDelete}
-                  className="w-full sm:w-auto rounded-xl text-xs text-red-500 border-red-200 hover:bg-red-50"
-                >
-                  Delete
+              {isEditMode ? (
+                <Button variant="outline" onClick={handleDelete}
+                  className="w-full sm:w-auto rounded-xl text-xs text-red-500 border-red-200 hover:bg-red-50">
+                  Delete Shift
                 </Button>
               ) : (
                 <Button variant="outline" onClick={onClose} className="w-full sm:w-auto rounded-xl text-xs">
@@ -484,19 +372,12 @@ export function CreateShiftModal({
             </div>
 
             <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:items-center">
-              <Button
-                variant="outline"
-                onClick={handleSaveAndAI}
-                className="w-full sm:w-auto rounded-xl text-xs"
-              >
-                Save & AI Reschule Suggestion
+              <Button variant="outline" onClick={handleSaveAndAI} className="w-full sm:w-auto rounded-xl text-xs">
+                Save & AI Reschedule Suggestion
               </Button>
-
-              <Button
-                onClick={handleSave}
+              <Button onClick={handleSave}
                 className="w-full sm:w-auto rounded-xl text-xs text-white"
-                style={{ background: '#E8187A' }}
-              >
+                style={{ background: '#E8187A' }}>
                 Save Changes
               </Button>
             </div>
@@ -506,4 +387,3 @@ export function CreateShiftModal({
     </Dialog>
   )
 }
-
