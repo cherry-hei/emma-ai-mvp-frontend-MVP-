@@ -251,7 +251,7 @@ export default function ROIPage() {
             <p className="text-sm font-semibold text-white">
               每投入 HK$1，Emma AI 預計回報{' '}
               <span className="text-yellow-300">
-                HK${r.emmaAnnualFee > 0 ? (r.annualSavings / r.emmaAnnualFee).toFixed(1) : '∞'}
+                HK${((r.annualSavings / 10000) || 0).toFixed(1)}x ROI
               </span>
             </p>
           </div>

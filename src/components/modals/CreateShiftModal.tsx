@@ -49,14 +49,19 @@ type InitialData = {
   tasks?: InitialTask[]
 }
 
-interface CreateShiftModalProps {
-  open: boolean
-  onClose: () => void
-  onSave?: (payload: ShiftFormPayload) => void
-  onSaveAndAI?: (payload: ShiftFormPayload) => void
-  onDelete?: () => void
-  mode?: 'create' | 'edit'
-  initialData?: InitialData
+export interface CreateShiftModalProps {
+  open: boolean;
+  onClose: () => void;
+  mode: "create" | "edit";
+  initialShift: any;  // ← 暫用 any，之後再精確定義
+  onSaveChange: (payload: { shiftType: string }) => void;
+  onDeleteShift: () => void;
+  onSave?: () => void;           // ← 加這幾個
+  onSaveAndAI?: () => void;
+  onDelete?: () => void;
+  initialData?: {
+    tasks: Array<{ /* task 結構 */ }>;
+  };
 }
 
 const TASK_OPTIONS = [
@@ -143,7 +148,9 @@ export function CreateShiftModal({
     setDate(initialData?.date || '2026-03-19')
     setPosition(initialData?.position || 'rn')
     setEmployee(initialData?.employee || 'yu')
-    setShiftCategory(initialData?.shiftCategory || 'morning')
+    setShiftCategory(initialData?.tasks?.map((t: any, index: number) => ({
+  // ... 你的邏輯
+})) || []
     setTimeStart(initialData?.timeStart || '07:00')
     setTimeEnd(initialData?.timeEnd || '15:00')
 
