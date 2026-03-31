@@ -1,5 +1,7 @@
 'use client'
 
+import type { ReactNode } from 'react'
+
 export type TabKey = 'home' | 'tasks' | 'shift' | 'clockin' | 'profile'
 
 interface BottomNavProps {
@@ -7,7 +9,7 @@ interface BottomNavProps {
   onChange: (tab: TabKey) => void
 }
 
-const tabs: { key: TabKey; label: string; icon: JSX.Element }[] = [
+const tabs: { key: TabKey; label: string; icon: ReactNode }[] = [
   { key: 'home', label: '首頁', icon: <span className="text-base">🏠</span> },
   { key: 'tasks', label: '工作', icon: <span className="text-base">📝</span> },
   { key: 'shift', label: '更表', icon: <span className="text-base">📅</span> },
