@@ -203,6 +203,119 @@ function CompliancePanel({ inputs, result }: { inputs: Inputs; result: Complianc
     </div>
   )
 }
+// ── Scale Slider Component ─────────────────────────────────────────────
+function ScaleSlider() {
+  const [staffCount, setStaffCount] = useState(50)
+
+  const perPersonMonthly  = 788
+  const emmaRatePerPerson = 840
+
+  const monthlyTotal   = Math.round(staffCount * perPersonMonthly)
+  const annualSavings  = monthlyTotal * 12
+  const emmaAnnualFee  = staffCount * emmaRatePerPerson
+  const emmaMonthlyFee = Math.round(emmaAnnualFee / 12)
+  const netAnnual      = annualSavings - emmaAnnualFee
+  const roiMultiple    = (annualSavings / emmaAnnualFee).toFixed(1)
+  const paybackDays    = Math.round((emmaAnnualFee / annualSavings) * 365)
+
+  const SCALE_DATA = [50, 100, 150, 200, 250, 300]
+  const fmtS = (n: number) => `HK$${Math.round(n).toLocaleString()}`
+
+  return (
+    <div>
+      <div className="mb-5">
+        <div className="flex justify-between items-center mb-2">
+          <label className="text-xs font-medium text-slate-600">員工人數</label>
+          <span className="text-2xl font-bold tabular-nums" style={{ color: '#E8187A' }}>
+            {staffCount}人
+          </span>
+        </div>
+        <input
+          type="range" min={10} max={300} step={5} value={staffCount}
+          onChange={e => setStaffCount(Number(e.target.value))}
+          className="w-full accent-pink-500"
+        />
+        <div className="flex justify-between text-[10px] text-slate-400 mt-1">
+          <span>10人</span><span>150人</span><span>300人</span>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-3 gap-3 mb-5">
+        {[
+          { label: '每月節省',   value: fmtS(monthlyTotal),  sub: `${staffCount}人 × HK$788`,       color: 'text-pink-500'  },
+          { label: 'Emma 月費', value: fmtS(emmaMonthlyFee), sub: `${staffCount}人 × HK$840 ÷ 12`, color: 'text-slate-700' },
+          { label: '年度淨效益', value: fmtS(netAnnual),     sub: '年節省 − Emma 年費',             color: 'text-blue-600'  },
+        ].map(k => (
+          <div key={k.label} className="rounded-xl border border-slate-100 bg-slate-50 p-3.5 text-center">
+            <p className="text-[10px] text-slate-500 mb-1">{k.label}</p>
+            <p className={`text-lg font-bold tabular-nums ${k.color}`}>{k.value}</p>
+            <p className="text-[9px] text-slate-400 mt-1">{k.sub}</p>
+          </div>
+        ))}
+      </div>
+
+      <div className="rounded-2xl p-5 mb-5 text-center" style={{ background: '#1a1a2e' }}>
+        <p className="text-[11px] font-semibold tracking-widest text-white/40 mb-3">SCALE ROI SUMMARY</p>
+        <div className="flex items-center justify-center gap-8">
+          <div>
+            <p className="text-4xl font-bold text-pink-400 tabular-nums">{roiMultiple}x</p>
+            <p className="text-[10px] text-white/50 mt-1">ROI 倍數</p>
+          </div>
+          <div className="w-px h-12 bg-white/10" />
+          <div>
+            <p className="text-4xl font-bold text-emerald-400 tabular-nums">{paybackDays}</p>
+            <p className="text-[10px] text-white/50 mt-1">回本天數</p>
+          </div>
+          <div className="w-px h-12 bg-white/10" />
+          <div>
+            <p className="text-3xl font-bold text-blue-400 tabular-nums">{fmtS(netAnnual)}</p>
+            <p className="text-[10px] text-white/50 mt-1">年度淨效益</p>
+          </div>
+        </div>
+      </div>
+
+      <div className="overflow-x-auto rounded-xl border border-slate-100">
+        <table className="w-full text-xs">
+          <thead>
+            <tr className="bg-slate-50 border-b border-slate-100">
+              {['員工人數', '每月節省', '年度節省', 'Emma 年費', '年度淨效益', 'ROI'].map(h => (
+                <th key={h} className="px-3 py-2.5 text-[10px] font-semibold text-slate-500 uppercase tracking-wide text-left">{h}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {SCALE_DATA.map(n => {
+              const monthly  = n * perPersonMonthly
+              const annual   = monthly * 12
+              const fee      = n * emmaRatePerPerson
+              const net      = annual - fee
+              const isActive = Math.abs(n - staffCount) < 30
+              return (
+                <tr key={n}
+                  onClick={() => setStaffCount(n)}
+                  className={`border-b border-slate-50 cursor-pointer transition-colors ${
+                    isActive ? 'bg-pink-50' : 'hover:bg-slate-50/50'
+                  }`}>
+                  <td className={`px-3 py-2.5 font-bold tabular-nums ${isActive ? 'text-pink-600' : 'text-slate-700'}`}>
+                    {n}人 {n === 300 && '🏆'}
+                  </td>
+                  <td className="px-3 py-2.5 text-slate-600 tabular-nums">{fmtS(monthly)}</td>
+                  <td className="px-3 py-2.5 text-slate-600 tabular-nums">{fmtS(annual)}</td>
+                  <td className="px-3 py-2.5 text-slate-500 tabular-nums">{fmtS(fee)}</td>
+                  <td className={`px-3 py-2.5 font-bold tabular-nums ${isActive ? 'text-pink-600' : 'text-emerald-600'}`}>{fmtS(net)}</td>
+                  <td className="px-3 py-2.5 font-bold text-blue-600">11.3x</td>
+                </tr>
+              )
+            })}
+          </tbody>
+        </table>
+      </div>
+      <p className="mt-3 text-[10px] text-slate-400 text-center">
+        * 點擊表格任意行可快速切換人數 · 規模效益供 Sales Demo 參考用途
+      </p>
+    </div>
+  )
+}
 
 // ── Main Page ──────────────────────────────────────────────────────────
 export default function ROIPage() {
@@ -450,6 +563,29 @@ export default function ROIPage() {
         <CompliancePanel inputs={inputs} result={cr} />
       </div>
 
+      {/* ── Section 7: 規模效益計算器 ── */}
+      <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+        <div className="mb-4 flex items-center gap-2">
+          <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-pink-50 text-pink-500 text-sm">📈</div>
+          <h2 className="text-base font-semibold text-slate-800">規模效益計算器</h2>
+          <span className="ml-auto text-[10px] text-slate-400 bg-slate-100 px-2 py-0.5 rounded-full">
+            Sales Demo 用途
+          </span>
+        </div>
+
+        {/* 說明 */}
+        <div className="mb-5 rounded-xl bg-blue-50 border border-blue-100 px-4 py-3">
+          <p className="text-[11px] text-blue-700 leading-relaxed">
+            📌 <strong>標準化公式：</strong>
+            每人月節省 = HK$788（行政+外購優化）·
+            Emma 年費 = 員工人數 × HK$840 ·
+            ROI = 恆定 <strong>11.3x</strong>（規模越大，絕對效益越高）
+          </p>
+        </div>
+
+        {/* Slider */}
+        <ScaleSlider />
+      </div>
     </div>
   )
 }
