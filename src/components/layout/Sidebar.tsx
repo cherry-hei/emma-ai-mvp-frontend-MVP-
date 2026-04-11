@@ -8,6 +8,7 @@ const NAV = [
   { label: 'Approval 審批',        icon: '👥✓', path: '/approval' },
   { label: 'Personnel 人事',       icon: '👥',  path: '/personnel' },
   { label: 'ROI 效益',             icon: '▦',   path: '/roi' },
+  { label: 'Reports 報告',         icon: '📄',  path: '/reports' },   // ← 新增
   { label: 'Alert 警報',           icon: '🔔',  path: '/alert', badge: '3' },
   { label: 'AI Insights AI洞察',   icon: '✦',   path: '/insights' },
 ]

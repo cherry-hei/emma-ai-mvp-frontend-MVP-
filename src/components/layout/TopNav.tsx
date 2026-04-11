@@ -5,7 +5,7 @@ const LINKS = [
   { label: 'Roster',     path: '/roster' },
   { label: 'Staffing',   path: '/personnel' },
   { label: 'Compliance', path: '/compliance' },
-  { label: 'Reports',    path: '/roi' },
+  { label: 'Reports',    path: '/reports' },
 ]
 
 export function TopNav() {
