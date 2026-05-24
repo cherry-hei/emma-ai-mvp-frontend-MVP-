@@ -1,24 +1,47 @@
 'use client'
 import { usePathname, useRouter } from 'next/navigation'
+import { useLang } from '@/components/layout/LanguageContext'
+
+const PINK       = '#E8187A'
+const PINK_HOVER = '#c9156a'
 
 const NAV = [
-  { label: 'Home 首頁',           icon: '⊞',   path: '/' },
-  { label: 'Roster 更表',         icon: '◫',   path: '/roster' },
-  { label: 'Compliance 合規',      icon: '✓',   path: '/compliance' },
-  { label: 'Approval 審批',        icon: '👥✓', path: '/approval' },
-  { label: 'Personnel 人事',       icon: '👥',  path: '/personnel' },
-  { label: 'ROI 效益',             icon: '▦',   path: '/roi' },
-  { label: 'Reports 報告',         icon: '📄',  path: '/reports' },   // ← 新增
-  { label: 'Alert 警報',           icon: '🔔',  path: '/alert', badge: '3' },
-  { label: 'AI Insights AI洞察',   icon: '✦',   path: '/insights' },
+  { key: 'nav_dashboard', icon: '🏠', path: '/dashboard' },
+  { key: 'nav_roster',      icon: '📅',  path: '/roster'     },
+  { key: 'nav_compliance',  icon: '✅',  path: '/compliance' },
+  { key: 'nav_approval',    icon: '👥✓', path: '/approval'   },
+  { key: 'nav_personnel',   icon: '👤',  path: '/staff'      },
+  { key: 'nav_roi',         icon: '📈',  path: '/roi'        },
+  { key: 'nav_reports',     icon: '📊',  path: '/reports'    },
+  { key: 'nav_alert',       icon: '🔔',  path: '/alert', badge: '3' },
+  { key: 'nav_ai',          icon: '🤖',  path: '/insights'   },
 ]
-
-const PINK      = '#f28f9e'
-const PINK_HOVER = '#e87a8e'
 
 export function Sidebar() {
   const pathname = usePathname()
   const router   = useRouter()
+  const { t, lang }    = useLang()
+
+  const FALLBACK: Record<string, { zh: string; en: string }> = {
+    nav_dashboard:  { zh: '主頁',       en: 'Dashboard'     },
+    nav_roster:     { zh: '更表',       en: 'Roster'        },
+    nav_compliance: { zh: '合規',       en: 'Compliance'    },
+    nav_approval:   { zh: '審批',       en: 'Approval'      },
+    nav_personnel:  { zh: '員工檔案',   en: 'Staff Portfolio'},
+    nav_roi:        { zh: 'ROI',        en: 'ROI'           },
+    nav_reports:    { zh: '報告',       en: 'Reports'       },
+    nav_alert:      { zh: '警報',       en: 'Alert'         },
+    nav_ai:         { zh: 'AI 洞察',    en: 'AI Insights'   },
+    urgent_alert:   { zh: '🚨 緊急警報', en: '🚨 Urgent Alert' },
+    staff_shortage: { zh: 'P更人手不足 — F3', en: 'P-shift understaffed — F3' },
+    new_request:    { zh: '+ 新增請求', en: '+ New Request'  },
+  }
+
+  const label = (key: string) => {
+    const fromContext = t(key)
+    if (fromContext && fromContext !== key) return fromContext
+    return FALLBACK[key]?.[lang] ?? key
+  }
 
   return (
     <aside
@@ -46,7 +69,7 @@ export function Sidebar() {
 
       {/* Nav */}
       <nav className="flex-1 px-2 py-2 space-y-0.5">
-        {NAV.map(({ label, icon, path, badge }) => {
+        {NAV.map(({ key, icon, path, badge }) => {
           const active = pathname === path || (path !== '/' && pathname.startsWith(path))
           return (
             <button
@@ -54,15 +77,15 @@ export function Sidebar() {
               onClick={() => router.push(path)}
               className="w-full flex items-center gap-2 px-2.5 py-2 rounded-lg text-xs transition-all border-l-2 text-left"
               style={{
-                color:           active ? PINK    : '#374151',
-                background:      active ? '#fdf2f4' : 'transparent',
-                borderLeftColor: active ? PINK    : 'transparent',
+                color:           active ? PINK : '#374151',
+                background:      active ? '#fff0f5' : 'transparent',
+                borderLeftColor: active ? PINK : 'transparent',
               }}
               onMouseEnter={e => { if (!active) e.currentTarget.style.background = '#f9fafb' }}
               onMouseLeave={e => { if (!active) e.currentTarget.style.background = 'transparent' }}
             >
               <span className="text-sm opacity-70">{icon}</span>
-              <span className="flex-1">{label}</span>
+              <span className="flex-1">{label(key)}</span>
               {badge && (
                 <span
                   className="text-[9px] px-1.5 rounded-full text-white"
@@ -81,20 +104,15 @@ export function Sidebar() {
         className="mx-2 mb-2 p-2.5 rounded-lg border"
         style={{ background: '#fff5f7', borderColor: '#fcd5dc' }}
       >
-        <div className="text-xs font-semibold" style={{ color: PINK }}>⚑ 緊急警報</div>
-        <div className="text-[10px] mt-0.5" style={{ color: PINK_HOVER }}>P更人手不足 — F3</div>
+        <div className="text-xs font-semibold" style={{ color: PINK }}>
+          {label('urgent_alert')}
+        </div>
+        <div className="text-[10px] mt-0.5" style={{ color: PINK_HOVER }}>
+          {label('staff_shortage')}
+        </div>
       </div>
 
-      {/* New Request button */}
-      <button
-        onClick={() => router.push('/alert')}
-        className="mx-2 mb-3 py-2.5 rounded-lg text-white text-xs font-semibold text-center transition-colors"
-        style={{ background: PINK }}
-        onMouseEnter={e => (e.currentTarget.style.background = PINK_HOVER)}
-        onMouseLeave={e => (e.currentTarget.style.background = PINK)}
-      >
-        + New Request 新請求
-      </button>
+      {/* New Request button — 已移除獨立按鈕，點 Alert 直接跳頁 */}
     </aside>
   )
 }

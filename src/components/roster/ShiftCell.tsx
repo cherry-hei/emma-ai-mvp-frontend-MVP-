@@ -13,10 +13,19 @@ const SHIFT_CONFIG: Record<ShiftType, { label: string; bg: string; color: string
   ALERT: { label: '⚠',    bg: '#FFE4E6', color: '#f28f9e' },
 }
 
-export function ShiftCell({ shift }: { shift: DayEntry }) {
+export function ShiftCell({
+  shift,
+  onClick,
+}: {
+  shift: DayEntry
+  onClick?: () => void
+}) {
   const cfg = SHIFT_CONFIG[shift.type] ?? { label: shift.type, bg: '#F3F4F6', color: '#9CA3AF' }
   return (
-    <td className="border-r border-gray-100 p-1 min-w-24 align-top">
+    <td
+      onClick={onClick}
+      className="border-r border-gray-100 p-1 min-w-24 align-top cursor-pointer hover:bg-pink-50/40 transition-colors"
+    >
       <div
         className="rounded-md px-1.5 py-1 text-[9px] font-bold text-center mb-1"
         style={{ background: cfg.bg, color: cfg.color }}
