@@ -6,11 +6,6 @@ import { useLang } from '@/components/layout/LanguageContext'
 const PINK = '#E8187A'
 
 // ── Tier pricing (5yr contract default) ──────────────────────
-// Tier 1: ≤500   → HK$45/user/mo
-// Tier 2: ≤800   → HK$42/user/mo
-// Tier 3: ≤1,200 → HK$39/user/mo
-// Tier 4: ≤1,700 → HK$36/user/mo
-// Tier 4+: >1,700→ HK$33/user/mo
 const TIER_DEFS = [
   { tier: 1, label: '300–500',     max: 500,  rates: { '3yr': 48, '5yr': 45, '10yr': 42 } },
   { tier: 2, label: '501–800',     max: 800,  rates: { '3yr': 45, '5yr': 42, '10yr': 39 } },
@@ -33,6 +28,25 @@ interface Inputs {
   agencyMonthlyCost:   number
   slIncidentsPerMonth: number
   agencyReductionPct:  number
+  // Budget
+  totalBudget:         number
+  salaryBudget:        number
+  // Staff structure
+  rnCount:             number
+  rnVacancy:           number
+  enCount:             number
+  enVacancy:           number
+  hwCount:             number
+  hwVacancy:           number
+  hcaCount:            number
+  hcaVacancy:          number
+  awCount:             number
+  awVacancy:           number
+  swCount:             number
+  ptaCount:            number
+  otaCount:            number
+  ptCount:             number
+  otCount:             number
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -75,6 +89,11 @@ function compute(i: Inputs) {
   const roiMultiple      = emmaAnnualFee > 0
     ? parseFloat((annualSavings / emmaAnnualFee).toFixed(1)) : 0
 
+  // 節省佔 Budget 百分比
+  const savingPctOfBudget = i.totalBudget > 0
+    ? parseFloat(((annualSavings / i.totalBudget) * 100).toFixed(1))
+    : 0
+
   return {
     rosterHrsBefore, rosterHrsAfter, rosterHrSaved,
     a1Saving, emergencyHrSaved, a2Saving, totalAdminSaving,
@@ -83,6 +102,7 @@ function compute(i: Inputs) {
     tierDef, tierRate,
     emmaAnnualFee, emmaMonthlyFee, netAnnualBenefit,
     paybackMonths, roiMultiple, totalStaff,
+    savingPctOfBudget,
   }
 }
 
@@ -174,8 +194,9 @@ function ScaleSlider({ isZH }: { isZH: boolean }) {
   const paybackDays    = Math.round((emmaAnnualFee / annualSavings) * 365)
   const annualMinus15  = Math.round(emmaAnnualFee * 0.85)
 
-    return (
+  return (
     <div>
+      {/* Slider + KPI cards */}
       <div className="mb-5">
         <div className="flex justify-between items-center mb-2">
           <label className="text-xs font-medium text-slate-600">{isZH ? '員工人數' : 'Staff Count'}</label>
@@ -205,9 +226,9 @@ function ScaleSlider({ isZH }: { isZH: boolean }) {
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 mb-5">
         {[
           { label: isZH ? '月度節省'   : 'Monthly Savings',    value: fmt(monthlyTotal),   sub: `${staffCount} ÷ ${PILOT_STAFF} × HK$${PILOT_MONTHLY.toLocaleString()}`, color: 'text-pink-500' },
-          { label: isZH ? 'Emma 月費'  : 'Emma Monthly Fee',   value: fmt(emmaMonthlyFee), sub: `HK$${rate5yr}/user · Tier ${currentTier.tier} · 5yr`, color: 'text-slate-700' },
-          { label: isZH ? '年度節省'   : 'Annual Savings',     value: fmt(annualSavings),  sub: isZH ? '月度 × 12' : 'Monthly × 12', color: 'text-emerald-600' },
-          { label: isZH ? '年度淨收益' : 'Net Annual Benefit', value: fmt(netAnnual),      sub: isZH ? '年節省 − Emma 年費' : 'Annual − Emma fee', color: 'text-blue-600' },
+          { label: isZH ? 'Emma 月費'  : 'Emma Monthly Fee',   value: fmt(emmaMonthlyFee), sub: `HK$${rate5yr}/user · Tier ${currentTier.tier} · 5yr`,              color: 'text-slate-700' },
+          { label: isZH ? '年度節省'   : 'Annual Savings',     value: fmt(annualSavings),  sub: isZH ? '月度 × 12' : 'Monthly × 12',                                 color: 'text-emerald-600' },
+          { label: isZH ? '年度淨收益' : 'Net Annual Benefit', value: fmt(netAnnual),      sub: isZH ? '年節省 − Emma 年費' : 'Annual − Emma fee',                     color: 'text-blue-600' },
         ].map(k => (
           <div key={k.label} className="rounded-xl border border-slate-100 bg-slate-50 p-3.5 text-center">
             <p className="text-[10px] text-slate-500 mb-1">{k.label}</p>
@@ -217,6 +238,7 @@ function ScaleSlider({ isZH }: { isZH: boolean }) {
         ))}
       </div>
 
+      {/* Dark ROI banner */}
       <div className="rounded-2xl p-5 mb-5 text-center" style={{ background: '#1a1a2e' }}>
         <p className="text-[11px] font-semibold tracking-widest text-white/40 mb-3">
           EMMA AI ROI · TIER {currentTier.tier} · {currentTier.label} {isZH ? '人' : 'STAFF'}
@@ -242,6 +264,7 @@ function ScaleSlider({ isZH }: { isZH: boolean }) {
         </p>
       </div>
 
+      {/* Tier 表格 */}
       <div className="space-y-4">
         {TIER_DEFS.map(tier => {
           const CONTRACTS: Array<{ yr: '3yr' | '5yr' | '10yr' }> = [
@@ -251,7 +274,7 @@ function ScaleSlider({ isZH }: { isZH: boolean }) {
           ]
           const repStaff = tier.max
           const basisAnn = Math.round(PILOT_MONTHLY * (repStaff / PILOT_STAFF)) * 12
-          const isActive = currentTier.tier === tier.tier
+          const isActive = getTierDef(staffCount).tier === tier.tier
 
           return (
             <div
@@ -342,6 +365,23 @@ export default function ROIPage() {
     agencyMonthlyCost:   148070,
     slIncidentsPerMonth: 46,
     agencyReductionPct:  5,
+    totalBudget:         1600000,
+    salaryBudget:        1190800,
+    rnCount:             5,
+    rnVacancy:           0,
+    enCount:             6,
+    enVacancy:           0,
+    hwCount:             8,
+    hwVacancy:           0,
+    hcaCount:            20,
+    hcaVacancy:          0,
+    awCount:             2,
+    awVacancy:           0,
+    swCount:             1,
+    ptaCount:            0,
+    otaCount:            0,
+    ptCount:             0,
+    otCount:             0,
   })
 
   const set = (key: keyof Inputs) => (v: number) =>
@@ -351,7 +391,6 @@ export default function ROIPage() {
 
   return (
     <div className="p-5 space-y-5">
-
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
@@ -370,81 +409,251 @@ export default function ROIPage() {
         </div>
       </div>
 
+     {/* Top Budget Input */}
+     <div className="max-w-xs">
+      <InputField
+      label={isZH ? '本月總營運預算（Total Budget）' : 'Monthly Total Operating Budget'}
+      value={inputs.totalBudget}
+      onChange={set('totalBudget')}
+      suffix="HK$"
+      hint={isZH ? '整體營運預算（含薪金＋其他開支）' : 'Total operating budget incl. salary + other expenses'}
+      />
+      </div>
+
       {/* KPI Banner */}
       <div className="grid grid-cols-4 gap-3">
         {[
-          { label: isZH ? '月度節省'   : 'Monthly Savings',    value: fmt(r.totalMonthlySaving), color: 'text-pink-500' },
-          { label: isZH ? '年度節省'   : 'Annual Savings',     value: fmt(r.annualSavings),      color: 'text-emerald-600' },
-          { label: isZH ? 'Emma 月費'  : 'Emma Monthly Fee',   value: fmt(r.emmaMonthlyFee),     color: 'text-slate-700' },
-          { label: isZH ? '年度淨收益' : 'Net Annual Benefit', value: fmt(r.netAnnualBenefit),   color: 'text-blue-600' },
+          {
+            label: isZH ? '月度節省' : 'Monthly Savings',
+            value: fmt(r.totalMonthlySaving),
+            color: 'text-pink-500',
+          },
+          {
+            label: isZH ? '年度節省' : 'Annual Savings',
+            value: fmt(r.annualSavings),
+            color: 'text-emerald-600',
+            sub: inputs.totalBudget > 0
+              ? (isZH
+                  ? `節省約佔年度 Budget ${r.savingPctOfBudget}%`
+                  : `${r.savingPctOfBudget}% of annual budget`)
+              : (isZH ? '請先輸入總營運預算' : 'Enter total budget to see %'),
+          },
+          {
+            label: isZH ? 'Emma 月費' : 'Emma Monthly Fee',
+            value: fmt(r.emmaMonthlyFee),
+            color: 'text-slate-700',
+          },
+          {
+            label: isZH ? '年度淨收益' : 'Net Annual Benefit',
+            value: fmt(r.netAnnualBenefit),
+            color: 'text-blue-600',
+          },
         ].map(k => (
           <div key={k.label} className="bg-white border border-gray-200 rounded-xl p-4">
             <div className="text-[9px] text-gray-500 uppercase tracking-wider mb-1">{k.label}</div>
             <div className={`text-[20px] font-bold tabular-nums ${k.color}`}>{k.value}</div>
+            {'sub' in k && k.sub && (
+              <div className="mt-1 text-[10px] text-gray-500">
+                {k.sub}
+              </div>
+            )}
             <div className="w-full h-1 bg-gray-100 rounded-full mt-2" />
           </div>
         ))}
       </div>
 
-      {/* ── Section 1: Staff Inputs ─────────────────────────────────────────── */}
+            {/* Section 1: Budget + Staff Inputs + Structure */}
       <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
         <div className="mb-4 flex items-center gap-2">
           <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-pink-50 text-pink-500 text-sm">👥</div>
-          <h2 className="text-base font-semibold text-slate-800">{isZH ? '員工基本資料' : 'Staff Baseline'}</h2>
+          <h2 className="text-base font-semibold text-slate-800">
+            {isZH ? '員工基本資料' : 'Staff Baseline'}
+          </h2>
           <span className="ml-auto text-[10px] text-slate-400 bg-slate-100 px-2 py-0.5 rounded-full">
-            {isZH ? `Tier ${r.tierDef.tier} · HK$${r.tierRate}/user/mo (5yr)` : `Tier ${r.tierDef.tier} · HK$${r.tierRate}/user/mo (5yr)`}
+            {`Tier ${r.tierDef.tier} · HK$${r.tierRate}/user/mo (5yr)`}
           </span>
         </div>
+
+        {/* Salary Budget in staff card */}
+        <div className="mb-4 max-w-xs">
+          <InputField
+            label={isZH ? '本月薪金預算（Salary Budget）' : 'Monthly Staff Salary Budget'}
+            value={inputs.salaryBudget}
+            onChange={set('salaryBudget')}
+            suffix="HK$"
+            hint={isZH ? '只計員工薪金相關開支' : 'Only staff salary-related expenses'}
+          />
+        </div>
+
+        {/* Staff baseline fields */}
         <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
           <InputField
             label={isZH ? '全職員工人數' : 'Full-Time Staff'}
-            value={inputs.totalFT} onChange={set('totalFT')}
-            suffix={isZH ? '人' : 'pax'} hint="March 33"
+            value={inputs.totalFT}
+            onChange={set('totalFT')}
+            suffix={isZH ? '人' : 'pax'}
+            hint="March 33"
           />
           <InputField
             label={isZH ? '兼職員工人數' : 'Part-Time Staff'}
-            value={inputs.totalPT} onChange={set('totalPT')}
-            suffix={isZH ? '人' : 'pax'} hint="March 16"
+            value={inputs.totalPT}
+            onChange={set('totalPT')}
+            suffix={isZH ? '人' : 'pax'}
+            hint="March 16"
           />
           <InputField
             label={isZH ? '經理/ASRN 時薪' : 'Manager/ASRN Hourly Rate'}
-            value={inputs.managerHourlyRate} onChange={set('managerHourlyRate')}
-            suffix="HK$" hint="HK$70,720÷173h=HK$409"
+            value={inputs.managerHourlyRate}
+            onChange={set('managerHourlyRate')}
+            suffix="HK$"
+            hint="HK$70,720÷173h=HK$409"
           />
           <InputField
             label={isZH ? '每月 SL/DSL 事件' : 'Monthly SL/DSL Incidents'}
-            value={inputs.slIncidentsPerMonth} onChange={set('slIncidentsPerMonth')}
-            suffix={isZH ? '次' : 'cases'} hint="March 46"
+            value={inputs.slIncidentsPerMonth}
+            onChange={set('slIncidentsPerMonth')}
+            suffix={isZH ? '次' : 'cases'}
+            hint="March 46"
           />
         </div>
+
+        {/* Staff Structure */}
+        <div className="mt-4 rounded-xl bg-slate-50 border border-slate-200 px-4 py-3">
+          <p className="text-[11px] font-semibold text-slate-700 mb-2">
+            {isZH ? '員工結構（全職／空缺）' : 'Staff Structure (Full-time / Vacancies)'}
+          </p>
+
+          <div className="grid grid-cols-2 gap-3 md:grid-cols-5">
+            <InputField
+              label={isZH ? 'RN 全職人數' : 'RN full-time headcount'}
+              value={inputs.rnCount}
+              onChange={set('rnCount')}
+              suffix={isZH ? '人' : 'staff'}
+            />
+            <InputField
+              label={isZH ? 'RN 空缺人數' : 'RN vacancy count'}
+              value={inputs.rnVacancy}
+              onChange={set('rnVacancy')}
+              suffix={isZH ? '人' : 'posts'}
+            />
+            <InputField
+              label={isZH ? 'EN 全職人數' : 'EN full-time headcount'}
+              value={inputs.enCount}
+              onChange={set('enCount')}
+              suffix={isZH ? '人' : 'staff'}
+            />
+            <InputField
+              label={isZH ? 'EN 空缺人數' : 'EN vacancy count'}
+              value={inputs.enVacancy}
+              onChange={set('enVacancy')}
+              suffix={isZH ? '人' : 'posts'}
+            />
+            <InputField
+              label={isZH ? 'HW 全職人數' : 'HW full-time headcount'}
+              value={inputs.hwCount}
+              onChange={set('hwCount')}
+              suffix={isZH ? '人' : 'staff'}
+            />
+            <InputField
+              label={isZH ? 'HW 空缺人數' : 'HW vacancy count'}
+              value={inputs.hwVacancy}
+              onChange={set('hwVacancy')}
+              suffix={isZH ? '人' : 'posts'}
+            />
+            <InputField
+              label={isZH ? 'HCA／RCW 全職人數' : 'HCA/RCW full-time headcount'}
+              value={inputs.hcaCount}
+              onChange={set('hcaCount')}
+              suffix={isZH ? '人' : 'staff'}
+            />
+            <InputField
+              label={isZH ? 'HCA／RCW 空缺人數' : 'HCA/RCW vacancy count'}
+              value={inputs.hcaVacancy}
+              onChange={set('hcaVacancy')}
+              suffix={isZH ? '人' : 'posts'}
+            />
+            <InputField
+              label={isZH ? 'AW／AA 全職人數' : 'AW/AA full-time headcount'}
+              value={inputs.awCount}
+              onChange={set('awCount')}
+              suffix={isZH ? '人' : 'staff'}
+            />
+            <InputField
+              label={isZH ? 'AW／AA 空缺人數' : 'AW/AA vacancy count'}
+              value={inputs.awVacancy}
+              onChange={set('awVacancy')}
+              suffix={isZH ? '人' : 'posts'}
+            />
+          </div>
+
+          <div className="mt-3 grid grid-cols-2 gap-3 md:grid-cols-4">
+            <InputField
+              label={isZH ? 'SW 社工人數' : 'SW social worker headcount'}
+              value={inputs.swCount}
+              onChange={set('swCount')}
+              suffix={isZH ? '人' : 'staff'}
+            />
+            <InputField
+              label={isZH ? 'PTA 人數' : 'PTA headcount'}
+              value={inputs.ptaCount}
+              onChange={set('ptaCount')}
+              suffix={isZH ? '人' : 'staff'}
+            />
+            <InputField
+              label={isZH ? 'OTA 人數' : 'OTA headcount'}
+              value={inputs.otaCount}
+              onChange={set('otaCount')}
+              suffix={isZH ? '人' : 'staff'}
+            />
+            <InputField
+              label={isZH ? 'PT／OT 人數' : 'PT/OT total headcount'}
+              value={inputs.ptCount + inputs.otCount}
+              onChange={v => {
+                const half = Math.round(v / 2)
+                setInputs(prev => ({ ...prev, ptCount: half, otCount: v - half }))
+              }}
+              suffix={isZH ? '人' : 'staff'}
+            />
+          </div>
+        </div>
+
         <div className="mt-3 rounded-xl bg-slate-50 border border-slate-100 px-3 py-2 flex items-center gap-3">
           <span className="text-[10px] text-slate-500">
-            {isZH ? '總員工人數' : 'Total staff'}: <strong className="text-slate-700">{r.totalStaff}</strong>
+            {isZH ? '總員工人數' : 'Total staff'}:{' '}
+            <strong className="text-slate-700">{r.totalStaff}</strong>
           </span>
           <span className="text-slate-300">|</span>
           <span className="text-[10px] text-slate-500">
-            {isZH ? 'NAAC Tier' : 'NAAC Tier'}: <strong style={{ color: PINK }}>Tier {r.tierDef.tier} ({r.tierDef.label})</strong>
+            NAAC Tier:{' '}
+            <strong style={{ color: PINK }}>
+              Tier {r.tierDef.tier} ({r.tierDef.label})
+            </strong>
           </span>
           <span className="text-slate-300">|</span>
           <span className="text-[10px] text-slate-500">
-            {isZH ? '5yr 月費/人' : '5yr rate/user'}: <strong className="text-slate-700">HK${r.tierRate}</strong>
+            5yr rate/user:{' '}
+            <strong className="text-slate-700">HK${r.tierRate}</strong>
           </span>
         </div>
       </div>
 
-      {/* ── Section 2: Admin Time Saving ──────────────────────────── */}
+      {/* Section 2: Part A — 管理時間節省 */}
       <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
         <div className="mb-3 flex items-center gap-2">
           <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-pink-50 text-pink-500 text-sm">⏱️</div>
           <h2 className="text-base font-semibold text-slate-800">
             {isZH ? 'Part A — 管理時間節省' : 'Part A — Admin Time Saving'}
           </h2>
-          <span className="ml-auto text-[9px] font-bold bg-pink-50 text-pink-500 px-2 py-0.5 rounded-full border border-pink-100">v2.2 FORMULA</span>
+          <span className="ml-auto text-[9px] font-bold bg-pink-50 text-pink-500 px-2 py-0.5 rounded-full border border-pink-100">
+            v2.2 FORMULA
+          </span>
         </div>
 
         {/* A1 */}
         <div className="mb-4 rounded-xl bg-blue-50 border border-blue-100 p-4">
-          <p className="text-xs font-bold text-blue-800 mb-2">A1 · {isZH ? '排班時間節省' : 'Roster Scheduling Time Saving'}</p>
+          <p className="text-xs font-bold text-blue-800 mb-2">
+            A1 · {isZH ? '排班時間節省' : 'Roster Scheduling Time Saving'}
+          </p>
           <div className="grid grid-cols-3 gap-3 mb-3">
             <div className="rounded-xl bg-white p-3 text-center border border-blue-100">
               <p className="text-[9px] text-slate-500 mb-1">{isZH ? '排班前（時/月）' : 'Roster Time Before'}</p>
@@ -475,7 +684,9 @@ export default function ROIPage() {
 
         {/* A2 */}
         <div className="rounded-xl bg-purple-50 border border-purple-100 p-4">
-          <p className="text-xs font-bold text-purple-800 mb-2">A2 · {isZH ? '緊急召喚節省 (SL/DSL)' : 'Emergency Cover Saving (SL/DSL Incidents)'}</p>
+          <p className="text-xs font-bold text-purple-800 mb-2">
+            A2 · {isZH ? '緊急召喚節省 (SL/DSL)' : 'Emergency Cover Saving (SL/DSL Incidents)'}
+          </p>
           <div className="grid grid-cols-3 gap-3 mb-3">
             <div className="rounded-xl bg-white p-3 text-center border border-purple-100">
               <p className="text-[9px] text-slate-500 mb-1">{isZH ? '每月事件數' : 'Monthly Incidents'}</p>
@@ -511,14 +722,16 @@ export default function ROIPage() {
         </div>
       </div>
 
-      {/* ── Section 3:  Agency Cost Saving ─────────────────────────── */}
+      {/* Section 3: Part B — Agency Cost Saving */}
       <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
         <div className="mb-3 flex items-center gap-2">
           <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-pink-50 text-pink-500 text-sm">🏥</div>
           <h2 className="text-base font-semibold text-slate-800">
             {isZH ? '兼職費用節省（5% 保守）' : 'Part B — Agency Cost Saving (5% Conservative)'}
           </h2>
-          <span className="ml-auto text-[9px] font-bold bg-pink-50 text-pink-500 px-2 py-0.5 rounded-full border border-pink-100">v2.2</span>
+          <span className="ml-auto text-[9px] font-bold bg-pink-50 text-pink-500 px-2 py-0.5 rounded-full border border-pink-100">
+            v2.2
+          </span>
         </div>
 
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 mb-4">
@@ -534,7 +747,7 @@ export default function ROIPage() {
           </div>
         </div>
 
-        {/* 3 scenarios */}
+        {/* 3 scenarios table */}
         <div className="rounded-xl border border-slate-200 overflow-hidden mb-4">
           <table className="w-full text-xs">
             <thead>
@@ -547,8 +760,8 @@ export default function ROIPage() {
             <tbody>
               {[
                 { scenario: isZH ? '保守 — 採用 ✓' : 'Conservative — USED ✓', pct: 5,  saving: r.agencySaving5,  note: isZH ? 'SWD 最低人手要求' : 'SWD minimum staffing floor', active: true },
-                { scenario: isZH ? '中間 — 參考'   : 'Mid case — ref only',   pct: 8,  saving: r.agencySaving8,  note: isZH ? 'Paper 1 pilot 參考' : 'Paper 1 pilot reference',   active: false },
-                { scenario: isZH ? '原始 — 移除'   : 'Original — REMOVED',    pct: 15, saving: r.agencySaving15, note: isZH ? '過於樂觀' : 'Overly optimistic',                 active: false },
+                { scenario: isZH ? '中間 — 參考'   : 'Mid case — ref only',    pct: 8,  saving: r.agencySaving8,  note: isZH ? 'Paper 1 pilot 參考' : 'Paper 1 pilot reference',      active: false },
+                { scenario: isZH ? '原始 — 移除'   : 'Original — REMOVED',     pct: 15, saving: r.agencySaving15, note: isZH ? '過於樂觀' : 'Overly optimistic',                      active: false },
               ].map(row => (
                 <tr key={row.pct} className={`border-b border-slate-100 ${row.active ? 'bg-pink-50' : ''}`}>
                   <td className={`px-3 py-2.5 font-semibold ${row.active ? 'text-pink-600' : 'text-slate-500'}`}>{row.scenario}</td>
@@ -577,7 +790,7 @@ export default function ROIPage() {
         </div>
       </div>
 
-      {/* ── Section 4: Savings Summary ──────────────────────────────────────── */}
+      {/* Section 4: Savings Summary */}
       <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
         <div className="mb-4 flex items-center gap-2">
           <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-pink-50 text-pink-500 text-sm">💰</div>
@@ -608,7 +821,7 @@ export default function ROIPage() {
         </div>
       </div>
 
-      {/* ── Section 5: Emma Cost vs ROI Banner ─────────────────────────────── */}
+      {/* Section 5: Emma Cost vs ROI */}
       <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
         <div className="mb-4 flex items-center gap-2">
           <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-pink-50 text-pink-500 text-sm">📊</div>
@@ -675,7 +888,7 @@ export default function ROIPage() {
         </div>
       </div>
 
-      {/* ── Section 6: Scale Calculator ──────────────────────── */}
+      {/* Section 6: Scale Calculator */}
       <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
         <div className="mb-4 flex items-center gap-2">
           <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-pink-50 text-pink-500 text-sm">📈</div>
@@ -703,7 +916,6 @@ export default function ROIPage() {
 
         <ScaleSlider isZH={isZH} />
       </div>
-
     </div>
   )
 }
