@@ -3,3 +3,9 @@
 
 # IDE
 /.idea/
+
+# Env files with real secrets — only .env.example is tracked.
+# The service_role key bypasses RLS, so a leak = full cross-tenant breach.
+.env
+.env.*
+!.env.example
