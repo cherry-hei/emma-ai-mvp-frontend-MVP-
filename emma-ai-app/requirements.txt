@@ -1,0 +1,23 @@
+# ── Emma AI · all-Python stack ────────────────────────────────
+# UI (compiles a React/Next frontend from Python; no hand-written JS)
+reflex>=0.6
+
+# REST API (documented contract + future mobile PWA)
+fastapi>=0.115
+uvicorn[standard]>=0.30
+
+# Data + Auth (Supabase: Postgres + GoTrue + RLS)
+supabase>=2.6
+psycopg[binary]>=3.2          # direct Postgres for migrations / seed
+python-dotenv>=1.0
+
+# Domain models / config / data
+pydantic>=2.7
+pydantic-settings>=2.3
+pandas>=2.2
+
+# Testing
+pytest>=8.0
+
+# NOTE: ortools (CP-SAT solver) is intentionally deferred to the
+# solver phase to keep the Phase 0/1 install light.

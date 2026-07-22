@@ -1,0 +1,164 @@
+"""Roster read + write. Pivots the shift/assignment slot model into the
+staff x day grid the UI shows, and handles manual CRUD + publish."""
+from __future__ import annotations
+
+import json
+
+from ..constants import AssignmentStatus, OverrideAction, PublishEvent, RosterStatus
+from ..models import RosterCell, RosterGrid, RosterRow, ShiftDef, StaffLite
+
+
+def _latest_version(client, facility_id: str, period_id: str | None = None):
+    q = client.table("roster_versions").select("*").eq("facility_id", facility_id)
+    if period_id:
+        q = q.eq("period_id", period_id)
+    rows = q.order("created_at", desc=True).limit(1).execute().data
+    return rows[0] if rows else None
+
+
+def get_roster_grid(client, facility_id: str, period_id: str | None = None) -> RosterGrid:
+    ver = _latest_version(client, facility_id, period_id)
+    if not ver:
+        return RosterGrid()
+
+    period = None
+    if ver.get("period_id"):
+        p = client.table("roster_periods").select("*").eq("id", ver["period_id"]).execute().data
+        period = p[0] if p else None
+
+    shifts = client.table("shifts").select("*").eq("roster_version_id", ver["id"]).execute().data
+    shift_by_id = {s["id"]: s for s in shifts}
+    shift_ids = list(shift_by_id)
+
+    assigns = []
+    if shift_ids:
+        assigns = (client.table("shift_assignments").select("*")
+                   .in_("shift_id", shift_ids).execute().data)
+
+    staff_rows = (client.table("staff").select("*, unit:facility_units(name)")
+                  .eq("facility_id", facility_id).order("created_at").execute().data)
+
+    dates = sorted({s["date"] for s in shifts})
+    cell_by: dict[tuple[str, str], tuple[dict, dict]] = {}
+    for a in assigns:
+        sh = shift_by_id.get(a["shift_id"])
+        if sh and a.get("staff_id"):
+            cell_by[(a["staff_id"], sh["date"])] = (sh, a)
+
+    rows: list[RosterRow] = []
+    for st in staff_rows:
+        unit = st.get("unit") or {}
+        cells: list[RosterCell] = []
+        for d in dates:
+            pair = cell_by.get((st["id"], d))
+            if pair:
+                sh, a = pair
+                cells.append(RosterCell(
+                    date=d, shift_type=sh["shift_type"], is_working=sh["is_working"],
+                    tasks=a.get("tasks") or [], assignment_id=a["id"], shift_id=sh["id"],
+                ))
+            else:
+                cells.append(RosterCell(date=d))
+        rows.append(RosterRow(
+            staff=StaffLite(
+                id=st["id"], name=st["name"], name_en=st.get("name_en"),
+                rank=st["rank"], employment_type=st["employment_type"],
+                unit_name=unit.get("name"),
+            ),
+            cells=cells,
+        ))
+
+    return RosterGrid(
+        version_id=ver["id"], status=ver["status"],
+        period_start=(period or {}).get("period_start"),
+        period_end=(period or {}).get("period_end"),
+        dates=dates, rows=rows,
+    )
+
+
+def get_shift_defs(client, facility_id: str) -> list[ShiftDef]:
+    rows = (client.table("shift_definitions").select("*")
+            .eq("facility_id", facility_id).order("is_working", desc=True)
+            .execute().data)
+    return [ShiftDef.model_validate(r) for r in rows]
+
+
+# ── manual edit (CRUD) ──────────────────────────────────────────────────────
+def set_cell(client, *, facility_id, roster_version_id, staff_id, date, shift_type,
+             shift_def: ShiftDef, tasks=None, changed_by=None):
+    """Upsert one staff/day cell: create/replace the shift + assignment for that
+    (staff, date). Logs the change to manual_override_log."""
+    tasks = tasks or []
+    existing_shifts = (client.table("shifts").select("id")
+                       .eq("roster_version_id", roster_version_id).eq("date", str(date))
+                       .execute().data)
+    existing_shift_ids = [s["id"] for s in existing_shifts]
+    old = None
+    if existing_shift_ids:
+        found = (client.table("shift_assignments").select("*")
+                 .in_("shift_id", existing_shift_ids).eq("staff_id", staff_id)
+                 .execute().data)
+        old = found[0] if found else None
+        for a in found:  # clear any prior cell for this staff/day
+            client.table("shift_assignments").delete().eq("id", a["id"]).execute()
+            client.table("shifts").delete().eq("id", a["shift_id"]).execute()
+
+    shift_id = (client.table("shifts").insert({
+        "facility_id": facility_id, "roster_version_id": roster_version_id,
+        "date": str(date), "shift_type": shift_type,
+        "start_time": shift_def.start_time, "end_time": shift_def.end_time,
+        "cross_midnight": shift_def.cross_midnight,
+        "is_working": shift_def.is_working,
+    }).execute().data[0]["id"])
+
+    assignment_id = (client.table("shift_assignments").insert({
+        "facility_id": facility_id, "shift_id": shift_id, "staff_id": staff_id,
+        "status": AssignmentStatus.ASSIGNED, "tasks": tasks,
+    }).execute().data[0]["id"])
+
+    client.table("manual_override_log").insert({
+        "facility_id": facility_id, "roster_version_id": roster_version_id,
+        "shift_assignment_id": assignment_id,
+        "action": OverrideAction.UPDATE if old else OverrideAction.CREATE,
+        "before_json": json.loads(json.dumps(old, default=str)) if old else None,
+        "after_json": {"shift_type": shift_type, "tasks": tasks},
+        "changed_by": changed_by,
+    }).execute()
+    return assignment_id
+
+
+def clear_cell(client, *, facility_id, roster_version_id, staff_id, date, changed_by=None):
+    existing_shifts = (client.table("shifts").select("id")
+                       .eq("roster_version_id", roster_version_id).eq("date", str(date))
+                       .execute().data)
+    ids = [s["id"] for s in existing_shifts]
+    if not ids:
+        return
+    found = (client.table("shift_assignments").select("*")
+             .in_("shift_id", ids).eq("staff_id", staff_id).execute().data)
+    for a in found:
+        client.table("shift_assignments").delete().eq("id", a["id"]).execute()
+        client.table("shifts").delete().eq("id", a["shift_id"]).execute()
+        client.table("manual_override_log").insert({
+            "facility_id": facility_id, "roster_version_id": roster_version_id,
+            "action": OverrideAction.DELETE,
+            "before_json": json.loads(json.dumps(a, default=str)),
+            "changed_by": changed_by,
+        }).execute()
+
+
+# ── publish workflow ────────────────────────────────────────────────────────
+def publish_version(client, *, facility_id, roster_version_id, created_by=None):
+    (client.table("roster_versions").update({"status": RosterStatus.PUBLISHED})
+     .eq("id", roster_version_id).execute())
+    client.table("roster_publish_events").insert({
+        "facility_id": facility_id, "roster_version_id": roster_version_id,
+        "event_type": PublishEvent.PUBLISH, "created_by": created_by,
+    }).execute()
+
+
+def save_draft(client, *, facility_id, roster_version_id, created_by=None):
+    client.table("roster_publish_events").insert({
+        "facility_id": facility_id, "roster_version_id": roster_version_id,
+        "event_type": PublishEvent.SAVE_DRAFT, "created_by": created_by,
+    }).execute()
