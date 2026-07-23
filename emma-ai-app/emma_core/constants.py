@@ -62,6 +62,43 @@ class OverrideAction(StrEnum):
     DELETE = "delete"
 
 
+# ── solver / optimization (Phase 2) ─────────────────────────────────────────
+class PlanMode(StrEnum):
+    """Roster option. Values match roster_versions.version_type."""
+    A = "A"   # Cost-Optimized
+    B = "B"   # Staff-Satisfaction
+    C = "C"   # Balanced
+
+
+class JobStatus(StrEnum):
+    PENDING = "pending"
+    RUNNING = "running"
+    COMPLETED = "completed"
+    FAILED = "failed"
+
+
+class SolveStatus(StrEnum):
+    OPTIMAL = "optimal"
+    FEASIBLE = "feasible"
+    INFEASIBLE = "infeasible"
+    UNKNOWN = "unknown"
+
+
+class ViolationCode(StrEnum):
+    COVERAGE = "coverage"
+    RATIO = "ratio"
+    REST = "rest"
+    OVERLAP = "overlap"
+    MAX_HOURS = "max_hours"
+    LEAVE = "leave"
+    ELIGIBILITY = "eligibility"
+
+
+# A roster option scoring below this has unresolved hard violations => not
+# safe to publish. Surfaced to the UI and enforced by the publish workflow.
+PUBLISH_THRESHOLD = 60
+
+
 # ── shift-cell display styling (background, foreground) ─────────────────────
 SHIFT_STYLE: dict[str, tuple[str, str]] = {
     "A": ("#DBEAFE", "#1E40AF"), "B": ("#CFFAFE", "#155E75"),

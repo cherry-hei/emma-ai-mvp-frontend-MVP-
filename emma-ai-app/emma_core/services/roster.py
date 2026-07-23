@@ -8,16 +8,29 @@ from ..constants import AssignmentStatus, OverrideAction, PublishEvent, RosterSt
 from ..models import RosterCell, RosterGrid, RosterRow, ShiftDef, StaffLite
 
 
-def _latest_version(client, facility_id: str, period_id: str | None = None):
+def _latest_version(client, facility_id: str, period_id: str | None = None,
+                    version_type: str | None = "manual", version_id: str | None = None):
+    """Newest roster version for a facility/period.
+
+    Defaults to the human ``manual`` roster so generated A/B/C options never
+    hijack the main roster view. Pass ``version_type=None`` for any type, or an
+    explicit ``version_id`` to open a specific option (e.g. a solver result)."""
+    if version_id:
+        rows = client.table("roster_versions").select("*").eq("id", version_id).execute().data
+        return rows[0] if rows else None
     q = client.table("roster_versions").select("*").eq("facility_id", facility_id)
     if period_id:
         q = q.eq("period_id", period_id)
+    if version_type:
+        q = q.eq("version_type", version_type)
     rows = q.order("created_at", desc=True).limit(1).execute().data
     return rows[0] if rows else None
 
 
-def get_roster_grid(client, facility_id: str, period_id: str | None = None) -> RosterGrid:
-    ver = _latest_version(client, facility_id, period_id)
+def get_roster_grid(client, facility_id: str, period_id: str | None = None, *,
+                    version_type: str | None = "manual", version_id: str | None = None) -> RosterGrid:
+    ver = _latest_version(client, facility_id, period_id,
+                          version_type=version_type, version_id=version_id)
     if not ver:
         return RosterGrid()
 
@@ -69,7 +82,7 @@ def get_roster_grid(client, facility_id: str, period_id: str | None = None) -> R
         ))
 
     return RosterGrid(
-        version_id=ver["id"], status=ver["status"],
+        version_id=ver["id"], period_id=ver.get("period_id"), status=ver["status"],
         period_start=(period or {}).get("period_start"),
         period_end=(period or {}).get("period_end"),
         dates=dates, rows=rows,
