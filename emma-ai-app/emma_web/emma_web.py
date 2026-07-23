@@ -134,6 +134,122 @@ def editor_dialog() -> rx.Component:
     )
 
 
+# ── AI roster options (Phase 2 solver) ───────────────────────────────────────
+def _kpi_row(label: str, value) -> rx.Component:
+    return rx.hstack(
+        rx.text(label, size="1", color="#64748B"),
+        rx.spacer(),
+        rx.text(value, size="1", weight="medium"),
+        width="100%",
+    )
+
+
+def option_card(opt) -> rx.Component:
+    return rx.card(
+        rx.vstack(
+            rx.hstack(
+                rx.badge(f"Plan {opt.plan_mode}", color_scheme="blue", variant="solid"),
+                rx.cond(
+                    opt.recommended,
+                    rx.badge("Recommended", color_scheme="grass", variant="soft"),
+                    rx.fragment()),
+                rx.spacer(),
+                rx.cond(
+                    opt.published,
+                    rx.badge("Published", color_scheme="green"),
+                    rx.fragment()),
+                width="100%", align="center"),
+            rx.heading(opt.title, size="4"),
+            rx.text(opt.optimizes_for, size="1", color="#64748B"),
+            rx.divider(),
+            rx.hstack(
+                rx.vstack(
+                    rx.text("Score", size="1", color="#64748B"),
+                    rx.cond(
+                        opt.publishable,
+                        rx.heading(opt.score, size="7", style={"color": "#16A34A"}),
+                        rx.heading(opt.score, size="7", style={"color": "#DC2626"})),
+                    spacing="0", align="start"),
+                rx.spacer(),
+                rx.vstack(
+                    rx.text("Hard gaps", size="1", color="#64748B"),
+                    rx.heading(opt.hard_violations, size="7"),
+                    spacing="0", align="end"),
+                width="100%", align="center"),
+            rx.divider(),
+            _kpi_row("Agency shifts", opt.kpi_agency),
+            _kpi_row("Overtime", opt.kpi_ot),
+            _kpi_row("Coverage gaps", opt.kpi_coverage_gap),
+            _kpi_row("Δ from manual", opt.kpi_deviation),
+            _kpi_row("Fairness spread", opt.kpi_fairness),
+            rx.cond(
+                opt.reason != "",
+                rx.box(opt.reason, style={
+                    "background": "#FEF3C7", "color": "#92400E", "borderRadius": "6px",
+                    "padding": "6px 8px", "fontSize": "12px", "width": "100%"}),
+                rx.fragment()),
+            rx.hstack(
+                rx.button("Preview", variant="soft", color_scheme="gray",
+                          on_click=AppState.view_option(opt.version_id, opt.title),
+                          disabled=opt.version_id == ""),
+                rx.spacer(),
+                rx.cond(
+                    opt.publishable,
+                    rx.button("Publish", on_click=AppState.publish_option(opt.version_id),
+                              disabled=opt.published),
+                    rx.tooltip(
+                        rx.button("Publish", disabled=True, variant="soft"),
+                        content="Unresolved coverage gaps — not safe to publish.")),
+                width="100%", align="center"),
+            spacing="2", width="100%", align="start"),
+        width="100%",
+    )
+
+
+def optimizer_section() -> rx.Component:
+    return rx.vstack(
+        rx.hstack(
+            rx.vstack(
+                rx.heading("AI roster options", size="5"),
+                rx.text("Generate three optimized rosters (Cost · Staff · Balanced) to compare.",
+                        size="1", color="#64748B"),
+                spacing="0", align="start"),
+            rx.spacer(),
+            rx.button(
+                rx.icon("sparkles", size=16), "Generate A / B / C",
+                on_click=AppState.generate_options, loading=AppState.generating, size="2"),
+            width="100%", align="center"),
+        rx.cond(
+            AppState.optimize_error != "",
+            rx.text(AppState.optimize_error, color="#DC2626", size="2"),
+            rx.fragment()),
+        rx.cond(
+            AppState.has_options,
+            rx.grid(rx.foreach(AppState.options, option_card),
+                    columns=rx.breakpoints(initial="1", md="3"), spacing="3", width="100%"),
+            rx.fragment()),
+        spacing="3", width="100%",
+    )
+
+
+def preview_banner() -> rx.Component:
+    return rx.cond(
+        AppState.previewing,
+        rx.hstack(
+            rx.icon("eye", size=16, color="#2563EB"),
+            rx.text("Previewing option ", size="2"),
+            rx.text(AppState.viewing_label, size="2", weight="bold"),
+            rx.text(" (draft) — this view is read-only.", size="2"),
+            rx.spacer(),
+            rx.button("Back to manual roster", size="1", variant="soft",
+                      on_click=AppState.back_to_manual),
+            width="100%", align="center", padding="8px 12px",
+            style={"background": "#EFF6FF", "borderRadius": "8px",
+                   "border": "1px solid #BFDBFE"}),
+        rx.fragment(),
+    )
+
+
 # ── pages ───────────────────────────────────────────────────────────────────
 def roster_page() -> rx.Component:
     return rx.vstack(
@@ -151,9 +267,16 @@ def roster_page() -> rx.Component:
                 rx.button("Publish roster", on_click=AppState.publish,
                           disabled=AppState.is_published),
                 width="100%", align="center"),
-            rx.text("Tip: click any cell to edit the shift.", size="1", color="#94A3B8"),
+            rx.cond(
+                AppState.previewing,
+                rx.text("Preview is read-only. Return to the manual roster to edit.",
+                        size="1", color="#94A3B8"),
+                rx.text("Tip: click any cell to edit the shift.", size="1", color="#94A3B8")),
+            preview_banner(),
             roster_table(),
             ratio_card(),
+            rx.divider(),
+            optimizer_section(),
             spacing="4", padding="20px", width="100%", style={"maxWidth": "1200px"}),
         editor_dialog(),
         width="100%", align="center", spacing="0",

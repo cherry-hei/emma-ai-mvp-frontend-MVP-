@@ -35,7 +35,15 @@ def _overlaps(s_start: int | None, s_end: int | None, w_start: int, w_end: int) 
     return False
 
 
-def compute_ratios(client, facility_id: str, on_date) -> list[RatioResult]:
+def compute_ratios(client, facility_id: str, on_date, *,
+                   roster_version_id: str | None = None) -> list[RatioResult]:
+    """Ratio check for a single day.
+
+    Pass ``roster_version_id`` to scope the count to one roster version. This is
+    important once auto A/B/C drafts exist: their shifts land on the same dates as
+    the manual roster, so an unscoped count double-counts staff across versions
+    and would falsely pass. Callers showing a specific roster should always scope.
+    """
     d = str(on_date)
 
     residents = sum(r["resident_count"] for r in (
@@ -46,9 +54,11 @@ def compute_ratios(client, facility_id: str, on_date) -> list[RatioResult]:
              .or_(f"facility_id.eq.{facility_id},facility_id.is.null")
              .eq("active", True).execute().data)
 
-    shifts = (client.table("shifts").select("*")
-              .eq("facility_id", facility_id).eq("date", d)
-              .eq("is_working", True).execute().data)
+    shifts_q = (client.table("shifts").select("*")
+                .eq("facility_id", facility_id).eq("date", d).eq("is_working", True))
+    if roster_version_id:
+        shifts_q = shifts_q.eq("roster_version_id", roster_version_id)
+    shifts = shifts_q.execute().data
     shift_by = {s["id"]: s for s in shifts}
     assigns = []
     if shift_by:

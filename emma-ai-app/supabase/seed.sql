@@ -1,0 +1,8 @@
+-- Emma AI seeds its demo data via Python (scripts/seed.py), NOT SQL, because the
+-- seed also provisions GoTrue auth users + profiles (see CLOUD_SETUP.md). This
+-- file exists only so `supabase db reset` finds the seed path declared in
+-- config.toml ([db.seed] sql_paths) without printing a "no files matched" warning.
+-- It intentionally inserts nothing.
+--
+--   Fresh local dev:        supabase db reset  &&  python scripts/seed.py
+--   Fresh cloud test/prod:  supabase db push   (prod starts empty; seed TEST only)

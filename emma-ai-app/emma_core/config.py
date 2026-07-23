@@ -20,10 +20,30 @@ APP_ROOT = Path(__file__).resolve().parent.parent  # emma-ai-app/
 
 
 def _env_file() -> Path:
-    """Pick the .env file for the active APP_ENV, falling back to .env."""
+    """Pick the .env file for the active APP_ENV.
+
+    Local dev uses ``.env``. A cloud env (``test``/``production``) uses its own
+    ``.env.<env>`` file. If that file is absent we must NOT silently fall back to
+    the local ``.env`` — that would point a "production" run at the dev database.
+    A missing cloud file is only acceptable when config is supplied via real OS
+    env vars (container / CI, where ``SUPABASE_URL`` is set); otherwise we fail
+    loudly with an actionable message.
+    """
     env = os.getenv("APP_ENV", "development").strip().lower()
+    if env in ("", "development"):
+        return APP_ROOT / ".env"
+
     candidate = APP_ROOT / f".env.{env}"
-    return candidate if candidate.exists() else APP_ROOT / ".env"
+    if candidate.exists():
+        return candidate
+    if os.getenv("SUPABASE_URL"):
+        return candidate  # missing file is ignored; OS env vars provide the config
+    raise FileNotFoundError(
+        f"APP_ENV={env} but neither {candidate.name} nor a SUPABASE_URL environment "
+        f"variable is set. Create {candidate.name} from .env.example (see CLOUD_SETUP.md), "
+        f"or provide SUPABASE_URL/keys via the environment. Refusing to fall back to the "
+        f"local dev database for a '{env}' run."
+    )
 
 
 class Settings(BaseSettings):
