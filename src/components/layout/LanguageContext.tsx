@@ -52,13 +52,13 @@ interface LangCtx {
 }
 
 const LangContext = createContext<LangCtx>({
-  lang: 'zh',
+  lang: 'en',
   setLang: () => {},
   t: (k) => k,
 })
 
 export function LanguageProvider({ children }: { children: ReactNode }) {
-  const [lang, setLang] = useState<Lang>('zh')
+  const [lang, setLang] = useState<Lang>('en')
   const t = (key: string) => (lang === 'zh' ? ZH[key] : EN[key]) ?? key
   return (
     <LangContext.Provider value={{ lang, setLang, t }}>

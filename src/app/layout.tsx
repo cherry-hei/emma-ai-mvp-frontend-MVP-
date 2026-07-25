@@ -14,7 +14,7 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="zh-HK">
+    <html lang="en">
       <body className={inter.className}>
         <LanguageProvider>
           <div className="flex h-screen overflow-hidden bg-gray-50">
