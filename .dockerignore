@@ -1,0 +1,28 @@
+# Reflex build output — regenerated fresh inside the image
+**/.web
+**/.states
+.reflex
+
+# Python caches
+**/__pycache__
+**/*.pyc
+**/*.pyo
+
+# Secrets & local env (NEVER ship these into the image)
+**/.env
+**/.env.*
+!**/.env.example
+
+# VCS / IDE / OS
+.git
+.gitignore
+.idea
+.vscode
+**/.DS_Store
+
+# Local Supabase state (Docker volumes / temp)
+emma-ai-app/supabase/.branches
+emma-ai-app/supabase/.temp
+
+# Node deps from the local checkout (image installs its own)
+**/node_modules

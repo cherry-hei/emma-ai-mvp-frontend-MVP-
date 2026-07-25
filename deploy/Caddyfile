@@ -1,0 +1,19 @@
+# Single origin on $PORT: static frontend + reverse-proxy to the Reflex backend.
+# App Runner sends public HTTPS traffic to this port (default 8080).
+:{$PORT:8080}
+
+encode gzip zstd
+
+# Backend (Reflex) routes: websocket events, health ping, and file uploads.
+# reverse_proxy handles the websocket upgrade for /_event automatically.
+@backend path /_event /_event/* /ping /_upload /_upload/*
+handle @backend {
+	reverse_proxy localhost:{$BACKEND_PORT:8000}
+}
+
+# Everything else = the exported static frontend (Next.js static export).
+root * /app/.web/_static
+route {
+	try_files {path} {path}/ /404.html
+	file_server
+}
