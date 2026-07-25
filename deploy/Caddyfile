@@ -11,9 +11,10 @@ handle @backend {
 	reverse_proxy localhost:{$BACKEND_PORT:8000}
 }
 
-# Everything else = the exported static frontend (Next.js static export).
-root * /app/.web/_static
-route {
-	try_files {path} {path}/ /404.html
+# Static frontend. Reflex 0.9 (React Router + Vite) exports to .web/build/client:
+# prerendered pages (index.html, roster.html) + a SPA shell for client-side routes.
+handle {
+	root * /app/.web/build/client
+	try_files {path} {path}.html {path}/ /__spa-fallback.html
 	file_server
 }
