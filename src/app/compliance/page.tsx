@@ -302,7 +302,7 @@ export default function CompliancePage() {
   const [tab, setTab] = useState<'ratio' | 'certs' | 'agency' | 'audit'>('ratio')
 
   const [inputs, setInputs] = useState<ComplianceInputs>({
-    totalResidents: 105,
+    totalResidents: 100,
     ftRnPerAShift: 1, ftRnPerPShift: 1,
     ftEnPerAShift: 1, ftEnPerPShift: 1,
     ftHwPerAShift: 4, ftHwPerPShift: 3,
@@ -313,15 +313,46 @@ export default function CompliancePage() {
     ftRcwCount: 19, ftRcwAvgWorkDays: 16, ptRcwShiftsMonth: 111,
   })
 
-  // 從 roster 讀取「實際住客數」
+  // Real-time staffing from roster
+  interface RosterStaffRow { position: string; name: string; days: { shiftCode?: string }[] }
+  const [rosterData, setRosterData] = useState<RosterStaffRow[]>([])
+  const [selectedDay, setSelectedDay] = useState(0) // 0=Mon of current week
+
   useEffect(() => {
-    if (typeof window === 'undefined') return
-    const stored = window.localStorage.getItem('emma-total-residents')
-    if (!stored) return
-    const value = Number(stored)
-    if (Number.isNaN(value) || value <= 0) return
-    setInputs(prev => ({ ...prev, totalResidents: value }))
+    fetch('/api/naac-week?week=1')
+      .then(r => r.json())
+      .then(d => setRosterData(d.rows || []))
+      .catch(() => {})
   }, [])
+
+  // Compute real-time staffing from roster for selected day
+  const rosterStaffing = useMemo(() => {
+    if (!rosterData.length) return { careWorkers: 0, nursesHW: 0, outsourced: 0, totalCW: 0 }
+    const CW_POSITIONS = ['助理員', '廚師', '廚房助理', '工友']
+    const NURSE_POSITIONS = ['護士', '保健員']
+    const OUTSOURCED_POSITIONS = ['替假']
+    let careWorkers = 0
+    let nursesHW = 0
+    let outsourced = 0
+    let totalCW = 0
+    for (const row of rosterData) {
+      const dayShift = row.days[selectedDay]?.shiftCode || ''
+      if (!dayShift || dayShift === 'O' || dayShift === 'O,' || dayShift === 'PH' || dayShift.startsWith('AL') || dayShift.startsWith('SL') || dayShift === 'NO') continue
+      const isCW = CW_POSITIONS.some(p => row.position.includes(p))
+      const isNurse = NURSE_POSITIONS.some(p => row.position.includes(p))
+      const isOutsourced = OUTSOURCED_POSITIONS.some(p => row.position.includes(p))
+      if (isCW || isOutsourced) {
+        totalCW++
+        if (isOutsourced) outsourced++
+        else careWorkers++
+      }
+      if (isNurse) nursesHW++
+    }
+    return { careWorkers, nursesHW, outsourced, totalCW }
+  }, [rosterData, selectedDay])
+
+  const outsourcedRatio = rosterStaffing.totalCW > 0 ? Math.round(rosterStaffing.outsourced / rosterStaffing.totalCW * 100) : 0
+  const outsourcedStatus = outsourcedRatio > 50 ? 'over' : outsourcedRatio > 40 ? 'warn' : 'ok'
 
   const set = (key: keyof ComplianceInputs, v: number) =>
     setInputs(p => ({ ...p, [key]: v }))
@@ -454,13 +485,12 @@ export default function CompliancePage() {
                 <thead>
                   <tr className="bg-gray-50 border-b border-gray-100">
                     {[
-                      t('col_role'),
-                      t('col_ft'),
-                      t('col_agency'),
-                      t('col_total'),
-                      t('col_min'),
-                      t('col_pt'),
-                      t('col_status'),
+                      lang === 'zh' ? '職位類別' : 'Role Category',
+                      lang === 'zh' ? '全職 (FT)' : 'Full-time (FT)',
+                      lang === 'zh' ? '外判/替假' : 'Outsourced/Relief',
+                      lang === 'zh' ? '總數' : 'Total',
+                      lang === 'zh' ? 'PT上限 (≤FT/2)' : 'PT Cap (≤FT/2)',
+                      lang === 'zh' ? '狀態' : 'Status',
                     ].map(h => (
                       <th
                         key={h}
@@ -472,114 +502,89 @@ export default function CompliancePage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {r.checks.map(c => (
-                    <tr
-                      key={c.label}
-                      className="border-b border-gray-50 hover:bg-gray-50/50"
-                    >
-                      <td className="px-3 py-2.5 font-semibold text-gray-700">
-                        {c.label}
-                      </td>
-                      <td className="px-3 py-2.5 text-gray-600">{c.ft}</td>
-                      <td className="px-3 py-2.5 text-gray-600">{c.agency}</td>
-                      <td className="px-3 py-2.5 font-bold text-gray-800">
-                        {c.total}
-                      </td>
-                      <td className="px-3 py-2.5 text-gray-600">
-                        {c.minReq}
-                      </td>
-                      <td className="px-3 py-2.5 text-gray-500">
-                        {c.ptCap ?? '—'}
-                      </td>
-                      <td className="px-3 py-2.5">
-                        <StatusBadge s={c.ok ? 'ok' : 'over'} />
-                      </td>
-                    </tr>
-                  ))}
+                  {r.checks.map(c => {
+                    const ptCap = Math.floor(c.ft / 2)
+                    const ptOk = c.agency <= ptCap
+                    return (
+                      <tr
+                        key={c.label}
+                        className="border-b border-gray-50 hover:bg-gray-50/50"
+                      >
+                        <td className="px-3 py-2.5 font-semibold text-gray-700">
+                          {c.label}
+                        </td>
+                        <td className="px-3 py-2.5 text-gray-600">{c.ft}</td>
+                        <td className="px-3 py-2.5 text-gray-600">{c.agency}</td>
+                        <td className="px-3 py-2.5 font-bold text-gray-800">
+                          {c.total}
+                        </td>
+                        <td className="px-3 py-2.5 text-gray-500">
+                          {ptCap} ({lang === 'zh' ? `即FT${c.ft}÷2` : `FT${c.ft}÷2`})
+                        </td>
+                        <td className="px-3 py-2.5">
+                          <StatusBadge s={ptOk ? 'ok' : 'over'} />
+                        </td>
+                      </tr>
+                    )
+                  })}
                 </tbody>
               </table>
             </div>
           </div>
 
-          {/* RCW PT ratio */}
+          {/* Real-time Staffing Ratios from Roster */}
           <div className="bg-white border border-gray-200 rounded-xl p-5">
             <h2 className="text-sm font-semibold text-gray-900 mb-4">
-              {t('rcw_title')}
+              {lang === 'zh' ? '即時人手比例（從更表讀取）' : 'Real-time Staffing Ratios (from Roster)'}
             </h2>
-            <div className="grid grid-cols-2 gap-3 mb-4 sm:grid-cols-4">
-              <InputField
-                label={t('rcw_ft')}
-                value={inputs.ftRcwCount}
-                onChange={v => set('ftRcwCount', v)}
-                suffix={t('suffix_person')}
-                hint="March:19"
-              />
-              <InputField
-                label={t('rcw_days')}
-                value={inputs.ftRcwAvgWorkDays}
-                onChange={v => set('ftRcwAvgWorkDays', v)}
-                suffix={t('suffix_day')}
-                hint="avg:16"
-              />
-              <InputField
-                label={t('rcw_pt')}
-                value={inputs.ptRcwShiftsMonth}
-                onChange={v => set('ptRcwShiftsMonth', v)}
-                suffix={t('suffix_shift')}
-                hint="March:111"
-              />
-              <div className="flex flex-col justify-center p-3 rounded-xl bg-gray-50 border border-gray-100">
-                <div className="text-[10px] text-gray-500 mb-1">
-                  {t('rcw_max_pt')}
+            <div className="flex items-center gap-3 mb-4">
+              <span className="text-xs text-gray-500">{lang === 'zh' ? '選擇日期：' : 'Select day:'}</span>
+              {['一','二','三','四','五','六','日'].map((d, i) => (
+                <button key={i} onClick={() => setSelectedDay(i)}
+                  className={`px-2.5 py-1 text-xs rounded-lg border ${selectedDay === i ? 'bg-pink-50 border-pink-300 text-pink-700 font-bold' : 'border-gray-200 text-gray-600'}`}>
+                  {d}
+                </button>
+              ))}
+            </div>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+              <div className="rounded-xl border border-blue-200 bg-blue-50 p-3">
+                <div className="text-[10px] text-blue-600 font-semibold mb-1">
+                  {lang === 'zh' ? '護理員 (07:00–17:00)' : 'Care Workers (07:00–17:00)'}
                 </div>
-                <div className="text-lg font-bold text-gray-800">
-                  {r.maxPtShifts}
-                </div>
-                <div className="text-[10px] text-gray-400">
-                  {r.ftShifts} × 50%
+                <div className="text-xl font-bold text-blue-800">{rosterStaffing.careWorkers}</div>
+                <div className="text-[10px] text-blue-500 mt-1">
+                  {lang === 'zh' ? `比例 1:${rosterStaffing.careWorkers > 0 ? Math.round(inputs.totalResidents / rosterStaffing.careWorkers) : '—'}` : `Ratio 1:${rosterStaffing.careWorkers > 0 ? Math.round(inputs.totalResidents / rosterStaffing.careWorkers) : '—'}`}
                 </div>
               </div>
-            </div>
-            <div className="mb-1 flex justify-between text-xs text-slate-500">
-              <span>{t('pt_usage')}</span>
-              <span
-                className={`font-bold tabular-nums ${
-                  r.ptStatus === 'over'
-                    ? 'text-red-600'
-                    : r.ptStatus === 'warn'
-                    ? 'text-amber-600'
-                    : 'text-emerald-600'
-                }`}
-              >
-                {r.usagePct}% / 50%
-              </span>
-            </div>
-            <div className="relative h-3 w-full rounded-full bg-gray-100 overflow-hidden mb-1">
-              <div
-                className="h-full rounded-full transition-all duration-700"
-                style={{
-                  width: `${Math.min((r.usagePct / 50) * 100, 100)}%`,
-                  background:
-                    r.ptStatus === 'over'
-                      ? '#ef4444'
-                      : r.ptStatus === 'warn'
-                      ? '#f97316'
-                      : '#10b981',
-                }}
-              />
-            </div>
-            <div
-              className={`text-xs font-semibold mt-2 text-center rounded-lg py-1 ${
-                r.remaining >= 0
-                  ? 'bg-emerald-50 text-emerald-700'
-                  : 'bg-red-100 text-red-700'
-              }`}
-            >
-              {r.remaining >= 0
-                ? `${t('rcw_remaining')}: ${r.remaining} ${t('suffix_shift')}`
-                : `${t('rcw_exceeded')} ${Math.abs(
-                    r.remaining
-                  )} ${t('suffix_shift')}`}
+              <div className="rounded-xl border border-green-200 bg-green-50 p-3">
+                <div className="text-[10px] text-green-600 font-semibold mb-1">
+                  {lang === 'zh' ? '護士+保健員 (07:00–20:00)' : 'Nurses+HW (07:00–20:00)'}
+                </div>
+                <div className="text-xl font-bold text-green-800">{rosterStaffing.nursesHW}</div>
+                <div className="text-[10px] text-green-500 mt-1">
+                  {lang === 'zh' ? `比例 1:${rosterStaffing.nursesHW > 0 ? Math.round(inputs.totalResidents / rosterStaffing.nursesHW) : '—'}` : `Ratio 1:${rosterStaffing.nursesHW > 0 ? Math.round(inputs.totalResidents / rosterStaffing.nursesHW) : '—'}`}
+                </div>
+              </div>
+              <div className="rounded-xl border border-orange-200 bg-orange-50 p-3">
+                <div className="text-[10px] text-orange-600 font-semibold mb-1">
+                  {lang === 'zh' ? '外判/替假人數' : 'Outsourced/Relief'}
+                </div>
+                <div className="text-xl font-bold text-orange-800">{rosterStaffing.outsourced}</div>
+                <div className="text-[10px] text-orange-500 mt-1">
+                  {lang === 'zh' ? `佔護理員 ${outsourcedRatio}%` : `${outsourcedRatio}% of care workers`}
+                </div>
+              </div>
+              <div className={`rounded-xl border p-3 ${outsourcedStatus === 'ok' ? 'border-emerald-200 bg-emerald-50' : outsourcedStatus === 'warn' ? 'border-amber-200 bg-amber-50' : 'border-red-200 bg-red-50'}`}>
+                <div className="text-[10px] font-semibold mb-1" style={{ color: outsourcedStatus === 'ok' ? '#059669' : outsourcedStatus === 'warn' ? '#d97706' : '#dc2626' }}>
+                  {lang === 'zh' ? '外購/替假比例 (Cap.459A)' : 'Outsourced Ratio (Cap.459A)'}
+                </div>
+                <div className="text-xl font-bold" style={{ color: outsourcedStatus === 'ok' ? '#059669' : outsourcedStatus === 'warn' ? '#d97706' : '#dc2626' }}>
+                  {outsourcedRatio}%
+                </div>
+                <div className="text-[10px] mt-1" style={{ color: outsourcedStatus === 'ok' ? '#059669' : outsourcedStatus === 'warn' ? '#d97706' : '#dc2626' }}>
+                  {lang === 'zh' ? '上限 50%' : 'Cap: 50%'} · <StatusBadge s={outsourcedStatus} />
+                </div>
+              </div>
             </div>
           </div>
         </div>

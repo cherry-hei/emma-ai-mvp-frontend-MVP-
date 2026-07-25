@@ -329,7 +329,7 @@ export default function StaffPage() {
 
   const L = {
     title:     isZH ? 'Staff Portfolio 員工檔案'              : 'Staff Portfolio',
-    subtitle:  isZH ? `${STAFF.length} 位員工 · Haven 安老院` : `${STAFF.length} staff members · Haven Elderly Home`,
+    subtitle:  isZH ? `${STAFF.length} 位員工 · NAAC大興宿舍` : `${STAFF.length} staff members · NAAC Tai Hing Hostel`,
     add_staff: isZH ? '＋ 新增員工'                           : '＋ Add Staff',
     search_ph: isZH ? '🔍 搜尋員工...'                        : '🔍 Search staff...',
     skills:    isZH ? '技能'                                  : 'Skills',

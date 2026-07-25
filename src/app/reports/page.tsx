@@ -330,6 +330,39 @@ export default function ReportsPage() {
       {tab === 'scheduled' && (
         <div className="space-y-4">
           <p className="text-xs text-gray-500">{t.scheduledDesc}</p>
+
+          {/* Shift Reports Section */}
+          <div className="rounded-2xl border border-slate-200 bg-white p-5">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-blue-50 text-2xl">📅</div>
+              <div>
+                <h3 className="text-sm font-bold text-slate-800">{lang === 'zh' ? '更期報告 / Shift Reports' : 'Shift Reports'}</h3>
+                <p className="text-[11px] text-slate-400 mt-0.5">{lang === 'zh' ? '從 TAHDuty Week 1–6 生成報告' : 'Generated from TAHDuty Week 1–6'}</p>
+              </div>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+              {[
+                { id: 'hours', icon: '⏰', zh: '工時報告 (Hours)', en: 'Hours Report', desc_zh: '各員工6週總工時', desc_en: 'Total hours per staff over 6 weeks' },
+                { id: 'ph-dayoff', icon: '📅', zh: 'PH & Day Off 報告', en: 'PH & Day Off Report', desc_zh: '公眾假期及休班日統計', desc_en: 'Public holidays & day off counts' },
+                { id: 'do-count', icon: '📊', zh: 'DO更次數報告', en: 'DO Shift Count Report', desc_zh: '休班日次數及平均工時', desc_en: 'Day off counts & avg hours between DOs' },
+                { id: 'ap-shifts', icon: '⚖️', zh: 'AP更分配報告', en: 'A/P Shift Distribution', desc_zh: 'A更與P更分配公平性', desc_en: 'A vs P shift fairness per staff' },
+                { id: 'night-gender', icon: '🌙', zh: 'N更男女報告', en: 'Night Shift Gender Report', desc_zh: '通宵更按性別分配', desc_en: 'Night shift distribution by gender' },
+              ].map(report => (
+                <a
+                  key={report.id}
+                  href={`/api/shift-report?type=${report.id}`}
+                  className="rounded-xl border border-gray-200 p-3 hover:border-pink-200 hover:bg-pink-50/30 transition-all block"
+                >
+                  <div className="flex items-center gap-2 mb-1">
+                    <span className="text-lg">{report.icon}</span>
+                    <span className="text-xs font-semibold text-gray-800">{lang === 'zh' ? report.zh : report.en}</span>
+                  </div>
+                  <div className="text-[10px] text-gray-500">{lang === 'zh' ? report.desc_zh : report.desc_en}</div>
+                </a>
+              ))}
+            </div>
+          </div>
+
           {SCHEDULED_REPORTS.map(r => (
             <div key={r.name.zh} className="rounded-2xl border border-slate-200 bg-white p-5">
               <div className="flex items-start justify-between mb-4">

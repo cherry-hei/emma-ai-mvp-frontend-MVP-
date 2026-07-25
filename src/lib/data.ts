@@ -59,7 +59,7 @@ export const ROSTER: RosterRow[] = [
   ]},
 ]
 
-export const DAYS = ['MON 23/3','TUE 24/3','WED 25/3','THU 26/3','FRI 27/3','SAT 28/3','SUN 29/3']
+export const DAYS = ['MON 8/6','TUE 9/6','WED 10/6','THU 11/6','FRI 12/6','SAT 13/6','SUN 14/6']
 
 export const KPI = {
   staffingRatio: '1:20',

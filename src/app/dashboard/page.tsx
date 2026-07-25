@@ -41,7 +41,7 @@ export default function DashboardPage() {
   const L = {
     zh: {
       title:          '儀表板',
-      subtitle:       'Haven 康寧安老院 · March 2026',
+      subtitle:       'NAAC大興宿舍 · June 2026',
       kpi_sl:         'March SL/DSL 總事件',
       kpi_sl_sub:     'March 2026 實際',
       kpi_ai:         'Emma AI 自動處理',
@@ -73,7 +73,7 @@ export default function DashboardPage() {
     },
     en: {
       title:          'Dashboard',
-      subtitle:       'Haven Care Home · March 2026',
+      subtitle:       'NAAC Tai Hing Hostel · June 2026',
       kpi_sl:         'March SL/DSL Events',
       kpi_sl_sub:     'March 2026 Actual',
       kpi_ai:         'Auto-resolved by AI',

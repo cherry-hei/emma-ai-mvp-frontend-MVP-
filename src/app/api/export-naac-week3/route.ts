@@ -1,0 +1,441 @@
+import { NextResponse } from "next/server"
+
+interface NaacShiftDay {
+  mealCode?: string
+  shiftCode?: string
+  taskCode?: string
+}
+
+interface NaacShiftRow {
+  staffId: number
+  position: string
+  name: string
+  days: NaacShiftDay[]
+}
+
+// Week3 dates: 2026-06-08 (Mon) to 2026-06-14 (Sun)
+const WEEK3_DATES = [
+  "2026-06-08",
+  "2026-06-09",
+  "2026-06-10",
+  "2026-06-11",
+  "2026-06-12",
+  "2026-06-13",
+  "2026-06-14",
+]
+
+// Same data as /api/naac-week3
+const WEEK3_ROWS: NaacShiftRow[] = [
+  { staffId: 101, position: "主任", name: "主任", days: [
+    { mealCode: ">1", shiftCode: "A9", taskCode: "" },
+    { mealCode: ">1", shiftCode: "A9", taskCode: "" },
+    { mealCode: ">1", shiftCode: "A9", taskCode: "" },
+    { mealCode: ">1", shiftCode: "A9", taskCode: "m1" },
+    { mealCode: ">1", shiftCode: "A9", taskCode: "" },
+    { mealCode: "", shiftCode: "O", taskCode: "" },
+    { mealCode: ">1", shiftCode: "A9", taskCode: "家" },
+  ]},
+  { staffId: 102, position: "社工 1(副主任)", name: "社工 1(副主任)", days: [
+    { mealCode: "<630", shiftCode: "P2", taskCode: "" },
+    { mealCode: "", shiftCode: "G10s", taskCode: "z1" },
+    { mealCode: ">1", shiftCode: "A9", taskCode: "" },
+    { mealCode: ">1", shiftCode: "A9", taskCode: "m1" },
+    { mealCode: "<615", shiftCode: "P2", taskCode: "" },
+    { mealCode: "", shiftCode: "O", taskCode: "" },
+    { mealCode: ">1", shiftCode: "A9", taskCode: "家" },
+  ]},
+  { staffId: 103, position: "社工 2", name: "社工 2", days: [
+    { mealCode: ">1", shiftCode: "A7", taskCode: "" },
+    { mealCode: "<615", shiftCode: "P2", taskCode: "(#)" },
+    { mealCode: ">1", shiftCode: "B9", taskCode: "" },
+    { mealCode: ">1", shiftCode: "A9", taskCode: "m1" },
+    { mealCode: "", shiftCode: "O", taskCode: "" },
+    { mealCode: ">1", shiftCode: "A9", taskCode: "" },
+    { mealCode: ">1", shiftCode: "A9", taskCode: "家" },
+  ]},
+  { staffId: 104, position: "社工 3", name: "社工 3", days: [
+    { mealCode: ">1", shiftCode: "A9", taskCode: "" },
+    { mealCode: "", shiftCode: "CL-8", taskCode: "" },
+    { mealCode: "<630", shiftCode: "A1", taskCode: "" },
+    { mealCode: "<630", shiftCode: "P2", taskCode: "(#)" },
+    { mealCode: ">1", shiftCode: "A9", taskCode: "" },
+    { mealCode: "", shiftCode: "O", taskCode: "" },
+    { mealCode: ">1", shiftCode: "A9", taskCode: "家" },
+  ]},
+  { staffId: 105, position: "護士1", name: "護士1", days: [
+    { mealCode: "<1230", shiftCode: "A7", taskCode: "^" },
+    { mealCode: "", shiftCode: "O", taskCode: "" },
+    { mealCode: "<615", shiftCode: "A1", taskCode: "^" },
+    { mealCode: ">1", shiftCode: "A10", taskCode: "*5'm1" },
+    { mealCode: "<1230", shiftCode: "A7", taskCode: "^ot3-4p" },
+    { mealCode: "<1230", shiftCode: "A7", taskCode: "^" },
+    { mealCode: "", shiftCode: "O", taskCode: "" },
+  ]},
+  { staffId: 106, position: "護士2", name: "護士2", days: [
+    { mealCode: "<615", shiftCode: "A1", taskCode: "^" },
+    { mealCode: "<1230", shiftCode: "A7", taskCode: "^ot3-4p" },
+    { mealCode: "<1230", shiftCode: "A7", taskCode: "^" },
+    { mealCode: "", shiftCode: "PH", taskCode: "補1/5" },
+    { mealCode: "", shiftCode: "O", taskCode: "" },
+    { mealCode: "<6", shiftCode: "A1", taskCode: "^vp" },
+    { mealCode: "<1230", shiftCode: "A7", taskCode: "^ot3-4p" },
+  ]},
+  { staffId: 107, position: "護士3", name: "護士3", days: [
+    { mealCode: "", shiftCode: "", taskCode: "" },
+    { mealCode: "", shiftCode: "", taskCode: "" },
+    { mealCode: "", shiftCode: "", taskCode: "" },
+    { mealCode: "", shiftCode: "", taskCode: "" },
+    { mealCode: "", shiftCode: "", taskCode: "" },
+    { mealCode: "", shiftCode: "", taskCode: "" },
+    { mealCode: "", shiftCode: "", taskCode: "" },
+  ]},
+  { staffId: 108, position: "保健員 1", name: "保健員 1", days: [
+    { mealCode: ">1", shiftCode: "A7", taskCode: "*" },
+    { mealCode: "<615", shiftCode: "A1", taskCode: "^vp" },
+    { mealCode: ">615", shiftCode: "A7", taskCode: "*" },
+    { mealCode: "<1230", shiftCode: "A7", taskCode: "^" },
+    { mealCode: "<615", shiftCode: "A1", taskCode: "^" },
+    { mealCode: "", shiftCode: "O", taskCode: "" },
+    { mealCode: "", shiftCode: "PH", taskCode: "補25/5" },
+  ]},
+  { staffId: 109, position: "保健員 2", name: "保健員 2", days: [
+    { mealCode: "", shiftCode: "PH", taskCode: "補1/5" },
+    { mealCode: "", shiftCode: "O", taskCode: "" },
+    { mealCode: "", shiftCode: "O", taskCode: "" },
+    { mealCode: ">1", shiftCode: "A1", taskCode: "^bp" },
+    { mealCode: ">1", shiftCode: "A7", taskCode: "*" },
+    { mealCode: "", shiftCode: "O", taskCode: "" },
+    { mealCode: "<6", shiftCode: "P2", taskCode: "^" },
+  ]},
+  { staffId: 110, position: "家舍導師 1", name: "家舍導師 1", days: [
+    { mealCode: ">1", shiftCode: "A7#", taskCode: "" },
+    { mealCode: "", shiftCode: "PH", taskCode: "補25/5" },
+    { mealCode: ">1", shiftCode: "A7", taskCode: "d5" },
+    { mealCode: ">1", shiftCode: "G7", taskCode: "粉" },
+    { mealCode: ">715", shiftCode: "A230#", taskCode: "" },
+    { mealCode: "", shiftCode: "O", taskCode: "" },
+    { mealCode: ">545", shiftCode: "P2", taskCode: "(#)" },
+  ]},
+  { staffId: 111, position: "家舍導師 2", name: "家舍導師 2", days: [
+    { mealCode: "", shiftCode: "O", taskCode: "" },
+    { mealCode: "<615", shiftCode: "P1", taskCode: "執11茗" },
+    { mealCode: "", shiftCode: "O", taskCode: "" },
+    { mealCode: "<615", shiftCode: "A1", taskCode: "煮" },
+    { mealCode: ">1", shiftCode: "A7", taskCode: "搬" },
+    { mealCode: ">1", shiftCode: "A7#", taskCode: "" },
+    { mealCode: ">645", shiftCode: "A230#", taskCode: "" },
+  ]},
+  { staffId: 112, position: "家舍導師 3", name: "家舍導師 3", days: [
+    { mealCode: ">715", shiftCode: "A230#", taskCode: "" },
+    { mealCode: "", shiftCode: "O", taskCode: "" },
+    { mealCode: ">1", shiftCode: "G7", taskCode: "" },
+    { mealCode: ">1", shiftCode: "A7#", taskCode: "" },
+    { mealCode: ">1", shiftCode: "A7", taskCode: "搬" },
+    { mealCode: "", shiftCode: "O", taskCode: "" },
+    { mealCode: ">12", shiftCode: "A7#", taskCode: "" },
+  ]},
+  { staffId: 113, position: "家舍導師 4", name: "家舍導師 4", days: [
+    { mealCode: "", shiftCode: "AL", taskCode: "" },
+    { mealCode: ">1", shiftCode: "A230#", taskCode: "" },
+    { mealCode: ">715", shiftCode: "A230#", taskCode: "" },
+    { mealCode: "", shiftCode: "O", taskCode: "" },
+    { mealCode: "", shiftCode: "O", taskCode: "" },
+    { mealCode: ">545", shiftCode: "G2", taskCode: "(#)Q" },
+    { mealCode: "", shiftCode: "N1015", taskCode: "" },
+  ]},
+  { staffId: 114, position: "家舍導師 5", name: "家舍導師 5", days: [
+    { mealCode: "<615", shiftCode: "A1", taskCode: "(#)執10" },
+    { mealCode: ">1", shiftCode: "A7", taskCode: "" },
+    { mealCode: "<615", shiftCode: "A1", taskCode: "Q執12" },
+    { mealCode: ">1", shiftCode: "A7", taskCode: "" },
+    { mealCode: "<615", shiftCode: "A1", taskCode: "(#)" },
+    { mealCode: ">12", shiftCode: "A7", taskCode: "" },
+    { mealCode: "", shiftCode: "O", taskCode: "" },
+  ]},
+  { staffId: 115, position: "家舍導師 6", name: "家舍導師 6", days: [
+    { mealCode: "", shiftCode: "NO", taskCode: "" },
+    { mealCode: ">1", shiftCode: "A8", taskCode: "d2" },
+    { mealCode: "", shiftCode: "O", taskCode: "" },
+    { mealCode: ">715", shiftCode: "A230#", taskCode: "" },
+    { mealCode: ">1", shiftCode: "A7#", taskCode: "" },
+    { mealCode: ">645", shiftCode: "A230#", taskCode: "" },
+    { mealCode: ">1", shiftCode: "A7", taskCode: "" },
+  ]},
+  { staffId: 116, position: "助理活動工作員", name: "助理活動工作員", days: [
+    { mealCode: ">1", shiftCode: "A7", taskCode: "taha" },
+    { mealCode: ">715", shiftCode: "A7#", taskCode: "" },
+    { mealCode: ">1", shiftCode: "A7#", taskCode: "" },
+    { mealCode: "", shiftCode: "PH", taskCode: "補25/5" },
+    { mealCode: "", shiftCode: "PH", taskCode: "補19/6" },
+    { mealCode: "", shiftCode: "O", taskCode: "" },
+    { mealCode: "", shiftCode: "O", taskCode: "" },
+  ]},
+  { staffId: 117, position: "物理治療師", name: "物理治療師", days: [
+    { mealCode: "", shiftCode: "O,", taskCode: "" },
+    { mealCode: ">1", shiftCode: "B830", taskCode: "" },
+    { mealCode: "", shiftCode: "O,", taskCode: "" },
+    { mealCode: ">1", shiftCode: "B830", taskCode: "" },
+    { mealCode: ">1", shiftCode: "A9", taskCode: "" },
+    { mealCode: "", shiftCode: "O", taskCode: "" },
+    { mealCode: "", shiftCode: "O", taskCode: "" },
+  ]},
+  { staffId: 118, position: "文員", name: "文員", days: [
+    { mealCode: "<12", shiftCode: "A9", taskCode: "" },
+    { mealCode: "<12", shiftCode: "A9", taskCode: "" },
+    { mealCode: "<12", shiftCode: "A9", taskCode: "" },
+    { mealCode: "<12", shiftCode: "A9", taskCode: "" },
+    { mealCode: "<12", shiftCode: "A9", taskCode: "" },
+    { mealCode: "<12", shiftCode: "A9", taskCode: "" },
+    { mealCode: "", shiftCode: "O", taskCode: "" },
+  ]},
+  { staffId: 119, position: "助理員 1", name: "助理員 1", days: [
+    { mealCode: ">1", shiftCode: "B7", taskCode: "e" },
+    { mealCode: "<615", shiftCode: "P2", taskCode: "©1" },
+    { mealCode: ">715", shiftCode: "P2", taskCode: "©2飯" },
+    { mealCode: "", shiftCode: "O", taskCode: "" },
+    { mealCode: "<615", shiftCode: "P2", taskCode: "©2飯" },
+    { mealCode: "<12", shiftCode: "A7", taskCode: "©銀散" },
+    { mealCode: ">645", shiftCode: "A230", taskCode: "e" },
+  ]},
+  { staffId: 120, position: "助理員 2", name: "助理員 2", days: [
+    { mealCode: ">715", shiftCode: "A230", taskCode: "e" },
+    { mealCode: "<615", shiftCode: "P1", taskCode: "©2飯 執11" },
+    { mealCode: "<12", shiftCode: "A7", taskCode: "清" },
+    { mealCode: ">1", shiftCode: "B9", taskCode: "taha pt" },
+    { mealCode: "", shiftCode: "O", taskCode: "" },
+    { mealCode: "", shiftCode: "PH", taskCode: "補25/5" },
+    { mealCode: ">645", shiftCode: "P2", taskCode: "" },
+  ]},
+  { staffId: 121, position: "助理員 3", name: "助理員 3", days: [
+    { mealCode: ">715", shiftCode: "P2", taskCode: "" },
+    { mealCode: ">715", shiftCode: "A230", taskCode: "e" },
+    { mealCode: ">1", shiftCode: "A1030", taskCode: "" },
+    { mealCode: "<12 >230", shiftCode: "A7N1015", taskCode: "清" },
+    { mealCode: "", shiftCode: "NO", taskCode: "" },
+    { mealCode: "", shiftCode: "O", taskCode: "" },
+    { mealCode: "", shiftCode: "A7x", taskCode: "*8假" },
+  ]},
+  { staffId: 122, position: "助理員 4", name: "助理員 4", days: [
+    { mealCode: "<615", shiftCode: "P2", taskCode: "©1" },
+    { mealCode: ">715", shiftCode: "P2", taskCode: "" },
+    { mealCode: "", shiftCode: "SLx", taskCode: "" },
+    { mealCode: ">1", shiftCode: "A7", taskCode: "e" },
+    { mealCode: "<12 >230", shiftCode: "G7N1015", taskCode: "e" },
+    { mealCode: "", shiftCode: "NO", taskCode: "" },
+    { mealCode: "", shiftCode: "O", taskCode: "" },
+  ]},
+  { staffId: 123, position: "助理員 5", name: "助理員 5", days: [
+    { mealCode: "<12", shiftCode: "G7", taskCode: "" },
+    { mealCode: ">1", shiftCode: "B7", taskCode: "©taha" },
+    { mealCode: ">715", shiftCode: "A230", taskCode: "e" },
+    { mealCode: "<615", shiftCode: "P2", taskCode: "©1" },
+    { mealCode: "", shiftCode: "O", taskCode: "" },
+    { mealCode: ">1", shiftCode: "A7", taskCode: "e" },
+    { mealCode: "<12 <0130", shiftCode: "G7N10", taskCode: "©銀洗" },
+  ]},
+  { staffId: 124, position: "助理員 6", name: "助理員 6", days: [
+    { mealCode: "", shiftCode: "O", taskCode: "" },
+    { mealCode: "", shiftCode: "CL-8", taskCode: "" },
+    { mealCode: "<12", shiftCode: "A7", taskCode: "©清" },
+    { mealCode: ">715", shiftCode: "A230", taskCode: "e" },
+    { mealCode: "<615", shiftCode: "P2", taskCode: "©1" },
+    { mealCode: "<545", shiftCode: "P2", taskCode: "©2飯" },
+    { mealCode: ">1", shiftCode: "A7", taskCode: "e" },
+  ]},
+  { staffId: 125, position: "助理員 7", name: "助理員 7", days: [
+    { mealCode: "<12 <0130", shiftCode: "A7N10", taskCode: "©清" },
+    { mealCode: "", shiftCode: "NO", taskCode: "" },
+    { mealCode: "", shiftCode: "O", taskCode: "" },
+    { mealCode: "", shiftCode: "O", taskCode: "" },
+    { mealCode: ">715", shiftCode: "P2", taskCode: "" },
+    { mealCode: ">645", shiftCode: "A230", taskCode: "e" },
+    { mealCode: "<545", shiftCode: "P1", taskCode: "©1" },
+  ]},
+  { staffId: 126, position: "助理員 8", name: "助理員 8", days: [
+    { mealCode: "<615", shiftCode: "P2", taskCode: "©2飯" },
+    { mealCode: "", shiftCode: "A7s", taskCode: "d2" },
+    { mealCode: ">1", shiftCode: "A7x", taskCode: "e" },
+    { mealCode: "<12 <0130", shiftCode: "G7N10", taskCode: "©清" },
+    { mealCode: "", shiftCode: "NO", taskCode: "" },
+    { mealCode: "", shiftCode: "O", taskCode: "" },
+    { mealCode: "", shiftCode: "CL-8", taskCode: "" },
+  ]},
+  { staffId: 127, position: "助理員 9", name: "助理員 9", days: [
+    { mealCode: "", shiftCode: "PH", taskCode: "補1/5" },
+    { mealCode: ">1", shiftCode: "A7x", taskCode: "e" },
+    { mealCode: ">1", shiftCode: "A9x", taskCode: "taha" },
+    { mealCode: "<615", shiftCode: "P2", taskCode: "©2飯" },
+    { mealCode: ">715", shiftCode: "A230", taskCode: "e" },
+    { mealCode: "", shiftCode: "O", taskCode: "" },
+    { mealCode: "<545", shiftCode: "P2", taskCode: "©2飯" },
+  ]},
+  { staffId: 128, position: "助理員 10", name: "助理員 10", days: [
+    { mealCode: "<12", shiftCode: "B7", taskCode: "餐 taha 執10" },
+    { mealCode: "", shiftCode: "O", taskCode: "" },
+    { mealCode: "<615", shiftCode: "P1", taskCode: "©1執12" },
+    { mealCode: ">715", shiftCode: "P2", taskCode: "" },
+    { mealCode: ">1", shiftCode: "B7", taskCode: "taha" },
+    { mealCode: "<545", shiftCode: "P2", taskCode: "©1" },
+    { mealCode: ">630", shiftCode: "A130", taskCode: "廚" },
+  ]},
+  { staffId: 129, position: "助理員 11", name: "助理員 11", days: [
+    { mealCode: "", shiftCode: "", taskCode: "" },
+    { mealCode: "", shiftCode: "", taskCode: "" },
+    { mealCode: "", shiftCode: "", taskCode: "" },
+    { mealCode: "", shiftCode: "", taskCode: "" },
+    { mealCode: "", shiftCode: "", taskCode: "" },
+    { mealCode: "", shiftCode: "", taskCode: "" },
+    { mealCode: "", shiftCode: "", taskCode: "" },
+  ]},
+  { staffId: 130, position: "助理員 12", name: "助理員 12", days: [
+    { mealCode: ">230", shiftCode: "K10", taskCode: "" },
+    { mealCode: ">230", shiftCode: "K10", taskCode: "" },
+    { mealCode: ">230", shiftCode: "K10", taskCode: "" },
+    { mealCode: "", shiftCode: "AL", taskCode: "" },
+    { mealCode: "", shiftCode: "AL", taskCode: "" },
+    { mealCode: "", shiftCode: "O", taskCode: "" },
+    { mealCode: "", shiftCode: "O", taskCode: "" },
+  ]},
+  { staffId: 131, position: "助理員 13", name: "助理員 13", days: [
+    { mealCode: "", shiftCode: "O", taskCode: "" },
+    { mealCode: "", shiftCode: "A9", taskCode: "迎" },
+    { mealCode: "", shiftCode: "P2", taskCode: "" },
+    { mealCode: "", shiftCode: "PH", taskCode: "補25/5" },
+    { mealCode: "<12", shiftCode: "B7s", taskCode: "© 搬" },
+    { mealCode: "<12 >230", shiftCode: "G7N1015", taskCode: "*%肌" },
+    { mealCode: "", shiftCode: "NO", taskCode: "" },
+  ]},
+  { staffId: 132, position: "助理員 14", name: "助理員 14", days: [
+    { mealCode: "", shiftCode: "", taskCode: "" },
+    { mealCode: "", shiftCode: "", taskCode: "" },
+    { mealCode: "", shiftCode: "", taskCode: "" },
+    { mealCode: "", shiftCode: "", taskCode: "" },
+    { mealCode: "", shiftCode: "", taskCode: "" },
+    { mealCode: "", shiftCode: "", taskCode: "" },
+    { mealCode: "", shiftCode: "", taskCode: "" },
+  ]},
+  { staffId: 133, position: "廚師 1", name: "廚師 1", days: [
+    { mealCode: ">1", shiftCode: "K830", taskCode: "8:30-6:30" },
+    { mealCode: ">1", shiftCode: "K830", taskCode: "8:30-6:30" },
+    { mealCode: ">1", shiftCode: "K830", taskCode: "8:30-6:30" },
+    { mealCode: "", shiftCode: "O", taskCode: "" },
+    { mealCode: ">1", shiftCode: "A610s", taskCode: "6:10-2:40" },
+    { mealCode: ">1", shiftCode: "B930", taskCode: "" },
+    { mealCode: "", shiftCode: "O", taskCode: "" },
+  ]},
+  { staffId: 134, position: "廚師 2", name: "廚師 2", days: [
+    { mealCode: "", shiftCode: "FFLx", taskCode: "" },
+    { mealCode: "", shiftCode: "FFLx", taskCode: "" },
+    { mealCode: "", shiftCode: "CL-8", taskCode: "" },
+    { mealCode: ">1", shiftCode: "K830", taskCode: "8:30-6:30" },
+    { mealCode: ">7", shiftCode: "G130", taskCode: "" },
+    { mealCode: "", shiftCode: "O", taskCode: "" },
+    { mealCode: ">1", shiftCode: "B930", taskCode: "" },
+  ]},
+  { staffId: 135, position: "廚房助理", name: "廚房助理", days: [
+    { mealCode: ">7", shiftCode: "A130", taskCode: "" },
+    { mealCode: ">7", shiftCode: "A130", taskCode: "" },
+    { mealCode: ">7", shiftCode: "A130", taskCode: "" },
+    { mealCode: ">7", shiftCode: "A130", taskCode: "" },
+    { mealCode: ">7", shiftCode: "A130", taskCode: "" },
+    { mealCode: "", shiftCode: "P1", taskCode: "" },
+    { mealCode: "", shiftCode: "O", taskCode: "" },
+  ]},
+  { staffId: 136, position: "工友 1", name: "工友 1", days: [
+    { mealCode: "<12", shiftCode: "A8x", taskCode: "" },
+    { mealCode: "<12", shiftCode: "A8x", taskCode: "" },
+    { mealCode: "<12", shiftCode: "A8x", taskCode: "" },
+    { mealCode: "<12", shiftCode: "A8x", taskCode: "天" },
+    { mealCode: "<12", shiftCode: "A8x", taskCode: "" },
+    { mealCode: "<12", shiftCode: "A8x", taskCode: "" },
+    { mealCode: "", shiftCode: "O", taskCode: "" },
+  ]},
+  { staffId: 137, position: "工友 2", name: "工友 2", days: [
+    { mealCode: ">1", shiftCode: "A9x", taskCode: "" },
+    { mealCode: "", shiftCode: "BDLx", taskCode: "" },
+    { mealCode: "", shiftCode: "O", taskCode: "" },
+    { mealCode: ">1", shiftCode: "A9x", taskCode: "" },
+    { mealCode: ">1", shiftCode: "A9x", taskCode: "" },
+    { mealCode: ">1", shiftCode: "A9x", taskCode: "" },
+    { mealCode: "<12", shiftCode: "A8x", taskCode: "" },
+  ]},
+  { staffId: 138, position: "替假 1", name: "替假 1", days: [
+    { mealCode: "<615", shiftCode: "A1", taskCode: "HW 林美鳳" },
+    { mealCode: "<1230", shiftCode: "A7", taskCode: "HW 林美鳳" },
+    { mealCode: "", shiftCode: "", taskCode: "" },
+    { mealCode: "<1230", shiftCode: "A7", taskCode: "HW 陶濤" },
+    { mealCode: "", shiftCode: "", taskCode: "" },
+    { mealCode: "<1230", shiftCode: "A7", taskCode: "HW 陶濤" },
+    { mealCode: "", shiftCode: "", taskCode: "" },
+  ]},
+  { staffId: 139, position: "替假 2", name: "替假 2", days: [
+    { mealCode: "", shiftCode: "", taskCode: "" },
+    { mealCode: "<0130", shiftCode: "N10", taskCode: "PCW 梁麗霞" },
+    { mealCode: "<0130", shiftCode: "N10", taskCode: "PCW 梁麗霞" },
+    { mealCode: "", shiftCode: "", taskCode: "" },
+    { mealCode: "<0130", shiftCode: "N10", taskCode: "PCW 梁麗霞" },
+    { mealCode: "<0130", shiftCode: "N10", taskCode: "PCW 梁麗霞" },
+    { mealCode: "", shiftCode: "", taskCode: "" },
+  ]},
+  { staffId: 140, position: "替假 3", name: "替假 3", days: [
+    { mealCode: "", shiftCode: "", taskCode: "" },
+    { mealCode: "", shiftCode: "", taskCode: "" },
+    { mealCode: "", shiftCode: "", taskCode: "" },
+    { mealCode: "", shiftCode: "", taskCode: "" },
+    { mealCode: "", shiftCode: "", taskCode: "" },
+    { mealCode: "", shiftCode: "", taskCode: "" },
+    { mealCode: "", shiftCode: "", taskCode: "" },
+  ]},
+  { staffId: 141, position: "替假 4", name: "替假 4", days: [
+    { mealCode: "", shiftCode: "", taskCode: "" },
+    { mealCode: "", shiftCode: "", taskCode: "" },
+    { mealCode: "", shiftCode: "", taskCode: "" },
+    { mealCode: "", shiftCode: "", taskCode: "" },
+    { mealCode: "", shiftCode: "", taskCode: "" },
+    { mealCode: "", shiftCode: "", taskCode: "" },
+    { mealCode: "", shiftCode: "", taskCode: "" },
+  ]},
+]
+
+function escapeCsv(val: string): string {
+  if (val.includes(",") || val.includes('"') || val.includes("\n")) {
+    return `"${val.replace(/"/g, '""')}"`
+  }
+  return val
+}
+
+export async function GET() {
+  const header = "staffName,date,mealCode,shiftCode,taskCode,note"
+  const lines: string[] = [header]
+
+  for (const row of WEEK3_ROWS) {
+    for (let i = 0; i < row.days.length; i++) {
+      const day = row.days[i]
+      const date = WEEK3_DATES[i] || ""
+      // For OFF/PH days, taskCode is the note
+      const isOff = day.shiftCode === "O" || day.shiftCode === "O," || day.shiftCode === "PH"
+      const note = isOff ? (day.taskCode || "") : ""
+      const taskCode = isOff ? "" : (day.taskCode || "")
+      lines.push(
+        [
+          escapeCsv(row.name || row.position),
+          date,
+          escapeCsv(day.mealCode || ""),
+          escapeCsv(day.shiftCode || ""),
+          escapeCsv(taskCode),
+          escapeCsv(note),
+        ].join(",")
+      )
+    }
+  }
+
+  const csv = lines.join("\n")
+
+  return new NextResponse(csv, {
+    status: 200,
+    headers: {
+      "Content-Type": "text/csv; charset=utf-8",
+      "Content-Disposition": "attachment; filename=naac-week3-roster.csv",
+    },
+  })
+}
