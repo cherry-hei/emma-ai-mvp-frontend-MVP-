@@ -1,15 +1,14 @@
 # syntax=docker/dockerfile:1
 #
-# Production image for the Emma AI Reflex dashboard (single-container pattern).
+# Production image for the Emma AI REST API (FastAPI + uvicorn).
 #
-#   Caddy  ── serves the exported static frontend on $PORT (8080)
-#          └─ reverse-proxies backend routes (/_event websocket, /ping, /_upload)
-#   Reflex ── runs the Python backend on :8000  (`reflex run --env prod --backend-only`)
+# The frontend is a separate Next.js app (repo `main`); this container serves
+# ONLY the JSON API. AWS App Runner terminates HTTPS and forwards to $PORT — no
+# reverse proxy or static-file serving is needed, so there is no Caddy here.
 #
-# AWS App Runner terminates HTTPS and forwards to $PORT, so the whole app is one
-# origin. The public URL is injected at RUNTIME via the API_URL env var (see
-# deploy/docker-entrypoint.sh): App Runner only assigns the URL after the service
-# is created, so the frontend is (re)baked at container start, not at build time.
+# Config comes from environment variables (App Runner service config):
+#   SUPABASE_URL, SUPABASE_ANON_KEY, SUPABASE_SERVICE_ROLE_KEY, APP_ENV,
+#   CORS_ORIGINS (comma-separated Next.js origins). See AWS_DEPLOY.md.
 #
 # Build context = repo ROOT. In App Runner set: Dockerfile = ./Dockerfile.
 
@@ -17,41 +16,20 @@ FROM python:3.12-slim
 
 ENV PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
-    PORT=8080 \
-    BACKEND_PORT=8000
-
-# ── system deps: Caddy (official apt repo) + tools reflex/ortools may need ──
-RUN apt-get update \
- && apt-get install -y --no-install-recommends \
-      curl gnupg unzip ca-certificates \
-      debian-keyring debian-archive-keyring apt-transport-https \
- && curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' \
-      | gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg \
- && curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' \
-      > /etc/apt/sources.list.d/caddy-stable.list \
- && apt-get update \
- && apt-get install -y --no-install-recommends caddy \
- && rm -rf /var/lib/apt/lists/*
+    PORT=8080
 
 WORKDIR /app
 
-# ── Python deps (separate layer so code changes don't re-install everything) ──
+# ── Python deps (separate layer so code changes don't re-install everything).
+#    ortools / psycopg[binary] / supabase ship manylinux wheels — no apt build
+#    toolchain required on the slim image. ──
 COPY emma-ai-app/requirements.txt ./requirements.txt
 RUN pip install -r requirements.txt
 
 # ── app source ──
 COPY emma-ai-app/ ./
 
-# ── warm the frontend toolchain: downloads bun + node deps and does a first
-#    compile, so the runtime re-export (with the real public URL) is fast.
-#    No DB is touched here; config falls back to defaults when no .env exists. ──
-RUN reflex init && reflex export --frontend-only --no-zip
-
-# ── reverse-proxy config + entrypoint ──
-COPY deploy/Caddyfile /etc/caddy/Caddyfile
-COPY deploy/docker-entrypoint.sh /usr/local/bin/entrypoint.sh
-RUN sed -i 's/\r$//' /usr/local/bin/entrypoint.sh \
- && chmod +x /usr/local/bin/entrypoint.sh
-
 EXPOSE 8080
-CMD ["/usr/local/bin/entrypoint.sh"]
+# App Runner injects $PORT. Single uvicorn worker keeps the in-process solver
+# BackgroundTasks simple; scale horizontally via App Runner instances.
+CMD ["sh", "-c", "uvicorn api.main:app --host 0.0.0.0 --port ${PORT}"]

@@ -1,7 +1,5 @@
-.web
 *.py[cod]
 *.db
-.states
 # Python
 .venv/
 __pycache__/
@@ -10,11 +8,6 @@ __pycache__/
 
 # Secrets / env
 .env
-
-# Reflex build output
-.web/
-.reflex/
-assets/external/
 
 # Supabase local
 supabase/.branches/

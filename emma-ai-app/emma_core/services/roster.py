@@ -3,9 +3,25 @@ staff x day grid the UI shows, and handles manual CRUD + publish."""
 from __future__ import annotations
 
 import json
+from datetime import datetime, timezone
 
 from ..constants import AssignmentStatus, OverrideAction, PublishEvent, RosterStatus
 from ..models import RosterCell, RosterGrid, RosterRow, ShiftDef, StaffLite
+
+
+def _now() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _delete_shift_if_empty(client, shift_id: str) -> None:
+    """Drop the shift row only when no assignments remain on it. A shift can be
+    shared by several staff (solver-generated ``required_count`` > 1 slots), and
+    ``shift_assignments.shift_id`` is ON DELETE CASCADE — deleting the shift while a
+    sibling assignment still exists would silently wipe that sibling's cell."""
+    remaining = (client.table("shift_assignments").select("id")
+                 .eq("shift_id", shift_id).limit(1).execute().data)
+    if not remaining:
+        client.table("shifts").delete().eq("id", shift_id).execute()
 
 
 def _latest_version(client, facility_id: str, period_id: str | None = None,
@@ -96,6 +112,48 @@ def get_shift_defs(client, facility_id: str) -> list[ShiftDef]:
     return [ShiftDef.model_validate(r) for r in rows]
 
 
+def list_task_definitions(client, facility_id: str) -> list[dict]:
+    """Facility-scoped task-code dictionary (A1-A8/P1-P6…). Template rows
+    (facility_id null) are shared; keeps task codes configurable in the DB
+    rather than hardcoded."""
+    return (client.table("task_definitions").select("*")
+            .or_(f"facility_id.eq.{facility_id},facility_id.is.null")
+            .eq("active", True).order("task_code").execute().data)
+
+
+# ── periods / versions ──────────────────────────────────────────────────────
+def list_periods(client, facility_id: str) -> list[dict]:
+    return (client.table("roster_periods").select("*")
+            .eq("facility_id", facility_id).order("period_start", desc=True)
+            .execute().data)
+
+
+def create_period(client, *, facility_id, period_start, period_end, cycle_type="28day",
+                  created_by=None, create_manual_version=True):
+    """Create a roster period and (by default) a blank editable 'manual' roster
+    version to hang shifts on — the grid read, manual edit and solver all require
+    an existing roster_version_id, and nothing else bootstraps one."""
+    period = (client.table("roster_periods").insert({
+        "facility_id": facility_id, "period_start": str(period_start),
+        "period_end": str(period_end), "cycle_type": cycle_type, "status": "planning",
+    }).execute().data[0])
+    version = None
+    if create_manual_version:
+        version = (client.table("roster_versions").insert({
+            "facility_id": facility_id, "period_id": period["id"],
+            "version_type": "manual", "label": "Manual roster",
+            "status": RosterStatus.DRAFT, "created_by": created_by,
+        }).execute().data[0])
+    return period, version
+
+
+def list_versions(client, facility_id: str, period_id: str | None = None) -> list[dict]:
+    q = client.table("roster_versions").select("*").eq("facility_id", facility_id)
+    if period_id:
+        q = q.eq("period_id", period_id)
+    return q.order("created_at", desc=True).execute().data
+
+
 # ── manual edit (CRUD) ──────────────────────────────────────────────────────
 def set_cell(client, *, facility_id, roster_version_id, staff_id, date, shift_type,
              shift_def: ShiftDef, tasks=None, changed_by=None):
@@ -114,7 +172,7 @@ def set_cell(client, *, facility_id, roster_version_id, staff_id, date, shift_ty
         old = found[0] if found else None
         for a in found:  # clear any prior cell for this staff/day
             client.table("shift_assignments").delete().eq("id", a["id"]).execute()
-            client.table("shifts").delete().eq("id", a["shift_id"]).execute()
+            _delete_shift_if_empty(client, a["shift_id"])
 
     shift_id = (client.table("shifts").insert({
         "facility_id": facility_id, "roster_version_id": roster_version_id,
@@ -151,7 +209,7 @@ def clear_cell(client, *, facility_id, roster_version_id, staff_id, date, change
              .in_("shift_id", ids).eq("staff_id", staff_id).execute().data)
     for a in found:
         client.table("shift_assignments").delete().eq("id", a["id"]).execute()
-        client.table("shifts").delete().eq("id", a["shift_id"]).execute()
+        _delete_shift_if_empty(client, a["shift_id"])
         client.table("manual_override_log").insert({
             "facility_id": facility_id, "roster_version_id": roster_version_id,
             "action": OverrideAction.DELETE,
@@ -162,7 +220,8 @@ def clear_cell(client, *, facility_id, roster_version_id, staff_id, date, change
 
 # ── publish workflow ────────────────────────────────────────────────────────
 def publish_version(client, *, facility_id, roster_version_id, created_by=None):
-    (client.table("roster_versions").update({"status": RosterStatus.PUBLISHED})
+    (client.table("roster_versions")
+     .update({"status": RosterStatus.PUBLISHED, "published_at": _now()})
      .eq("id", roster_version_id).execute())
     client.table("roster_publish_events").insert({
         "facility_id": facility_id, "roster_version_id": roster_version_id,

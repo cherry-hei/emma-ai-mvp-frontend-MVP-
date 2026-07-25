@@ -1,17 +1,15 @@
-# ── Emma AI · all-Python stack ────────────────────────────────
-# UI (compiles a React/Next frontend from Python; no hand-written JS)
-reflex>=0.6
+# ── Emma AI · Python API service ──────────────────────────────
+# The frontend is a separate Next.js app (repo `main`); this package is the
+# FastAPI REST backend it consumes. No Python UI framework (Reflex was dropped).
 
-# REST API (documented contract + future mobile PWA)
-# fastapi >=0.116 accepts starlette 1.x (reflex 0.9 requires starlette>=1.3.1);
-# kept <1.0 so co-installed fastapi-utils / fastapi-restful (fastapi>=0.89,<1.0) stay satisfied.
-fastapi>=0.116,<1.0
-starlette>=1.3.1
+# REST API
+fastapi>=0.116
 uvicorn[standard]>=0.30
+starlette>=0.46               # ASGI toolkit fastapi builds on (pulled in by fastapi)
 
 # Data + Auth (Supabase: Postgres + GoTrue + RLS)
 supabase>=2.6
-psycopg[binary]>=3.2          # direct Postgres for migrations / seed
+psycopg[binary]>=3.2          # direct Postgres for migrations / seed / tests
 python-dotenv>=1.0
 
 # Domain models / config / data
@@ -19,8 +17,9 @@ pydantic>=2.7
 pydantic-settings>=2.3
 pandas>=2.2
 
-# Testing
-pytest>=8.0
-
 # CP-SAT rostering solver (Phase 2 — Roster A/B/C engine)
 ortools>=9.11,<10
+
+# Testing (httpx powers fastapi.testclient)
+pytest>=8.0
+httpx>=0.27

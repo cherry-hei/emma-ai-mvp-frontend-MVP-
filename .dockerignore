@@ -1,8 +1,3 @@
-# Reflex build output — regenerated fresh inside the image
-**/.web
-**/.states
-.reflex
-
 # Python caches
 **/__pycache__
 **/*.pyc

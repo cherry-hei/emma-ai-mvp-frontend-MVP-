@@ -53,7 +53,11 @@ def _duration(start: int, end: int, cross: bool) -> int:
 # ── load: DB rows -> pure SolverInputs ───────────────────────────────────────
 def _source_version(client, facility_id, period_id, source_version_id):
     if source_version_id:
-        rows = client.table("roster_versions").select("*").eq("id", source_version_id).execute().data
+        # facility_id filter matters: run_optimization is called with the
+        # RLS-bypassing service-role client, so without it a caller-supplied
+        # source_version_id from another facility would leak that facility's roster.
+        rows = (client.table("roster_versions").select("*")
+                .eq("id", source_version_id).eq("facility_id", facility_id).execute().data)
         return rows[0] if rows else None
     rows = (client.table("roster_versions").select("*")
             .eq("facility_id", facility_id).eq("period_id", period_id)
@@ -64,7 +68,8 @@ def _source_version(client, facility_id, period_id, source_version_id):
 def load_inputs(client, facility_id: str, period_id: str, *, source_version_id=None,
                 include_staff_ids=None, exclude_staff_ids=None,
                 locked_assignments=None) -> SolverInputs:
-    periods = client.table("roster_periods").select("*").eq("id", period_id).execute().data
+    periods = (client.table("roster_periods").select("*")
+               .eq("id", period_id).eq("facility_id", facility_id).execute().data)
     if not periods:
         raise ValueError(f"roster_period {period_id} not found")
     period = periods[0]
@@ -181,12 +186,22 @@ def load_inputs(client, facility_id: str, period_id: str, *, source_version_id=N
 
 
 # ── run + writeback ──────────────────────────────────────────────────────────
-def run_optimization(client, request: OptimizeRequest, *, persist: bool = True) -> OptimizeResponse:
+def run_optimization(client, request: OptimizeRequest, *, persist: bool = True,
+                     job_id: str | None = None) -> OptimizeResponse:
     """Run the solver for the requested plan mode(s) and (optionally) persist each
-    option as a roster version. Returns scored options either way."""
+    option as a roster version. Returns scored options either way.
+
+    Pass ``job_id`` to run against an already-enqueued PENDING job (async path);
+    otherwise a RUNNING job row is created inline (synchronous path)."""
     persist = persist and request.writeback.persist
-    job_id = _create_job(client, request)
+    created_here = job_id is None
+    if created_here:
+        job_id = _create_job(client, request)
     try:
+        if not created_here:
+            # mark the pre-enqueued PENDING job RUNNING — inside the try so a
+            # failure here is captured by _fail_job instead of orphaning it.
+            _start_job(client, job_id)
         inputs = load_inputs(
             client, request.facility_id, request.period_id,
             source_version_id=request.source_version_id,
@@ -291,6 +306,19 @@ def _writeback_version(client, request, inputs, res) -> str:
 
 
 # ── optimization_jobs lifecycle ──────────────────────────────────────────────
+def enqueue_optimization(client, request: OptimizeRequest) -> str:
+    """Insert a PENDING job and return its id immediately. The HTTP layer schedules
+    a background task that then calls ``run_optimization(..., job_id=job_id)`` so the
+    request returns without blocking on three ~10s CP-SAT solves."""
+    return (client.table("optimization_jobs").insert({
+        "facility_id": request.facility_id, "period_id": request.period_id,
+        "rule_profile_id": request.rule_profile_id, "status": JobStatus.PENDING,
+        "plan_mode": str(request.plan_mode) if request.plan_mode else None,
+        "solver_limits_json": request.solver_limits.model_dump(),
+        "input_payload_json": request.model_dump(mode="json"),
+    }).execute().data[0]["id"])
+
+
 def _create_job(client, request: OptimizeRequest) -> str:
     return (client.table("optimization_jobs").insert({
         "facility_id": request.facility_id, "period_id": request.period_id,
@@ -300,6 +328,12 @@ def _create_job(client, request: OptimizeRequest) -> str:
         "input_payload_json": request.model_dump(mode="json"),
         "started_at": _now(),
     }).execute().data[0]["id"])
+
+
+def _start_job(client, job_id: str) -> None:
+    (client.table("optimization_jobs").update({
+        "status": JobStatus.RUNNING, "started_at": _now(),
+    }).eq("id", job_id).execute())
 
 
 def _complete_job(client, job_id: str, options) -> None:
@@ -324,3 +358,36 @@ def _fail_job(client, job_id: str, exc: Exception) -> None:
 def get_job(client, job_id: str) -> dict | None:
     rows = client.table("optimization_jobs").select("*").eq("id", job_id).execute().data
     return rows[0] if rows else None
+
+
+# ── option-score reads (compare / publish-guard UI) ──────────────────────────
+def get_option_scores(client, roster_version_id: str) -> dict | None:
+    """Score row + hard-violation detail for one roster version (written at solve
+    time but never read back until now)."""
+    rows = (client.table("roster_option_scores").select("*")
+            .eq("roster_version_id", roster_version_id).limit(1).execute().data)
+    if not rows:
+        return None
+    score = rows[0]
+    score["violations"] = (client.table("violation_log").select("*")
+                           .eq("roster_version_id", roster_version_id)
+                           .order("created_at").execute().data)
+    return score
+
+
+def list_period_option_scores(client, period_id: str) -> list[dict]:
+    """All A/B/C option scores for a period, for the side-by-side compare table."""
+    versions = (client.table("roster_versions").select("id,version_type,label,status")
+                .eq("period_id", period_id)
+                .in_("version_type", [PlanMode.A, PlanMode.B, PlanMode.C])
+                .execute().data)
+    by_version = {v["id"]: v for v in versions}
+    if not by_version:
+        return []
+    scores = (client.table("roster_option_scores").select("*")
+              .in_("roster_version_id", list(by_version)).execute().data)
+    for s in scores:
+        v = by_version.get(s["roster_version_id"], {})
+        s["version_label"] = v.get("label")
+        s["version_status"] = v.get("status")
+    return scores

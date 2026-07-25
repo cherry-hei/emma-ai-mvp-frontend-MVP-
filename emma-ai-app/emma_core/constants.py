@@ -21,6 +21,9 @@ class Rank(StrEnum):
     AW = "AW"
     PTA = "PTA"
     OTA = "OTA"
+    SW = "SW"     # social worker
+    PT = "PT"     # physiotherapist
+    OT = "OT"     # occupational therapist
 
 
 class EmploymentType(StrEnum):
@@ -36,6 +39,9 @@ class Role(StrEnum):
     SUPERINTENDENT = "superintendent"
     ADMIN = "admin"
     STAFF = "staff"
+    SCHEDULER = "scheduler"   # Phase 1.1 RBAC — builds/edits rosters
+    HR = "hr"                 # Phase 1.1 RBAC — staff records
+    AUDITOR = "auditor"       # Phase 1.1 RBAC — read-only compliance review
 
 
 class RosterStatus(StrEnum):

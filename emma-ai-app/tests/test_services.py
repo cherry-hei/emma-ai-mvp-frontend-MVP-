@@ -8,7 +8,6 @@ from emma_core.services.residents import get_units, set_resident_count
 from emma_core.services.roster import (
     clear_cell, get_roster_grid, get_shift_defs, set_cell,
 )
-from emma_web.state import rows_from_grid
 
 sb = get_service_client()
 
@@ -49,17 +48,6 @@ def test_auth_sign_in_and_profile():
     prof = get_profile(client, session.user.id)
     assert prof and prof.role == "superintendent"
     assert prof.facility.code == "A"
-
-
-def test_rows_from_grid_view_models():
-    grid = get_roster_grid(sb, _facility("A"))
-    rows = rows_from_grid(grid)
-    assert len(rows) == 7
-    rn = next(r for r in rows if r.subtitle.startswith("RN"))
-    assert len(rn.cells) == len(grid.dates)
-    assert rn.cells[0].label == "P" and rn.cells[0].bg  # working cell is coloured
-    off = next(c for r in rows for c in r.cells if c.label == "OFF")
-    assert off.bg  # non-working cells styled too
 
 
 def test_set_and_clear_cell_write_path():
