@@ -41,3 +41,12 @@ yarn-error.log*
 next-env.d.ts
 
 .vercel
+
+# IDE
+.idea/
+.vscode/
+
+# Python (backend has its own emma-ai-app/.gitignore too)
+__pycache__/
+*.pyc
+.pytest_cache/
