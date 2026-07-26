@@ -246,9 +246,26 @@ class StaffOut(BaseModel):
     rank: Rank
     employment_type: EmploymentType
     unit_name: str | None = None
-    status: str | None = None
-    contracted_hours: float | None = None
+    status: str | None = None                 # 'scheduled' | 'on_leave' | 'available' | raw
+    contracted_hours: float | None = None      # weekly contract (raw)
     is_audited_for_medication: bool = False
+    is_mentor: bool = False
+    certs: list[str] = Field(default_factory=list)
+    scheduled_hours: float = 0.0               # rostered working hours this period
+    contracted_period_hours: float = 0.0       # weekly contract scaled to the period
+
+
+class ShiftHistoryItem(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    date: Date
+    shift_type: str | None = None
+    start_time: str | None = None
+    end_time: str | None = None
+    tasks: list[str] = Field(default_factory=list)
+
+
+class StaffDetail(StaffOut):
+    shift_history: list[ShiftHistoryItem] = Field(default_factory=list)
 
 
 class TaskDefOut(BaseModel):

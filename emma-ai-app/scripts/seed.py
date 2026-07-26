@@ -188,6 +188,21 @@ def main() -> None:
         })
         a_ids.append(sid); a_ranks.append(rank); a_units.append(unit)
 
+    # per-staff certificates (feeds the Staff Portfolio "credentials" UI)
+    a_certs = [
+        ["ACLS", "Triage", "BLS"],          # RN
+        ["First Aid", "Manual Handling"],   # EN
+        ["Elder Care", "Vitals"],           # HW
+        ["Personal Care"],                  # CW
+        ["Rehab Tech"],                     # PTA
+        ["Bathing", "Transfer"],            # PCW
+        ["Infection Control"],              # AW
+    ]
+    ins_many("staff_certificates", [
+        {"facility_id": fa, "staff_id": a_ids[i], "cert_type": c}
+        for i, certs in enumerate(a_certs) for c in certs
+    ])
+
     seed_shift_defs(fa, [
         ("A", "Morning", "07:00", "15:00", False, True),
         ("B", "Morning B", "08:00", "16:00", False, True),

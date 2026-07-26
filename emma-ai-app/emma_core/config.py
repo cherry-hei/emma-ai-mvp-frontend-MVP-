@@ -65,7 +65,8 @@ class Settings(BaseSettings):
     # CORS — the Next.js frontend is a separate browser origin, so it must be
     # allow-listed or the browser blocks every call. Comma-separated list; set
     # CORS_ORIGINS in the deployed environment to the real frontend URL(s).
-    cors_origins: str = "http://localhost:3000,http://127.0.0.1:3000"
+    cors_origins: str = ("http://localhost:3000,http://127.0.0.1:3000,"
+                         "http://localhost:3001,http://127.0.0.1:3001")
 
     @property
     def allowed_origins(self) -> list[str]:

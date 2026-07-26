@@ -113,7 +113,20 @@ def test_task_definitions(token):
 def test_staff_directory(token):
     r = client.get("/staff", headers=_auth(token))
     assert r.status_code == 200
-    assert isinstance(r.json(), list)
+    rows = r.json()
+    assert isinstance(rows, list) and rows
+    s = rows[0]
+    for k in ("id", "name", "rank", "scheduled_hours", "contracted_period_hours", "status", "certs"):
+        assert k in s, f"missing enriched field: {k}"
+
+
+def test_staff_detail(token):
+    rows = client.get("/staff", headers=_auth(token)).json()
+    r = client.get(f"/staff/{rows[0]['id']}", headers=_auth(token))
+    assert r.status_code == 200
+    assert "shift_history" in r.json()
+    missing = client.get("/staff/00000000-0000-0000-0000-000000000000", headers=_auth(token))
+    assert missing.status_code == 404
 
 
 def test_compliance_ratio_shape(token):
