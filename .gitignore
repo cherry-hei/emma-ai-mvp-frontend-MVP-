@@ -33,6 +33,9 @@ yarn-error.log*
 # env files (can opt-in for committing if needed)
 .env*
 
+# local dev credentials (never commit)
+DEV_LOGINS.md
+
 # vercel
 .vercel
 
