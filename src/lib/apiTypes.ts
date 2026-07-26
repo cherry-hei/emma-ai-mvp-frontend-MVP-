@@ -32,9 +32,25 @@ export interface ApiStaff {
   rank: string
   employment_type: string
   unit_name?: string | null
-  status?: string | null
+  status?: string | null              // 'scheduled' | 'on_leave' | 'available'
   contracted_hours?: number | null
   is_audited_for_medication: boolean
+  is_mentor: boolean
+  certs: string[]
+  scheduled_hours: number             // rostered working hours this period
+  contracted_period_hours: number     // weekly contract scaled to the period
+}
+
+export interface ShiftHistoryItem {
+  date: string
+  shift_type?: string | null
+  start_time?: string | null
+  end_time?: string | null
+  tasks: string[]
+}
+
+export interface StaffDetail extends ApiStaff {
+  shift_history: ShiftHistoryItem[]
 }
 
 export interface PeriodOut {

@@ -9,7 +9,7 @@
 // ship credentials in NEXT_PUBLIC_* vars.
 import type {
   ApiError, ApiStaff, JobView, OptimizeResponse, PeriodOut, Profile,
-  RatioResult, RosterGrid, SessionOut, VersionOut,
+  RatioResult, RosterGrid, RosterOption, SessionOut, StaffDetail, VersionOut,
 } from './apiTypes'
 
 const BASE = (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000').replace(/\/+$/, '')
@@ -106,6 +106,12 @@ export const api = {
     return apiFetch<ApiStaff[]>(`/staff${qs ? `?${qs}` : ''}`)
   },
 
+  staffDetail: (id: string) => apiFetch<StaffDetail>(`/staff/${id}`),
+
+  publish: (versionId: string) =>
+    apiFetch<{ roster_version_id: string; status: string }>(
+      `/rosters/${versionId}/publish`, { method: 'POST' }),
+
   rosterPeriods: () => apiFetch<PeriodOut[]>('/roster-periods'),
 
   rosterVersions: (periodId?: string) =>
@@ -129,3 +135,34 @@ export const api = {
 
   job: (jobId: string) => apiFetch<JobView>(`/optimization-jobs/${jobId}`),
 }
+
+// Enqueue an A/B/C solve and poll the job until it finishes; returns the options.
+export async function optimizeAndPoll(
+  periodId: string,
+  opts: { onStatus?: (s: string) => void; intervalMs?: number; timeoutMs?: number; sourceVersionId?: string } = {},
+): Promise<RosterOption[]> {
+  const { onStatus, intervalMs = 1500, timeoutMs = 120_000, sourceVersionId } = opts
+  const { job_id } = await api.optimizeRoster({ period_id: periodId, source_version_id: sourceVersionId })
+  onStatus?.('pending')
+  const deadline = Date.now() + timeoutMs
+  let transientFails = 0
+  for (;;) {
+    await new Promise((r) => setTimeout(r, intervalMs))
+    if (Date.now() > deadline) throw new Error('optimization timed out')
+    let job: JobView
+    try {
+      job = await api.job(job_id)
+      transientFails = 0
+    } catch (e) {
+      // tolerate a few transient poll failures (network blip) before giving up
+      if (++transientFails >= 3) throw e
+      continue
+    }
+    onStatus?.(job.status)
+    if (job.status === 'completed') return job.result_json?.roster_options ?? []
+    if (job.status === 'failed') {
+      throw new Error((job.error_json as { message?: string } | null)?.message || 'optimization failed')
+    }
+  }
+}
+

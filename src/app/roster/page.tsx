@@ -1,14 +1,16 @@
 "use client"
 
 import { useEffect, useState, useRef } from "react"
-import { STAFF, ROSTER } from "@/lib/data"
-import { KPIStrip } from "@/components/roster/KPIStrip"
+import { STAFF } from "@/lib/data"
 import { StaffCell } from "@/components/roster/StaffCell"
 import { ShiftCell } from "@/components/roster/ShiftCell"
 import { CreateShiftModal } from "@/components/modals/CreateShiftModal"
 import { CreateEventModal } from "@/components/modals/CreateEventModal"
 import { useLang } from "@/components/layout/LanguageContext"
 import type { ShiftType, DayEntry, Staff } from "@/lib/types"
+import { api, optimizeAndPoll } from "@/lib/api"
+import type { RosterOption } from "@/lib/apiTypes"
+import { AiOptionsModal } from "@/components/roster/AiOptionsModal"
 
 /* ---------- NAAC types ---------- */
 interface NaacShiftDay {
@@ -241,6 +243,14 @@ export default function RosterPage() {
   const [eventOpen, setEventOpen] = useState(false)
   const [downloadOpen, setDownloadOpen] = useState(false)
   const [aiLoading, setAiLoading] = useState(false)
+  const [aiOpen, setAiOpen] = useState(false)
+  const [aiOptions, setAiOptions] = useState<RosterOption[] | null>(null)
+  const [aiStatus, setAiStatus] = useState("")
+  const [aiError, setAiError] = useState("")
+  const [aiPeriodLabel, setAiPeriodLabel] = useState("")
+  const [publishError, setPublishError] = useState("")
+  const [publishingId, setPublishingId] = useState("")
+  const [publishedIds, setPublishedIds] = useState<Set<string>>(new Set())
   const [weekOffset, setWeekOffset] = useState(0) // default to week1 (May 25-31)
   const [saveList, setSaveList] = useState<SaveItem[]>([])
   const [publishList, setPublishList] = useState<SaveItem[]>([])
@@ -281,9 +291,40 @@ export default function RosterPage() {
     }).catch(() => {})
   }, [view])
 
-  const handleAI = () => {
-    setAiLoading(true)
-    setTimeout(() => setAiLoading(false), 1800)
+  // Real Phase 2 solver: enqueue an A/B/C optimize, poll the job, show the options.
+  const handleAI = async () => {
+    if (aiLoading) return   // guard against duplicate jobs from a double-click
+    setAiOpen(true); setAiError(""); setPublishError(""); setAiOptions(null)
+    setAiLoading(true); setAiStatus("pending")
+    try {
+      const periods = await api.rosterPeriods()
+      if (!periods.length) throw new Error(lang === "zh" ? "找不到更表週期，請先建立" : "No roster period found — create one first")
+      // prefer a period overlapping the currently-viewed week; else the most recent
+      const iso = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`
+      const wb = new Date(2026, 4, 25); wb.setDate(wb.getDate() + weekOffset * 7)
+      const we = new Date(wb); we.setDate(we.getDate() + 6)
+      const vs = iso(wb), ve = iso(we)
+      const period = periods.find(p => p.period_start <= ve && p.period_end >= vs) ?? periods[0]
+      setAiPeriodLabel(`${period.period_start} → ${period.period_end}`)
+      const options = await optimizeAndPoll(period.id, { onStatus: setAiStatus })
+      setAiOptions(options)
+    } catch (e) {
+      setAiError(e instanceof Error ? e.message : "Optimization failed")
+    } finally {
+      setAiLoading(false)
+    }
+  }
+
+  const handlePublishOption = async (versionId: string) => {
+    setPublishingId(versionId); setPublishError("")
+    try {
+      await api.publish(versionId)
+      setPublishedIds(prev => new Set(prev).add(versionId))
+    } catch (e) {
+      setPublishError(e instanceof Error ? e.message : "Publish failed")
+    } finally {
+      setPublishingId("")
+    }
   }
 
   const formatNow = () =>
@@ -380,7 +421,8 @@ export default function RosterPage() {
             </div>
             <button
               onClick={handleAI}
-              className="flex items-center gap-1.5 px-3.5 py-1.5 text-white text-xs font-semibold rounded-lg transition-colors"
+              disabled={aiLoading}
+              className="flex items-center gap-1.5 px-3.5 py-1.5 text-white text-xs font-semibold rounded-lg transition-colors disabled:cursor-not-allowed"
               style={{ background: aiLoading ? "#c8156a" : "#E8187A" }}
             >
               {aiLoading ? t("ai_loading") : t("ai_suggest")}
@@ -885,6 +927,22 @@ export default function RosterPage() {
       />
 
       <CreateEventModal open={eventOpen} onClose={() => setEventOpen(false)} />
+
+      {aiOpen && (
+        <AiOptionsModal
+          options={aiOptions}
+          loading={aiLoading}
+          status={aiStatus}
+          error={aiError}
+          publishError={publishError}
+          periodLabel={aiPeriodLabel}
+          isZH={lang === "zh"}
+          publishingId={publishingId}
+          publishedIds={publishedIds}
+          onPublish={handlePublishOption}
+          onClose={() => setAiOpen(false)}
+        />
+      )}
     </div>
   )
 }

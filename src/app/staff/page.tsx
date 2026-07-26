@@ -4,33 +4,38 @@ import { useEffect, useMemo, useState } from 'react'
 import { STAFF } from '@/lib/data'
 import type { Staff } from '@/lib/types'
 import { api } from '@/lib/api'
-import type { ApiStaff } from '@/lib/apiTypes'
+import type { ApiStaff, StaffDetail } from '@/lib/apiTypes'
 import { useLang } from '@/components/layout/LanguageContext'
 
-type StaffType = Staff
+// UI staff = demo shape + optional links to the real API record.
+type StaffType = Staff & { apiId?: string; apiStatus?: string }
 
-const ROLE_OPTIONS = ['ALL', 'RN', 'EN', 'HW', 'CW', 'PTA', 'PCW', 'AW'] as const
-
-// Map a backend /staff row into the card's display shape. Demo-only fields the
-// API doesn't track yet (certs, worked hours, floor) get neutral placeholders;
-// id is the 1-based index so the demo STATUS/SKILLS/EXTRA maps still line up.
-function mapApiStaff(rows: ApiStaff[]): Staff[] {
-  return rows.map((s, i) => {
-    const total = Math.round((s.contracted_hours ?? 40) * 4)
-    return {
-      id: i + 1,
-      name: s.name,
-      nameEn: s.name_en || s.name,
-      role: s.rank,
-      ward: s.unit_name || '—',
-      floor: '—',
-      certs: [],
-      hoursWorked: Math.round(total * 0.85), // placeholder: API has no worked-hours field yet
-      hoursTotal: total,
-      avatar: (s.name_en || s.name).charAt(0),
-    }
-  })
+// Map a backend /staff row to the card shape using REAL fields: certs, rostered
+// hours (scheduled vs contracted-for-period), unit, and derived status. id is the
+// 1-based index so the demo AVATARS/EXTRA maps still line up as a visual fallback.
+function mapApiStaff(rows: ApiStaff[]): StaffType[] {
+  return rows.map((s, i) => ({
+    id: i + 1,
+    apiId: s.id,
+    apiStatus: s.status || undefined,
+    name: s.name,
+    nameEn: s.name_en || s.name,
+    role: s.rank,
+    ward: s.unit_name || '—',
+    floor: '—',
+    certs: s.certs ?? [],
+    hoursWorked: Math.round(s.scheduled_hours ?? 0),
+    hoursTotal: Math.round(s.contracted_period_hours || 160),
+    avatar: (s.name_en || s.name).charAt(0),
+  }))
 }
+
+const API_STATUS: Record<string, { labelZH: string; labelEN: string; color: string; bg: string }> = {
+  scheduled: { labelZH: '已排更', labelEN: 'Scheduled', color: '#1d4ed8', bg: '#eff6ff' },
+  on_leave:  { labelZH: '休假',   labelEN: 'On Leave',  color: '#be123c', bg: '#fff1f2' },
+  available: { labelZH: '可調配', labelEN: 'Available', color: '#15803d', bg: '#f0fdf4' },
+}
+const DEFAULT_STATUS = { labelZH: '可調配', labelEN: 'Available', color: '#15803d', bg: '#f0fdf4' }
 
 const STATUS: Record<number, { labelZH: string; labelEN: string; color: string; bg: string }> = {
   1: { labelZH: '當值中', labelEN: 'On Shift',   color: '#1d4ed8', bg: '#eff6ff' },
@@ -81,13 +86,30 @@ function ProfileModal({ staff, idx, onClose }: { staff: StaffType; idx: number; 
   const { lang } = useLang()
   const isZH = lang === 'zh'
   const [tab, setTab] = useState<'ai' | 'history'>('history')
-  const extra = EXTRA[staff.id] ?? {
-    proximity: '—', experience: '—',
-    weeklyH: `${staff.hoursWorked}h / ${staff.hoursTotal}h`, compatibility: 0,
-  }
+  const [detail, setDetail] = useState<StaffDetail | null>(null)
+  useEffect(() => {
+    if (!staff.apiId) { setDetail(null); return }
+    let cancelled = false
+    api.staffDetail(staff.apiId).then(d => { if (!cancelled) setDetail(d) }).catch(() => {})
+    return () => { cancelled = true }
+  }, [staff.apiId])
+
+  // Live records must NOT borrow the demo EXTRA[1..7] map (fabricated proximity /
+  // compatibility); derive Weekly Load from real rostered/contracted hours.
+  const liveExtra = { proximity: '—', experience: '—', weeklyH: `${staff.hoursWorked}h / ${staff.hoursTotal}h`, compatibility: 0 }
+  const extra = staff.apiId ? liveExtra : (EXTRA[staff.id] ?? liveExtra)
   const pct = staff.hoursTotal ? Math.round((staff.hoursWorked / staff.hoursTotal) * 100) : 0
 
-  const SHIFT_HISTORY = isZH ? SHIFT_HISTORY_ZH : SHIFT_HISTORY_EN
+  // Real rostered shift history when this is a live API staff record.
+  const SHIFT_HISTORY = detail?.shift_history?.length
+    ? detail.shift_history.map(h => ({
+        date: h.date,
+        shift: h.shift_type ?? '—',
+        time: h.start_time && h.end_time ? `${h.start_time} - ${h.end_time}` : '—',
+        ward: staff.ward,
+        resident: h.tasks?.[0] ?? '—',
+      }))
+    : (isZH ? SHIFT_HISTORY_ZH : SHIFT_HISTORY_EN)
 
   const L = {
     compatibility:  isZH ? '配對度'         : 'Compatibility',
@@ -112,9 +134,10 @@ function ProfileModal({ staff, idx, onClose }: { staff: StaffType; idx: number; 
     implicit:       isZH ? '隱性'            : 'Implicit',
   }
 
-  const CREDENTIALS = isZH
+  const realCerts = detail?.certs?.length ? detail.certs : (staff.certs.length ? staff.certs : null)
+  const CREDENTIALS = realCerts ?? (isZH
     ? ['高級心臟血管救命術 ACLS', '傷口護理', 'Team IC', '高級生命支援認證']
-    : ['ACLS', 'Wound Care', 'Team IC', 'Advanced Life Support']
+    : ['ACLS', 'Wound Care', 'Team IC', 'Advanced Life Support'])
 
   const SKILL_TAGS = isZH
     ? ['危重護理', '團隊領導', '緊急應變', '傷口護理', '應對投訴證書']
@@ -156,7 +179,7 @@ function ProfileModal({ staff, idx, onClose }: { staff: StaffType; idx: number; 
           <div className="absolute -bottom-16 left-10">
             <div className="relative">
               <div className="w-32 h-32 rounded-[2rem] border-8 border-white bg-pink-50 flex items-center justify-center text-5xl shadow-lg">
-                {AVATARS[idx]}
+                {staff.apiId ? staff.avatar : AVATARS[idx]}
               </div>
               <div className="absolute -bottom-2 -right-2 w-10 h-10 rounded-full bg-emerald-500 flex items-center justify-center border-4 border-white shadow-md text-white text-sm">✓</div>
             </div>
@@ -351,12 +374,12 @@ export default function StaffPage() {
   const { lang } = useLang()
   const isZH = lang === 'zh'
   const [search, setSearch] = useState('')
-  const [filterRole, setFilterRole] = useState<(typeof ROLE_OPTIONS)[number]>('ALL')
+  const [filterRole, setFilterRole] = useState<string>('ALL')
   const [selected, setSelected] = useState<{ staff: StaffType; idx: number } | null>(null)
 
   // Pull the real staff directory from the API; fall back to demo data if the
   // API is unreachable or no dev creds are configured, so the page never breaks.
-  const [liveStaff, setLiveStaff] = useState<Staff[] | null>(null)
+  const [liveStaff, setLiveStaff] = useState<StaffType[] | null>(null)
   const [live, setLive] = useState(false)
   useEffect(() => {
     let cancelled = false
@@ -367,7 +390,8 @@ export default function StaffPage() {
       .catch(() => { /* API down / no creds → keep demo data */ })
     return () => { cancelled = true }
   }, [])
-  const staffList = liveStaff ?? STAFF
+  const staffList: StaffType[] = liveStaff ?? STAFF
+  const roleOptions = ['ALL', ...Array.from(new Set(staffList.map(s => s.role)))]
 
   const L = {
     title:     isZH ? 'Staff Portfolio 員工檔案'                                       : 'Staff Portfolio',
@@ -404,7 +428,7 @@ export default function StaffPage() {
           placeholder={L.search_ph}
           className="flex-1 px-4 py-2 border border-gray-200 rounded-xl text-sm bg-gray-50 outline-none focus:border-pink-400" />
         <div className="flex gap-1.5 flex-wrap">
-          {ROLE_OPTIONS.map(r => (
+          {roleOptions.map(r => (
             <button key={r} onClick={() => setFilterRole(r)}
               className="px-3 py-2 text-xs font-bold rounded-xl border transition-all"
               style={{
@@ -421,14 +445,14 @@ export default function StaffPage() {
       <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
         {filtered.map((s, i) => {
           const pct = s.hoursTotal ? Math.round((s.hoursWorked / s.hoursTotal) * 100) : 0
-          const status = STATUS[s.id] ?? {
-            labelZH: '可調配', labelEN: 'Available', color: '#15803d', bg: '#f0fdf4',
-          }
+          const status = s.apiStatus
+            ? (API_STATUS[s.apiStatus] ?? DEFAULT_STATUS)
+            : (STATUS[s.id] ?? DEFAULT_STATUS)
           return (
             <div key={s.id} className="bg-white p-5 rounded-2xl border border-gray-100 shadow-sm hover:shadow-md transition-all group">
               <div className="flex items-start gap-3 mb-4">
                 <div className="w-14 h-14 rounded-2xl flex items-center justify-center text-2xl bg-pink-50 border border-pink-100 flex-shrink-0 group-hover:scale-105 transition-transform">
-                  {AVATARS[i]}
+                  {s.apiId ? s.avatar : AVATARS[i]}
                 </div>
                 <div className="flex-1">
                   <h3 className="font-bold text-gray-900 text-sm group-hover:text-pink-600 transition-colors mb-1">{s.nameEn}</h3>
@@ -455,7 +479,7 @@ export default function StaffPage() {
               <div>
                 <div className="text-[9px] font-bold text-gray-400 uppercase tracking-widest mb-1.5">{L.skills}</div>
                 <div className="flex flex-wrap gap-1">
-                  {(SKILLS[s.id] || []).map(sk => (
+                  {(s.certs.length ? s.certs : (s.apiId ? [] : SKILLS[s.id] || [])).map(sk => (
                     <span key={sk} className="text-[10px] font-semibold text-gray-600 bg-gray-50 px-2 py-0.5 rounded-lg border border-gray-100">{sk}</span>
                   ))}
                 </div>
