@@ -2,8 +2,9 @@
 
 Intelligent nurse/care-worker rostering for HK residential care homes. This
 package is the **FastAPI REST backend** (domain logic, Supabase data/auth, and
-the OR-Tools Roster A/B/C solver). The **frontend is a separate Next.js app**
-(repo `main`) that consumes this API — there is no Python UI here.
+the OR-Tools Roster A/B/C solver). It's the backend half of a monorepo — the
+**Next.js frontend lives at the repo root** ([`../`](..)) and consumes this API;
+there is no Python UI here.
 
 ## Stack
 | Concern | Tech |

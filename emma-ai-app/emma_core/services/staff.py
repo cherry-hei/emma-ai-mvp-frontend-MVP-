@@ -99,19 +99,21 @@ def _contracts_by_staff(client, facility_id: str) -> dict[str, dict]:
     return out
 
 
-def _certs_by_staff(client, facility_id: str) -> dict[str, list[str]]:
-    """Certificate types per staff. Returns {} only when staff_certificates isn't migrated yet; other DB errors propagate."""
+def _certs_by_staff(client, facility_id: str) -> dict[str, list[dict]]:
+    """Certificates per staff as {cert_type, expiry_date} records. Returns {} only when
+    staff_certificates isn't migrated yet; other DB errors propagate."""
     try:
-        rows = (client.table("staff_certificates").select("staff_id,cert_type")
-                .eq("facility_id", facility_id).execute().data)
+        rows = (client.table("staff_certificates").select("staff_id,cert_type,expiry_date")
+                .eq("facility_id", facility_id).order("expiry_date").execute().data)
     except Exception as exc:  # noqa: BLE001
         msg = str(exc).lower()
         if "pgrst205" in msg or "could not find the table" in msg or "does not exist" in msg:
             return {}
         raise
-    out: dict[str, list[str]] = {}
+    out: dict[str, list[dict]] = {}
     for r in rows:
-        out.setdefault(r["staff_id"], []).append(r["cert_type"])
+        out.setdefault(r["staff_id"], []).append(
+            {"cert_type": r["cert_type"], "expiry_date": r.get("expiry_date")})
     return out
 
 
@@ -131,10 +133,12 @@ def _enrich(st: dict, *, stats: dict, certs: dict, contracts: dict) -> dict:
     weeks = max(stats["period_days"], 1) / 7
     minutes = s.get("minutes", 0)
     status = "on_leave" if s.get("on_leave") else ("scheduled" if minutes else "available")
+    cert_records = certs.get(st["id"], [])
     return {
         **st,
         "unit_name": unit.get("name"),
-        "certs": certs.get(st["id"], []),
+        "certs": [c["cert_type"] for c in cert_records],
+        "certificates": cert_records,
         "scheduled_hours": round(minutes / 60, 1),
         "contracted_period_hours": round(weekly * weeks, 1),
         "status": status,

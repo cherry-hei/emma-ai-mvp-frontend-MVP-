@@ -25,6 +25,11 @@ export interface Profile {
   facility?: { code?: string | null; name?: string | null } | null
 }
 
+export interface CertOut {
+  cert_type: string
+  expiry_date?: string | null
+}
+
 export interface ApiStaff {
   id: string
   name: string
@@ -37,8 +42,21 @@ export interface ApiStaff {
   is_audited_for_medication: boolean
   is_mentor: boolean
   certs: string[]
+  certificates: CertOut[]             // cert_type + expiry_date, for compliance
   scheduled_hours: number             // rostered working hours this period
   contracted_period_hours: number     // weekly contract scaled to the period
+}
+
+export interface Unit {
+  id: string
+  name: string
+}
+
+export interface ResidentCountOut {
+  date: string
+  unit_id?: string | null
+  care_level?: string | null
+  resident_count: number
 }
 
 export interface ShiftHistoryItem {
@@ -162,6 +180,58 @@ export interface JobView {
   started_at?: string | null
   completed_at?: string | null
   created_at?: string | null
+}
+
+export interface TaskDefOut {
+  id: string
+  task_code: string
+  task_name?: string | null
+  shift_type?: string | null
+  required_rank?: string | null
+  requires_audit: boolean
+  active: boolean
+}
+
+export interface ViolationOut {
+  rule_code: string
+  shift_id?: string | null
+  severity: string
+  message?: string | null
+  resolved: boolean
+}
+
+export interface OptionScoreOut {
+  roster_version_id: string
+  plan_mode: string
+  constraint_score: number
+  hard_violation_count: number
+  soft_penalty_total: number
+  objective_weights?: Record<string, unknown> | null
+  infeasible_reasons: string[]
+  publishable: boolean
+  version_label?: string | null
+  version_status?: string | null
+  violations: ViolationOut[]
+}
+
+export interface CompareOptionsResponse {
+  period_id: string
+  options: OptionScoreOut[]
+}
+
+export interface ValidationOut {
+  roster_version_id: string
+  method: string // 'solver-scored' | 'ratio-check'
+  passes: boolean
+  hard_violation_count: number
+  constraint_score?: number | null
+  violations: ViolationOut[]
+  ratio_checks: RatioResult[]
+}
+
+export interface CreatePeriodResponse {
+  period: PeriodOut
+  manual_version_id: string | null
 }
 
 export interface ApiError {

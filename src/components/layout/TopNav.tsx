@@ -2,6 +2,7 @@
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { useLang } from '@/components/layout/LanguageContext'
+import { useAuth, roleLabel } from '@/components/layout/AuthContext'
 
 const PINK = '#f28f9e'
 
@@ -15,8 +16,17 @@ const TABS = [
 export function TopNav() {
   const [active, setActive] = useState('topnav_roster')
   const [search, setSearch]   = useState('')
+  const [menuOpen, setMenuOpen] = useState(false)
   const router = useRouter()
   const { lang, setLang, t }  = useLang()
+  const { user, signOut } = useAuth()
+  const isZH = lang === 'zh'
+
+  // 'A' / 'B' from "Care Home A (…)", else first letter of the email.
+  const avatarLetter =
+    user?.facilityName?.match(/Home\s*([A-Za-z0-9])/)?.[1]?.toUpperCase()
+    ?? user?.email?.charAt(0).toUpperCase()
+    ?? 'U'
 
   return (
     <header
@@ -78,12 +88,54 @@ export function TopNav() {
         >3</span>
       </div>
 
-      {/* Avatar */}
-      <div
-        className="w-7 h-7 rounded-full flex items-center justify-center text-white text-xs font-semibold cursor-pointer"
-        style={{ background: PINK }}
-      >
-        A
+      {/* Account */}
+      <div className="relative">
+        <button
+          onClick={() => setMenuOpen(o => !o)}
+          className="flex items-center gap-2 pl-1 pr-2 py-1 rounded-full hover:bg-gray-50 transition-colors"
+        >
+          <div
+            className="w-7 h-7 rounded-full flex items-center justify-center text-white text-xs font-semibold"
+            style={{ background: PINK }}
+          >
+            {avatarLetter}
+          </div>
+          <div className="hidden sm:block text-left leading-tight max-w-[150px]">
+            <div className="text-[11px] font-semibold text-gray-800 truncate">
+              {user?.facilityName ?? '—'}
+            </div>
+            <div className="text-[9px] text-gray-400 truncate">
+              {roleLabel(user?.role, isZH) || user?.email}
+            </div>
+          </div>
+          <span className="text-gray-400 text-[10px]">▾</span>
+        </button>
+
+        {menuOpen && (
+          <>
+            <button
+              className="fixed inset-0 z-40 cursor-default"
+              aria-hidden
+              onClick={() => setMenuOpen(false)}
+            />
+            <div className="absolute right-0 top-full mt-1 w-60 rounded-xl border border-gray-200 bg-white shadow-lg z-50 p-1">
+              <div className="px-3 py-2">
+                <div className="text-[10px] text-gray-400">{isZH ? '已登入' : 'Signed in as'}</div>
+                <div className="text-xs font-semibold text-gray-800 truncate">{user?.email ?? '—'}</div>
+                <div className="text-[10px] text-gray-500 mt-0.5 truncate">
+                  {user?.facilityName}{user?.role ? ` · ${roleLabel(user.role, isZH)}` : ''}
+                </div>
+              </div>
+              <div className="h-px bg-gray-100 my-1" />
+              <button
+                onClick={() => { setMenuOpen(false); signOut() }}
+                className="w-full text-left px-3 py-2 rounded-lg text-xs font-medium text-gray-700 hover:bg-gray-50 transition-colors"
+              >
+                {isZH ? '切換帳戶 / 登出' : 'Switch account / Sign out'}
+              </button>
+            </div>
+          </>
+        )}
       </div>
     </header>
   )

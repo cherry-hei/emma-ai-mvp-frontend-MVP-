@@ -31,7 +31,7 @@ def test_health():
 def test_openapi_documents_phase2_surface():
     paths = client.get("/openapi.json").json()["paths"]
     expected = [
-        "/auth/login", "/auth/me",
+        "/auth/login", "/auth/refresh", "/auth/me",
         "/roster-periods", "/roster-versions", "/rosters/{period_id}",
         "/shift-definitions", "/task-definitions", "/shifts",
         "/units", "/resident-counts", "/compliance/ratio", "/staff",
@@ -81,6 +81,35 @@ def _auth(token: str) -> dict:
     return {"Authorization": f"Bearer {token}"}
 
 
+@pytest.fixture(scope="module")
+def session():
+    from emma_core.services.auth import sign_in
+    try:
+        _, s = sign_in("super_a@emma.local", "EmmaDev123!")
+    except Exception as exc:  # noqa: BLE001
+        pytest.skip(f"local Supabase not reachable/seeded: {exc}")
+    return s
+
+
+def test_refresh_rotates_session(session):
+    r = client.post("/auth/refresh", json={"refresh_token": session.refresh_token})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["access_token"]
+    assert body["facility_name"]
+    # the freshly minted access token authenticates /auth/me
+    me = client.get("/auth/me", headers=_auth(body["access_token"]))
+    assert me.status_code == 200
+    assert me.json()["role"] == "superintendent"
+
+
+def test_refresh_rejects_bad_token(session):
+    # the session fixture proves Supabase is reachable; a bogus refresh token → 401.
+    r = client.post("/auth/refresh", json={"refresh_token": "not-a-real-refresh-token"})
+    assert r.status_code == 401
+    assert r.json()["detail"]["code"] == "refresh_failed"
+
+
 def test_me_returns_profile(token):
     r = client.get("/auth/me", headers=_auth(token))
     assert r.status_code == 200
@@ -118,6 +147,15 @@ def test_staff_directory(token):
     s = rows[0]
     for k in ("id", "name", "rank", "scheduled_hours", "contracted_period_hours", "status", "certs"):
         assert k in s, f"missing enriched field: {k}"
+
+
+def test_staff_exposes_cert_expiry(token):
+    # Certifications compliance view relies on cert_type + expiry_date per staff.
+    rows = client.get("/staff", headers=_auth(token)).json()
+    certs = [c for s in rows for c in s.get("certificates", [])]
+    assert certs, "expected seeded certificates"
+    assert all("cert_type" in c for c in certs)
+    assert any(c.get("expiry_date") for c in certs), "expected at least one cert with an expiry date"
 
 
 def test_staff_detail(token):

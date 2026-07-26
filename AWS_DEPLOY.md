@@ -6,7 +6,7 @@ public HTTPS URL. No servers to manage.
 
 **What gets deployed:** the Emma AI **REST API** (FastAPI + uvicorn), packaged by
 the repo-root [`Dockerfile`](Dockerfile). It serves JSON only — the Next.js
-frontend is a separate app (repo `main`) and is deployed on its own (e.g. Vercel).
+frontend (repo root, same monorepo) is deployed on its own (e.g. Vercel).
 **What does NOT get deployed here:** the database. The app talks to **Supabase
 Cloud** (see [emma-ai-app/CLOUD_SETUP.md](emma-ai-app/CLOUD_SETUP.md)). A live
 service cannot use your local `supabase start` database.

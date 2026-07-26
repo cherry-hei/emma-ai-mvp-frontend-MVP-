@@ -1,7 +1,6 @@
 'use client'
 
 import { useEffect, useMemo, useState } from 'react'
-import { STAFF } from '@/lib/data'
 import type { Staff } from '@/lib/types'
 import { api } from '@/lib/api'
 import type { ApiStaff, StaffDetail } from '@/lib/apiTypes'
@@ -67,18 +66,6 @@ const EXTRA: Record<number, { proximity: string; experience: string; weeklyH: st
   7: { proximity: '1.2km', experience: '8.5 Years', weeklyH: '40h / 44h', compatibility: 98 },
 }
 
-const SHIFT_HISTORY_ZH = [
-  { date: '2026-03-20', shift: '早更', time: '09:00 - 17:00', ward: 'A病房', resident: '李廣發' },
-  { date: '2026-03-18', shift: '午更', time: '14:00 - 22:00', ward: 'B病房', resident: '張明輝' },
-  { date: '2026-03-15', shift: '夜更', time: '22:00 - 07:00', ward: 'A病房', resident: '王少蓮' },
-]
-
-const SHIFT_HISTORY_EN = [
-  { date: '2026-03-20', shift: 'AM Shift',    time: '09:00 - 17:00', ward: 'Ward A', resident: 'Lee K.F.' },
-  { date: '2026-03-18', shift: 'PM Shift',    time: '14:00 - 22:00', ward: 'Ward B', resident: 'Cheung M.H.' },
-  { date: '2026-03-15', shift: 'Night Shift', time: '22:00 - 07:00', ward: 'Ward A', resident: 'Wong S.L.' },
-]
-
 const AVATARS = ['🧑‍⚕️', '👩‍⚕️', '👨‍⚕️', '👩‍⚕️', '🧑‍⚕️', '👩‍⚕️', '👨‍⚕️']
 const PINK = '#f28f9e'
 
@@ -88,7 +75,7 @@ function ProfileModal({ staff, idx, onClose }: { staff: StaffType; idx: number; 
   const [tab, setTab] = useState<'ai' | 'history'>('history')
   const [detail, setDetail] = useState<StaffDetail | null>(null)
   useEffect(() => {
-    if (!staff.apiId) { setDetail(null); return }
+    if (!staff.apiId) return
     let cancelled = false
     api.staffDetail(staff.apiId).then(d => { if (!cancelled) setDetail(d) }).catch(() => {})
     return () => { cancelled = true }
@@ -100,16 +87,14 @@ function ProfileModal({ staff, idx, onClose }: { staff: StaffType; idx: number; 
   const extra = staff.apiId ? liveExtra : (EXTRA[staff.id] ?? liveExtra)
   const pct = staff.hoursTotal ? Math.round((staff.hoursWorked / staff.hoursTotal) * 100) : 0
 
-  // Real rostered shift history when this is a live API staff record.
-  const SHIFT_HISTORY = detail?.shift_history?.length
-    ? detail.shift_history.map(h => ({
-        date: h.date,
-        shift: h.shift_type ?? '—',
-        time: h.start_time && h.end_time ? `${h.start_time} - ${h.end_time}` : '—',
-        ward: staff.ward,
-        resident: h.tasks?.[0] ?? '—',
-      }))
-    : (isZH ? SHIFT_HISTORY_ZH : SHIFT_HISTORY_EN)
+  // Real rostered shift history from the API (empty until the roster is loaded).
+  const SHIFT_HISTORY = (detail?.shift_history ?? []).map(h => ({
+    date: h.date,
+    shift: h.shift_type ?? '—',
+    time: h.start_time && h.end_time ? `${h.start_time} - ${h.end_time}` : '—',
+    ward: staff.ward,
+    resident: h.tasks?.[0] ?? '—',
+  }))
 
   const L = {
     compatibility:  isZH ? '配對度'         : 'Compatibility',
@@ -240,6 +225,9 @@ function ProfileModal({ staff, idx, onClose }: { staff: StaffType; idx: number; 
 
           {tab === 'history' ? (
             <div className="space-y-3">
+              {SHIFT_HISTORY.length === 0 && (
+                <div className="text-xs text-gray-400 text-center py-6">{isZH ? '尚無更表紀錄' : 'No shift history yet'}</div>
+              )}
               {SHIFT_HISTORY.map((s, i) => (
                 <div key={i} className="bg-gray-50 p-5 rounded-3xl border border-gray-100 hover:border-pink-200 transition-all">
                   <div className="flex justify-between items-start mb-3">
@@ -379,23 +367,21 @@ export default function StaffPage() {
 
   // Pull the real staff directory from the API; fall back to demo data if the
   // API is unreachable or no dev creds are configured, so the page never breaks.
+  // Always real: the directory is the live API record set (null = still loading).
   const [liveStaff, setLiveStaff] = useState<StaffType[] | null>(null)
-  const [live, setLive] = useState(false)
   useEffect(() => {
     let cancelled = false
     api.listStaff()
-      .then((rows) => {
-        if (!cancelled && rows.length) { setLiveStaff(mapApiStaff(rows)); setLive(true) }
-      })
-      .catch(() => { /* API down / no creds → keep demo data */ })
+      .then((rows) => { if (!cancelled) setLiveStaff(mapApiStaff(rows)) })
+      .catch(() => { if (!cancelled) setLiveStaff([]) })
     return () => { cancelled = true }
   }, [])
-  const staffList: StaffType[] = liveStaff ?? STAFF
+  const staffList: StaffType[] = useMemo(() => liveStaff ?? [], [liveStaff])
   const roleOptions = ['ALL', ...Array.from(new Set(staffList.map(s => s.role)))]
 
   const L = {
     title:     isZH ? 'Staff Portfolio 員工檔案'                                       : 'Staff Portfolio',
-    subtitle:  isZH ? `${staffList.length} 位員工 · NAAC大興宿舍${live ? ' · 即時' : ''}` : `${staffList.length} staff members · NAAC Tai Hing Hostel${live ? ' · live' : ''}`,
+    subtitle:  isZH ? `${staffList.length} 位員工` : `${staffList.length} staff members`,
     add_staff: isZH ? '＋ 新增員工'                           : '＋ Add Staff',
     search_ph: isZH ? '🔍 搜尋員工...'                        : '🔍 Search staff...',
     skills:    isZH ? '技能'                                  : 'Skills',
@@ -442,6 +428,11 @@ export default function StaffPage() {
         </div>
       </div>
 
+      {liveStaff === null ? (
+        <div className="text-sm text-gray-400 py-12 text-center">…</div>
+      ) : filtered.length === 0 ? (
+        <div className="text-sm text-gray-400 py-12 text-center">{isZH ? '沒有符合的員工' : 'No matching staff'}</div>
+      ) : (
       <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
         {filtered.map((s, i) => {
           const pct = s.hoursTotal ? Math.round((s.hoursWorked / s.hoursTotal) * 100) : 0
@@ -495,6 +486,7 @@ export default function StaffPage() {
           )
         })}
       </div>
+      )}
 
       {selected && <ProfileModal staff={selected.staff} idx={selected.idx} onClose={() => setSelected(null)} />}
     </div>

@@ -90,6 +90,11 @@ curl -X POST http://localhost:8000/auth/login -H "Content-Type: application/json
 curl http://localhost:8000/auth/me -H "Authorization: Bearer <access_token>"
 ```
 
+The login response also returns a `refresh_token`. When the short-lived
+`access_token` expires, `POST /auth/refresh` with `{"refresh_token":"<...>"}` mints a
+fresh session — the Next.js frontend does this automatically on a `401`, falling back
+to the `/login` screen only when the refresh token is itself expired.
+
 Seeded accounts:
 
 | Email | Role | Facility |

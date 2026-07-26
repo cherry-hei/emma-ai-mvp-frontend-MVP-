@@ -232,6 +232,12 @@ class ResidentCountOut(BaseModel):
     resident_count: int
 
 
+class CertOut(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    cert_type: str
+    expiry_date: Date | None = None
+
+
 class StaffOut(BaseModel):
     model_config = ConfigDict(extra="ignore")
     id: str
@@ -244,7 +250,8 @@ class StaffOut(BaseModel):
     contracted_hours: float | None = None      # weekly contract (raw)
     is_audited_for_medication: bool = False
     is_mentor: bool = False
-    certs: list[str] = Field(default_factory=list)
+    certs: list[str] = Field(default_factory=list)               # cert-type names (compat)
+    certificates: list[CertOut] = Field(default_factory=list)    # + expiry, for compliance
     scheduled_hours: float = 0.0               # rostered working hours this period
     contracted_period_hours: float = 0.0       # weekly contract scaled to the period
 

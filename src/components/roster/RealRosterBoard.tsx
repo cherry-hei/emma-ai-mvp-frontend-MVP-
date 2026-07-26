@@ -1,0 +1,537 @@
+'use client'
+
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import { api, optimizeAndPoll } from '@/lib/api'
+import type {
+  OptionScoreOut, PeriodOut, RosterCell, RosterGrid, RosterOption,
+  ShiftDef, TaskDefOut, ValidationOut, VersionOut,
+} from '@/lib/apiTypes'
+import { useLang } from '@/components/layout/LanguageContext'
+import { AiOptionsModal } from './AiOptionsModal'
+
+const PINK = '#E8187A'
+
+// Cell colors mirror emma_core.constants.SHIFT_STYLE (backend), with a neutral default.
+const SHIFT_STYLE: Record<string, { bg: string; fg: string }> = {
+  A: { bg: '#DBEAFE', fg: '#1E40AF' }, B: { bg: '#CFFAFE', fg: '#155E75' },
+  E: { bg: '#CCFBF1', fg: '#115E59' }, P: { bg: '#FEF3C7', fg: '#92400E' },
+  N: { bg: '#E0E7FF', fg: '#3730A3' }, AN: { bg: '#EDE9FE', fg: '#5B21B6' },
+  '7A': { bg: '#DBEAFE', fg: '#1E40AF' }, '9A': { bg: '#CFFAFE', fg: '#155E75' },
+  '7P': { bg: '#E0E7FF', fg: '#3730A3' },
+  AL: { bg: '#DCFCE7', fg: '#166534' }, SLEEP: { bg: '#F5F3FF', fg: '#6D28D9' },
+  OFF: { bg: '#F1F5F9', fg: '#64748B' }, DO: { bg: '#F1F5F9', fg: '#64748B' },
+}
+const DEFAULT_STYLE = { bg: '#F1F5F9', fg: '#475569' }
+
+// UTC-based to stay timezone-agnostic: parsing a bare date as local time and then
+// calling toISOString() would roll the day back on UTC+ machines.
+function eachDate(start: string, end: string): string[] {
+  const out: string[] = []
+  const [ys, ms, ds] = start.split('-').map(Number)
+  const [ye, me, de] = end.split('-').map(Number)
+  let t = Date.UTC(ys, ms - 1, ds)
+  const last = Date.UTC(ye, me - 1, de)
+  for (let i = 0; t <= last && i < 400; i++) {
+    out.push(new Date(t).toISOString().slice(0, 10))
+    t += 86_400_000
+  }
+  return out
+}
+
+function dayLabel(iso: string, isZH: boolean) {
+  const d = new Date(`${iso}T00:00:00Z`)
+  const dow = d.getUTCDay()
+  const wd = (isZH ? ['日', '一', '二', '三', '四', '五', '六'] : ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'])[dow]
+  return { wd, dm: `${d.getUTCDate()}/${d.getUTCMonth() + 1}`, weekend: dow === 0 || dow === 6 }
+}
+
+type EditState = { staffId: string; staffName: string; date: string; shiftType: string; tasks: string[] }
+
+export function RealRosterBoard() {
+  const { lang } = useLang()
+  const isZH = lang === 'zh'
+
+  const [periods, setPeriods] = useState<PeriodOut[]>([])
+  const [periodId, setPeriodId] = useState('')
+  const [versions, setVersions] = useState<VersionOut[]>([])
+  const [versionId, setVersionId] = useState('') // '' = default (latest manual)
+  const [grid, setGrid] = useState<RosterGrid | null>(null)
+  const [shiftDefs, setShiftDefs] = useState<ShiftDef[]>([])
+  const [taskDefs, setTaskDefs] = useState<TaskDefOut[]>([])
+  const [scores, setScores] = useState<Record<string, OptionScoreOut>>({})
+
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState('')
+  const [notice, setNotice] = useState('')
+  const [busy, setBusy] = useState('')
+  const [editing, setEditing] = useState<EditState | null>(null)
+  const [newPeriodOpen, setNewPeriodOpen] = useState(false)
+  const [validation, setValidation] = useState<ValidationOut | null>(null)
+
+  const [aiOpen, setAiOpen] = useState(false)
+  const [aiLoading, setAiLoading] = useState(false)
+  const [aiOptions, setAiOptions] = useState<RosterOption[] | null>(null)
+  const [aiStatus, setAiStatus] = useState('')
+  const [aiError, setAiError] = useState('')
+  const [publishingId, setPublishingId] = useState('')
+  const [publishedIds, setPublishedIds] = useState<Set<string>>(new Set())
+  const [publishError, setPublishError] = useState('')
+
+  const T = {
+    period: isZH ? '週期' : 'Period', newPeriod: isZH ? '＋ 新週期' : '＋ New period',
+    version: isZH ? '版本' : 'Version', manual: isZH ? '手動' : 'Manual',
+    ai: isZH ? '🤖 AI 更表建議' : '🤖 AI Roster Suggest', aiBusy: isZH ? '🤖 生成中…' : '🤖 Generating…',
+    validate: isZH ? '驗證' : 'Validate', saveDraft: isZH ? '儲存草稿' : 'Save draft',
+    publish: isZH ? '發佈' : 'Publish', staff: isZH ? '員工' : 'Staff',
+    empty: isZH ? '此週期尚無更表資料。點擊格子開始編輯。' : 'No shifts yet. Click a cell to start editing.',
+    noPeriods: isZH ? '尚無更表週期，請先建立一個。' : 'No roster periods yet — create one to begin.',
+    readonly: isZH ? '（唯讀 — 已發佈或 AI 方案）' : '(read-only — published or AI option)',
+    edit: isZH ? '編輯更次' : 'Edit shift', clear: isZH ? '清除' : 'Clear',
+    save: isZH ? '儲存' : 'Save', cancel: isZH ? '取消' : 'Cancel', tasks: isZH ? '任務' : 'Tasks',
+    passes: isZH ? '通過' : 'Passes', fails: isZH ? '不通過' : 'Fails',
+    start: isZH ? '開始日期' : 'Start', end: isZH ? '結束日期' : 'End', create: isZH ? '建立' : 'Create',
+    cycle: isZH ? '週期類型' : 'Cycle',
+  }
+
+  const flash = (m: string) => { setNotice(m); setError(''); window.setTimeout(() => setNotice(''), 2500) }
+
+  // ── loaders ──────────────────────────────────────────────────────────────
+  useEffect(() => {
+    api.shiftDefinitions().then(setShiftDefs).catch(() => {})
+    api.taskDefinitions().then(setTaskDefs).catch(() => {})
+  }, [])
+
+  useEffect(() => {
+    api.rosterPeriods()
+      .then((ps) => { setPeriods(ps); setPeriodId((prev) => prev || (ps[0]?.id ?? '')) })
+      .catch((e) => setError(e instanceof Error ? e.message : 'Failed to load periods'))
+  }, [])
+
+  const loadVersions = useCallback(async (pid: string) => {
+    const vs = await api.rosterVersions(pid)
+    setVersions(vs)
+    try {
+      const cmp = await api.compareOptions(pid)
+      const map: Record<string, OptionScoreOut> = {}
+      cmp.options.forEach((o) => { map[o.roster_version_id] = o })
+      setScores(map)
+    } catch { setScores({}) }
+  }, [])
+
+  useEffect(() => {
+    if (!periodId) return
+    setVersionId('')
+    loadVersions(periodId).catch(() => {})
+  }, [periodId, loadVersions])
+
+  const loadGrid = useCallback(async (pid: string, vid: string) => {
+    setLoading(true); setError(''); setValidation(null)
+    try {
+      setGrid(await api.rosterGrid(pid, vid ? { versionId: vid } : undefined))
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to load roster')
+    } finally { setLoading(false) }
+  }, [])
+
+  useEffect(() => { if (periodId) loadGrid(periodId, versionId) }, [periodId, versionId, loadGrid])
+
+  // ── derived ──────────────────────────────────────────────────────────────
+  const currentVersion = useMemo(
+    () => (versionId ? versions.find((v) => v.id === versionId) : versions.find((v) => v.version_type === 'manual')) ?? null,
+    [versions, versionId],
+  )
+  const activeVersionId = grid?.version_id ?? currentVersion?.id ?? ''
+  // Only the manual draft is hand-editable; A/B/C solver options are read-only
+  // results you publish, and published/archived versions are locked.
+  const editable = currentVersion?.version_type === 'manual' && currentVersion?.status === 'draft'
+
+  const columns = useMemo(() => {
+    if (grid?.period_start && grid?.period_end) return eachDate(grid.period_start, grid.period_end)
+    return grid?.dates ?? []
+  }, [grid])
+
+  // staffId → (date → cell)
+  const cellLookup = useMemo(() => {
+    const m = new Map<string, Map<string, RosterCell>>()
+    grid?.rows.forEach((r) => {
+      const byDate = new Map<string, RosterCell>()
+      r.cells.forEach((c) => byDate.set(c.date, c))
+      m.set(r.staff.id, byDate)
+    })
+    return m
+  }, [grid])
+
+  // ── actions ──────────────────────────────────────────────────────────────
+  const refresh = useCallback(async () => {
+    await Promise.all([loadVersions(periodId), loadGrid(periodId, versionId)])
+  }, [periodId, versionId, loadVersions, loadGrid])
+
+  async function saveCell() {
+    if (!editing || !activeVersionId) return
+    setBusy('cell')
+    try {
+      if (!editing.shiftType) await api.clearCell(activeVersionId, editing.staffId, editing.date)
+      else await api.upsertCell({
+        roster_version_id: activeVersionId, staff_id: editing.staffId,
+        date: editing.date, shift_type: editing.shiftType, tasks: editing.tasks,
+      })
+      setEditing(null)
+      await loadGrid(periodId, versionId)
+    } catch (e) { setError(e instanceof Error ? e.message : 'Save failed') } finally { setBusy('') }
+  }
+
+  async function handleValidate() {
+    if (!activeVersionId) return
+    setBusy('validate'); setError('')
+    try { setValidation(await api.validateRoster(activeVersionId)) }
+    catch (e) { setError(e instanceof Error ? e.message : 'Validation failed') } finally { setBusy('') }
+  }
+
+  async function handleSaveDraft() {
+    if (!activeVersionId) return
+    setBusy('save')
+    try { await api.saveDraft(activeVersionId); flash(isZH ? '已儲存草稿' : 'Draft saved') }
+    catch (e) { setError(e instanceof Error ? e.message : 'Save failed') } finally { setBusy('') }
+  }
+
+  async function handlePublish() {
+    if (!activeVersionId) return
+    setBusy('publish'); setError('')
+    try {
+      await api.publish(activeVersionId)
+      flash(isZH ? '已發佈' : 'Published')
+      await refresh()
+    } catch (e) { setError(e instanceof Error ? e.message : 'Publish failed') } finally { setBusy('') }
+  }
+
+  async function handleAI() {
+    if (aiLoading || !periodId) return
+    setAiOpen(true); setAiError(''); setPublishError(''); setAiOptions(null)
+    setAiLoading(true); setAiStatus('pending')
+    try {
+      const options = await optimizeAndPoll(periodId, { onStatus: setAiStatus })
+      setAiOptions(options)
+      await loadVersions(periodId) // A/B/C versions now exist → tabs + score badges
+    } catch (e) {
+      setAiError(e instanceof Error ? e.message : 'Optimization failed')
+    } finally { setAiLoading(false) }
+  }
+
+  async function handlePublishOption(vid: string) {
+    setPublishingId(vid); setPublishError('')
+    try {
+      await api.publish(vid)
+      setPublishedIds((prev) => new Set(prev).add(vid))
+      await refresh()
+    } catch (e) { setPublishError(e instanceof Error ? e.message : 'Publish failed') } finally { setPublishingId('') }
+  }
+
+  // ── render ───────────────────────────────────────────────────────────────
+  const periodLabel = grid?.period_start && grid?.period_end ? `${grid.period_start} → ${grid.period_end}` : ''
+
+  return (
+    <div className="flex flex-col h-full overflow-hidden">
+      {/* Toolbar */}
+      <div className="bg-white border-b border-gray-200 px-5 py-3 flex-shrink-0 space-y-2.5">
+        <div className="flex items-center gap-3 flex-wrap">
+          <h1 className="text-xl font-bold text-gray-900">{isZH ? '更表' : 'Roster'}</h1>
+
+          <label className="text-xs text-gray-500">{T.period}</label>
+          <select
+            value={periodId}
+            onChange={(e) => setPeriodId(e.target.value)}
+            className="text-xs border border-gray-200 rounded-lg px-2 py-1.5 bg-white max-w-[220px]"
+          >
+            {periods.map((p) => (
+              <option key={p.id} value={p.id}>{p.period_start} → {p.period_end} · {p.status}</option>
+            ))}
+          </select>
+          <button onClick={() => setNewPeriodOpen(true)}
+            className="text-xs px-2.5 py-1.5 border border-gray-200 rounded-lg hover:bg-gray-50">{T.newPeriod}</button>
+
+          <div className="ml-auto flex items-center gap-2">
+            <button onClick={handleAI} disabled={aiLoading || !periodId}
+              className="px-3.5 py-1.5 text-white text-xs font-semibold rounded-lg disabled:opacity-60"
+              style={{ background: PINK }}>{aiLoading ? T.aiBusy : T.ai}</button>
+          </div>
+        </div>
+
+        {/* Version tabs + actions */}
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className="text-xs text-gray-500">{T.version}:</span>
+          {versions.map((v) => {
+            const sc = scores[v.id]
+            const active = v.id === activeVersionId
+            const label = v.version_type === 'manual' ? T.manual : v.version_type
+            return (
+              <button key={v.id} onClick={() => setVersionId(v.id)}
+                className="px-2.5 py-1 rounded-lg text-xs font-medium border transition-all flex items-center gap-1.5"
+                style={{
+                  borderColor: active ? PINK : '#e5e7eb',
+                  background: active ? '#fff0f5' : '#fff',
+                  color: active ? PINK : '#6b7280',
+                }}>
+                <span>{label}</span>
+                <span className="text-[9px] px-1 rounded"
+                  style={{ background: v.status === 'published' ? '#dcfce7' : '#f1f5f9', color: v.status === 'published' ? '#166534' : '#64748b' }}>
+                  {v.status}
+                </span>
+                {sc && <span className="text-[9px] font-bold" style={{ color: sc.publishable ? '#15803d' : '#be123c' }}>· {sc.constraint_score}</span>}
+              </button>
+            )
+          })}
+
+          <div className="ml-auto flex items-center gap-2">
+            <button onClick={handleValidate} disabled={!activeVersionId || busy === 'validate'}
+              className="text-xs px-3 py-1.5 border border-gray-200 rounded-lg hover:bg-gray-50 disabled:opacity-50">
+              {busy === 'validate' ? '…' : T.validate}
+            </button>
+            <button onClick={handleSaveDraft} disabled={!editable || busy === 'save'}
+              className="text-xs px-3 py-1.5 border border-gray-200 rounded-lg hover:bg-gray-50 disabled:opacity-50">
+              {busy === 'save' ? '…' : T.saveDraft}
+            </button>
+            <button onClick={handlePublish} disabled={!activeVersionId || busy === 'publish'}
+              className="text-xs px-3 py-1.5 rounded-lg text-white font-semibold disabled:opacity-50"
+              style={{ background: PINK }}>
+              {busy === 'publish' ? '…' : T.publish}
+            </button>
+          </div>
+        </div>
+
+        {/* status line */}
+        <div className="flex items-center gap-3 min-h-[16px]">
+          {periodLabel && <span className="text-[11px] text-gray-400">{periodLabel}</span>}
+          {!editable && currentVersion && <span className="text-[11px] text-amber-600">{T.readonly}</span>}
+          {notice && <span className="text-[11px] font-medium text-emerald-600">{notice}</span>}
+          {error && <span className="text-[11px] font-medium text-rose-600">{error}</span>}
+        </div>
+      </div>
+
+      {/* Validation panel */}
+      {validation && (
+        <div className="px-5 py-2 border-b border-gray-200 bg-white flex-shrink-0">
+          <div className="flex items-center gap-2 flex-wrap text-xs">
+            <span className="font-semibold" style={{ color: validation.passes ? '#15803d' : '#be123c' }}>
+              {validation.passes ? `✓ ${T.passes}` : `✗ ${T.fails}`}
+            </span>
+            <span className="text-gray-400">· {validation.method}</span>
+            {validation.hard_violation_count > 0 && (
+              <span className="text-rose-600">· {validation.hard_violation_count} {isZH ? '違規' : 'violations'}</span>
+            )}
+            {validation.violations.slice(0, 4).map((v, i) => (
+              <span key={i} className="text-[10px] px-2 py-0.5 rounded-full bg-rose-50 text-rose-600 border border-rose-100">
+                {v.rule_code}{v.message ? `: ${v.message}` : ''}
+              </span>
+            ))}
+            {validation.ratio_checks.filter((c) => !c.passes).slice(0, 4).map((c, i) => (
+              <span key={`r${i}`} className="text-[10px] px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 border border-amber-100">
+                {c.label} — {c.actual}/{c.required}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Grid */}
+      <div className="flex-1 min-h-0 overflow-auto px-5 py-3">
+        {!periodId ? (
+          <div className="text-sm text-gray-400 p-8 text-center">{T.noPeriods}</div>
+        ) : loading ? (
+          <div className="text-sm text-gray-400 p-8 text-center">…</div>
+        ) : grid && grid.rows.length ? (
+          <table className="border-collapse bg-white rounded-xl border border-gray-200">
+            <thead className="sticky top-0 z-10">
+              <tr className="bg-gray-50 border-b border-gray-200">
+                <th className="text-left px-3 py-2 text-[10px] font-semibold text-gray-500 border-r border-gray-200 sticky left-0 bg-gray-50 z-20 w-44 min-w-44">
+                  {T.staff}
+                </th>
+                {columns.map((iso) => {
+                  const d = dayLabel(iso, isZH)
+                  return (
+                    <th key={iso} className={`px-1 py-1.5 text-center border-r border-gray-100 min-w-[54px] ${d.weekend ? 'bg-pink-50' : 'bg-gray-50'}`}>
+                      <div className="text-[8px] text-gray-400">{d.wd}</div>
+                      <div className="text-[11px] font-bold text-gray-700">{d.dm}</div>
+                    </th>
+                  )
+                })}
+              </tr>
+            </thead>
+            <tbody>
+              {grid.rows.map((row) => (
+                <tr key={row.staff.id} className="border-t border-gray-100">
+                  <td className="px-3 py-2 border-r border-gray-200 sticky left-0 bg-white z-10 w-44 min-w-44">
+                    <div className="text-[12px] font-semibold text-gray-900 truncate">{row.staff.name_en || row.staff.name}</div>
+                    <div className="flex items-center gap-1.5 text-[10px] text-gray-400">
+                      <span className="font-bold text-gray-500">{row.staff.rank}</span>
+                      {row.staff.unit_name && <span className="truncate">· {row.staff.unit_name}</span>}
+                    </div>
+                  </td>
+                  {columns.map((iso) => {
+                    const cell = cellLookup.get(row.staff.id)?.get(iso)
+                    const st = cell?.shift_type
+                    const style = st ? (SHIFT_STYLE[st] ?? DEFAULT_STYLE) : null
+                    return (
+                      <td key={iso}
+                        onClick={() => editable && setEditing({
+                          staffId: row.staff.id, staffName: row.staff.name_en || row.staff.name,
+                          date: iso, shiftType: st ?? '', tasks: cell?.tasks ?? [],
+                        })}
+                        className={`border-r border-gray-100 p-1 align-top ${editable ? 'cursor-pointer hover:bg-pink-50/40' : ''}`}>
+                        {st ? (
+                          <div className="rounded px-1 py-0.5 text-[9px] font-bold text-center"
+                            style={{ background: style!.bg, color: style!.fg }}>{st}</div>
+                        ) : (
+                          <div className="h-4" />
+                        )}
+                        {cell?.tasks?.slice(0, 2).map((t) => (
+                          <div key={t} className="text-[7px] text-gray-400 leading-tight truncate">• {t}</div>
+                        ))}
+                      </td>
+                    )
+                  })}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        ) : (
+          <div className="text-sm text-gray-400 p-8 text-center">{T.empty}</div>
+        )}
+      </div>
+
+      {/* Cell editor */}
+      {editing && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-6" style={{ background: 'rgba(0,0,0,0.4)' }}
+          onClick={() => setEditing(null)}>
+          <div className="bg-white w-full max-w-md rounded-2xl shadow-2xl p-6" onClick={(e) => e.stopPropagation()}>
+            <div className="text-sm font-bold text-gray-900">{T.edit}</div>
+            <div className="text-xs text-gray-500 mb-4">{editing.staffName} · {editing.date}</div>
+
+            <div className="flex flex-wrap gap-1.5 mb-4">
+              {shiftDefs.map((sd) => {
+                const sel = editing.shiftType === sd.shift_type
+                const style = SHIFT_STYLE[sd.shift_type] ?? DEFAULT_STYLE
+                return (
+                  <button key={sd.id} onClick={() => setEditing({ ...editing, shiftType: sel ? '' : sd.shift_type })}
+                    className="px-2.5 py-1 rounded-lg text-xs font-bold border-2 transition-all"
+                    style={{ background: style.bg, color: style.fg, borderColor: sel ? PINK : 'transparent' }}
+                    title={sd.label ?? sd.shift_type}>
+                    {sd.shift_type}
+                  </button>
+                )
+              })}
+            </div>
+
+            {taskDefs.length > 0 && editing.shiftType && (
+              <div className="mb-4">
+                <div className="text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-1.5">{T.tasks}</div>
+                <div className="flex flex-wrap gap-1.5 max-h-24 overflow-y-auto">
+                  {taskDefs.map((td) => {
+                    const label = td.task_name || td.task_code
+                    const on = editing.tasks.includes(label)
+                    return (
+                      <button key={td.id}
+                        onClick={() => setEditing({
+                          ...editing,
+                          tasks: on ? editing.tasks.filter((t) => t !== label) : [...editing.tasks, label],
+                        })}
+                        className="px-2 py-0.5 rounded-full text-[10px] border transition-all"
+                        style={{ borderColor: on ? PINK : '#e5e7eb', background: on ? '#fff0f5' : '#fff', color: on ? PINK : '#6b7280' }}>
+                        {label}
+                      </button>
+                    )
+                  })}
+                </div>
+              </div>
+            )}
+
+            <div className="flex gap-2 justify-end">
+              <button onClick={() => setEditing({ ...editing, shiftType: '', tasks: [] })}
+                className="px-3 py-1.5 text-xs rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-50">{T.clear}</button>
+              <button onClick={() => setEditing(null)}
+                className="px-3 py-1.5 text-xs rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50">{T.cancel}</button>
+              <button onClick={saveCell} disabled={busy === 'cell'}
+                className="px-4 py-1.5 text-xs rounded-lg text-white font-semibold disabled:opacity-60" style={{ background: PINK }}>
+                {busy === 'cell' ? '…' : T.save}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {newPeriodOpen && (
+        <NewPeriodModal
+          isZH={isZH}
+          onClose={() => setNewPeriodOpen(false)}
+          onCreated={(pid) => { setNewPeriodOpen(false); setPeriodId(pid); api.rosterPeriods().then(setPeriods).catch(() => {}) }}
+        />
+      )}
+
+      {aiOpen && (
+        <AiOptionsModal
+          options={aiOptions} loading={aiLoading} status={aiStatus} error={aiError}
+          publishError={publishError} periodLabel={periodLabel} isZH={isZH}
+          publishingId={publishingId} publishedIds={publishedIds}
+          onPublish={handlePublishOption} onClose={() => setAiOpen(false)}
+        />
+      )}
+    </div>
+  )
+}
+
+function NewPeriodModal({ isZH, onClose, onCreated }: {
+  isZH: boolean; onClose: () => void; onCreated: (periodId: string) => void
+}) {
+  const today = new Date().toISOString().slice(0, 10)
+  const plus = (n: number) => { const d = new Date(); d.setDate(d.getDate() + n); return d.toISOString().slice(0, 10) }
+  const [start, setStart] = useState(today)
+  const [end, setEnd] = useState(plus(27))
+  const [cycle, setCycle] = useState('28day')
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState('')
+
+  async function create() {
+    setBusy(true); setErr('')
+    try {
+      const res = await api.createPeriod({ period_start: start, period_end: end, cycle_type: cycle, create_manual_version: true })
+      onCreated(res.period.id)
+    } catch (e) { setErr(e instanceof Error ? e.message : 'Create failed'); setBusy(false) }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-6" style={{ background: 'rgba(0,0,0,0.4)' }} onClick={onClose}>
+      <div className="bg-white w-full max-w-sm rounded-2xl shadow-2xl p-6" onClick={(e) => e.stopPropagation()}>
+        <div className="text-sm font-bold text-gray-900 mb-4">{isZH ? '新增更表週期' : 'New roster period'}</div>
+        <div className="space-y-3">
+          <label className="block">
+            <span className="text-[11px] font-semibold text-gray-500">{isZH ? '開始日期' : 'Start'}</span>
+            <input type="date" value={start} onChange={(e) => setStart(e.target.value)}
+              className="w-full mt-1 px-3 py-2 rounded-lg border border-gray-200 text-sm" />
+          </label>
+          <label className="block">
+            <span className="text-[11px] font-semibold text-gray-500">{isZH ? '結束日期' : 'End'}</span>
+            <input type="date" value={end} onChange={(e) => setEnd(e.target.value)}
+              className="w-full mt-1 px-3 py-2 rounded-lg border border-gray-200 text-sm" />
+          </label>
+          <label className="block">
+            <span className="text-[11px] font-semibold text-gray-500">{isZH ? '週期類型' : 'Cycle'}</span>
+            <select value={cycle} onChange={(e) => setCycle(e.target.value)}
+              className="w-full mt-1 px-3 py-2 rounded-lg border border-gray-200 text-sm bg-white">
+              <option value="28day">28day</option>
+              <option value="natural_month">natural_month</option>
+            </select>
+          </label>
+          {err && <div className="text-xs text-rose-600">{err}</div>}
+        </div>
+        <div className="flex gap-2 justify-end mt-5">
+          <button onClick={onClose} className="px-3 py-1.5 text-xs rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50">
+            {isZH ? '取消' : 'Cancel'}
+          </button>
+          <button onClick={create} disabled={busy}
+            className="px-4 py-1.5 text-xs rounded-lg text-white font-semibold disabled:opacity-60" style={{ background: PINK }}>
+            {busy ? '…' : (isZH ? '建立' : 'Create')}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}

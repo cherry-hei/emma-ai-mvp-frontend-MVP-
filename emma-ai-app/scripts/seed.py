@@ -188,19 +188,21 @@ def main() -> None:
         })
         a_ids.append(sid); a_ranks.append(rank); a_units.append(unit)
 
-    # per-staff certificates (feeds the Staff Portfolio "credentials" UI)
+    # per-staff certificates with expiry (feeds Staff Portfolio credentials +
+    # Compliance "Certifications" expiry tracking). Dates around 2026-07 give a mix
+    # of expiring-soon and far-off for a realistic compliance view.
     a_certs = [
-        ["ACLS", "Triage", "BLS"],          # RN
-        ["First Aid", "Manual Handling"],   # EN
-        ["Elder Care", "Vitals"],           # HW
-        ["Personal Care"],                  # CW
-        ["Rehab Tech"],                     # PTA
-        ["Bathing", "Transfer"],            # PCW
-        ["Infection Control"],              # AW
+        [("ACLS", "2026-08-10"), ("Triage", "2027-01-15"), ("BLS", "2026-08-01")],  # RN
+        [("First Aid", "2026-08-20"), ("Manual Handling", "2027-03-01")],           # EN
+        [("Elder Care", "2026-09-30"), ("Vitals", "2026-08-15")],                   # HW
+        [("Personal Care", "2027-06-30")],                                          # CW
+        [("Rehab Tech", "2026-11-05")],                                             # PTA
+        [("Bathing", "2026-08-28"), ("Transfer", "2027-02-01")],                    # PCW
+        [("Infection Control", "2027-01-20")],                                      # AW
     ]
     ins_many("staff_certificates", [
-        {"facility_id": fa, "staff_id": a_ids[i], "cert_type": c}
-        for i, certs in enumerate(a_certs) for c in certs
+        {"facility_id": fa, "staff_id": a_ids[i], "cert_type": c, "expiry_date": exp}
+        for i, certs in enumerate(a_certs) for (c, exp) in certs
     ])
 
     seed_shift_defs(fa, [

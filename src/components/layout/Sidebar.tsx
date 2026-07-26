@@ -1,6 +1,7 @@
 'use client'
 import { usePathname, useRouter } from 'next/navigation'
 import { useLang } from '@/components/layout/LanguageContext'
+import { useAuth, roleLabel } from '@/components/layout/AuthContext'
 
 const PINK       = '#E8187A'
 const PINK_HOVER = '#c9156a'
@@ -21,6 +22,7 @@ export function Sidebar() {
   const pathname = usePathname()
   const router   = useRouter()
   const { t, lang }    = useLang()
+  const { user }       = useAuth()
 
   const FALLBACK: Record<string, { zh: string; en: string }> = {
     nav_dashboard:  { zh: '主頁',       en: 'Dashboard'     },
@@ -58,13 +60,17 @@ export function Sidebar() {
         </div>
       </div>
 
-      {/* Site selector */}
+      {/* Site selector — reflects the signed-in account's facility + role */}
       <div
-        className="mx-2 mt-2 p-2.5 rounded-lg cursor-pointer border"
+        className="mx-2 mt-2 p-2.5 rounded-lg border"
         style={{ background: '#f9fafb', borderColor: '#e5e7eb' }}
       >
-        <div className="text-[9px] tracking-wider text-gray-400">HK REGION 01</div>
-        <div className="text-[11px] font-medium mt-0.5 text-gray-700">Care Home Admin</div>
+        <div className="text-[9px] tracking-wider text-gray-400">
+          {roleLabel(user?.role, lang === 'zh') || (lang === 'zh' ? '院舍' : 'Facility')}
+        </div>
+        <div className="text-[11px] font-medium mt-0.5 text-gray-700 truncate">
+          {user?.facilityName ?? (lang === 'zh' ? '院舍管理' : 'Care Home Admin')}
+        </div>
       </div>
 
       {/* Nav */}
