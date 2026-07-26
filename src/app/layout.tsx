@@ -15,7 +15,10 @@ export const metadata: Metadata = {
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en">
-      <body className={inter.className}>
+      {/* suppressHydrationWarning: browser extensions (e.g. Bitdefender) inject
+          attributes like `bis_register` / `__processed_*` onto <body> before React
+          hydrates. Scoped to <body>'s own attributes only — app-tree mismatches still warn. */}
+      <body className={inter.className} suppressHydrationWarning>
         <LanguageProvider>
           <div className="flex h-screen overflow-hidden bg-gray-50">
             <Sidebar />

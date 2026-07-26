@@ -1,36 +1,75 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Emma AI
 
-## Getting Started
+Intelligent nurse / care-worker **rostering** for HK residential care homes. This
+repository is a monorepo containing two apps that run together:
 
-First, run the development server:
+| App | Path | Stack | Local URL |
+|---|---|---|---|
+| **Frontend** | repo root (`src/`) | Next.js 16 (Turbopack) · React 19 · Tailwind v4 · shadcn/radix | http://localhost:3001 |
+| **Backend** | [`emma-ai-app/`](emma-ai-app) | FastAPI · Supabase (Postgres + GoTrue + RLS) · OR-Tools CP-SAT solver | http://localhost:8000 (docs at `/docs`) |
+
+The frontend consumes the backend's REST API and codegens its typed client from
+`http://localhost:8000/openapi.json`. See [`emma-ai-app/README.md`](emma-ai-app/README.md)
+and [`emma-ai-app/RUNBOOK.md`](emma-ai-app/RUNBOOK.md) for backend details.
+
+## Getting started
+
+### One command (Windows) — runs both apps
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+dev.cmd
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+`dev.cmd` installs frontend deps on first run, then launches the FastAPI backend
+(`uvicorn`) and the Next.js dev server in separate terminals.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+### Manual
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+Frontend (repo root):
 
-## Learn More
+```bash
+npm install
+npm run dev
+```
 
-To learn more about Next.js, take a look at the following resources:
+Backend — see [`emma-ai-app/RUNBOOK.md`](emma-ai-app/RUNBOOK.md) for the full setup:
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+```bash
+cd emma-ai-app
+pip install -r requirements.txt
+uvicorn api.main:app --reload
+```
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+## Configuration
 
-## Deploy on Vercel
+Frontend env lives in `.env.local` (gitignored):
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+| Variable | Purpose |
+|---|---|
+| `NEXT_PUBLIC_API_URL` | Base URL of the backend API (default `http://localhost:8000`) |
+| `NEXT_PUBLIC_DEV_EMAIL` / `NEXT_PUBLIC_DEV_PASSWORD` | **Local-dev only** auto-login against a seeded account. Do not use in production — build a real login UI on `api.login()`. |
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+Backend env lives in `emma-ai-app/.env` (see `emma-ai-app/.env.example`).
+
+## Frontend layout
+
+```
+src/app/        routes: dashboard, roster, staff, staff-app, compliance,
+                approval, alert, personnel, reports, roi, + /api route handlers
+src/components/  ui/ (shadcn), layout/, modals/, roster/
+src/lib/         api.ts (typed client), apiTypes.ts, data.ts, types.ts, utils.ts
+```
+
+## Scripts
+
+| Command | Description |
+|---|---|
+| `npm run dev` | Next.js dev server on port 3001 (Turbopack) |
+| `npm run build` | Production build |
+| `npm run start` | Serve the production build |
+| `npm run lint` | ESLint |
+
+## Deployment
+
+Containerized via [`Dockerfile`](Dockerfile); see [`AWS_DEPLOY.md`](AWS_DEPLOY.md)
+for the AWS deployment guide.
