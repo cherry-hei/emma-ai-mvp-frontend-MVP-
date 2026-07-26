@@ -15,6 +15,9 @@ supabase/.temp/
 
 # Misc
 *.log
+# ignore stray/scratch markdown, but keep the real docs
 *.md
 !README.md
+!RUNBOOK.md
+!CLOUD_SETUP.md
 docs/
