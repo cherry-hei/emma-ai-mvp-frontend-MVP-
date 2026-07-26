@@ -1,5 +1,4 @@
-"""Roster read + write. Pivots the shift/assignment slot model into the
-staff x day grid the UI shows, and handles manual CRUD + publish."""
+"""Roster read/write: pivots the shift/assignment model into the staff × day grid, plus manual CRUD and publish."""
 from __future__ import annotations
 
 import json
@@ -14,10 +13,9 @@ def _now() -> str:
 
 
 def _delete_shift_if_empty(client, shift_id: str) -> None:
-    """Drop the shift row only when no assignments remain on it. A shift can be
-    shared by several staff (solver-generated ``required_count`` > 1 slots), and
-    ``shift_assignments.shift_id`` is ON DELETE CASCADE — deleting the shift while a
-    sibling assignment still exists would silently wipe that sibling's cell."""
+    """Drop the shift only when no assignments remain. shift_id is ON DELETE CASCADE,
+    so deleting a shift shared by sibling assignments (required_count > 1) would wipe
+    their cells."""
     remaining = (client.table("shift_assignments").select("id")
                  .eq("shift_id", shift_id).limit(1).execute().data)
     if not remaining:
@@ -26,11 +24,9 @@ def _delete_shift_if_empty(client, shift_id: str) -> None:
 
 def _latest_version(client, facility_id: str, period_id: str | None = None,
                     version_type: str | None = "manual", version_id: str | None = None):
-    """Newest roster version for a facility/period.
-
-    Defaults to the human ``manual`` roster so generated A/B/C options never
-    hijack the main roster view. Pass ``version_type=None`` for any type, or an
-    explicit ``version_id`` to open a specific option (e.g. a solver result)."""
+    """Newest roster version for a facility/period. Defaults to ``manual`` so generated
+    A/B/C options don't hijack the main view; pass ``version_type=None`` for any, or an
+    explicit ``version_id`` for a specific option."""
     if version_id:
         rows = client.table("roster_versions").select("*").eq("id", version_id).execute().data
         return rows[0] if rows else None
@@ -113,9 +109,7 @@ def get_shift_defs(client, facility_id: str) -> list[ShiftDef]:
 
 
 def list_task_definitions(client, facility_id: str) -> list[dict]:
-    """Facility-scoped task-code dictionary (A1-A8/P1-P6…). Template rows
-    (facility_id null) are shared; keeps task codes configurable in the DB
-    rather than hardcoded."""
+    """Facility-scoped task-code dictionary; template rows (facility_id null) are shared."""
     return (client.table("task_definitions").select("*")
             .or_(f"facility_id.eq.{facility_id},facility_id.is.null")
             .eq("active", True).order("task_code").execute().data)
@@ -130,9 +124,8 @@ def list_periods(client, facility_id: str) -> list[dict]:
 
 def create_period(client, *, facility_id, period_start, period_end, cycle_type="28day",
                   created_by=None, create_manual_version=True):
-    """Create a roster period and (by default) a blank editable 'manual' roster
-    version to hang shifts on — the grid read, manual edit and solver all require
-    an existing roster_version_id, and nothing else bootstraps one."""
+    """Create a roster period and, by default, a blank 'manual' version to hang shifts
+    on (the grid, manual edit and solver all need one and nothing else bootstraps it)."""
     period = (client.table("roster_periods").insert({
         "facility_id": facility_id, "period_start": str(period_start),
         "period_end": str(period_end), "cycle_type": cycle_type, "status": "planning",
@@ -157,8 +150,7 @@ def list_versions(client, facility_id: str, period_id: str | None = None) -> lis
 # ── manual edit (CRUD) ──────────────────────────────────────────────────────
 def set_cell(client, *, facility_id, roster_version_id, staff_id, date, shift_type,
              shift_def: ShiftDef, tasks=None, changed_by=None):
-    """Upsert one staff/day cell: create/replace the shift + assignment for that
-    (staff, date). Logs the change to manual_override_log."""
+    """Upsert one staff/day cell (create/replace shift + assignment) and log to manual_override_log."""
     tasks = tasks or []
     existing_shifts = (client.table("shifts").select("id")
                        .eq("roster_version_id", roster_version_id).eq("date", str(date))

@@ -1,13 +1,4 @@
-"""FastAPI dependencies — one place that turns a request's bearer token into an
-RLS-scoped Supabase client plus the caller's resolved profile.
-
-Every ``emma_core.services`` function takes an RLS ``client`` as its first arg
-(the in-process convention the Reflex UI used). This dependency reproduces that
-client from the ``Authorization: Bearer <token>`` header, so the HTTP layer wraps
-the services 1:1. Because the client is the *user* client, Postgres RLS scopes
-every query to the caller's facility automatically — no manual facility checks
-needed on read paths.
-"""
+"""Request auth: turn a bearer token into an RLS-scoped Supabase client + profile."""
 from __future__ import annotations
 
 import base64
@@ -15,22 +6,24 @@ import binascii
 import json
 from dataclasses import dataclass
 
-from fastapi import Depends, Header, HTTPException
+from fastapi import Depends, HTTPException, Request
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from emma_core.db import get_user_client
 from emma_core.models import Profile
 from emma_core.services.auth import get_profile
 
+# Drives the Swagger "Authorize" button. auto_error=False so we can return our own
+# 401 shape and also accept a bare token (no "Bearer " prefix).
+_bearer_scheme = HTTPBearer(auto_error=False, description="Paste the access_token from /auth/login.")
+
 
 def api_error(status_code: int, code: str, message: str) -> HTTPException:
-    """Consistent { detail: { code, message } } error body."""
     return HTTPException(status_code=status_code, detail={"code": code, "message": message})
 
 
 def _jwt_sub(token: str) -> str | None:
-    """Extract the ``sub`` (Supabase auth user id) from a JWT without verifying
-    the signature — Supabase already validates it server-side on every query, so
-    a forged token can't read anything. We only need ``sub`` to look up the row."""
+    # 'sub' = Supabase auth user id. No signature check — Supabase verifies on every query.
     try:
         payload = token.split(".")[1]
         payload += "=" * (-len(payload) % 4)
@@ -39,10 +32,17 @@ def _jwt_sub(token: str) -> str | None:
         return None
 
 
-def bearer_token(authorization: str | None = Header(default=None)) -> str:
-    if not authorization or not authorization.lower().startswith("bearer "):
-        raise api_error(401, "unauthorized", "Missing or malformed Authorization header.")
-    return authorization.split(None, 1)[1].strip()
+def bearer_token(
+    request: Request,
+    creds: HTTPAuthorizationCredentials | None = Depends(_bearer_scheme),
+) -> str:
+    # Accept "Authorization: Bearer <token>" or a bare "Authorization: <token>".
+    if creds and creds.credentials:
+        return creds.credentials.strip()
+    raw = (request.headers.get("authorization") or "").strip()
+    if raw:
+        return raw.split(None, 1)[1].strip() if raw.lower().startswith("bearer ") else raw
+    raise api_error(401, "unauthorized", "Missing access token.")
 
 
 @dataclass
@@ -67,7 +67,7 @@ def get_ctx(token: str = Depends(bearer_token)) -> AuthCtx:
         raise api_error(401, "unauthorized", "Bearer token is not a valid JWT.")
     try:
         profile = get_profile(client, sub)
-    except Exception as exc:  # noqa: BLE001 — surface as 401, not 500
+    except Exception as exc:  # noqa: BLE001
         raise api_error(401, "unauthorized", "Session is invalid or expired.") from exc
     if not profile:
         raise api_error(403, "no_profile", "No facility profile is linked to this account.")

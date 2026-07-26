@@ -1,13 +1,10 @@
-"""Phase 2 Roster A/B/C engine over HTTP — generate, poll, compare, validate, publish-guard.
+"""Roster A/B/C: generate, poll, compare, validate, publish-guard.
 
-``run_optimization`` runs three ~10s CP-SAT solves, so ``POST /optimize-roster``
-enqueues a job and runs it in a background task (returns a ``pending`` job_id
-immediately); the frontend polls ``GET /optimization-jobs/{id}``. Pass ``?sync=true``
-to block and return the scored options inline (used by tests).
-
-The background solve uses the service-role client (bulk writeback bypasses RLS,
-every row still stamped with facility_id); all *reads* use the caller's RLS-scoped
-client so a job/score/violation is only ever visible to its own facility.
+POST /optimize-roster enqueues a background job (three ~10s CP-SAT solves) and
+returns a pending job_id; the frontend polls /optimization-jobs/{id}. ?sync=true
+blocks and returns the scored options inline. The solve writes back via the
+service-role client (bypasses RLS, rows still stamped with facility_id); every
+read uses the caller's RLS client, so results stay facility-scoped.
 """
 from __future__ import annotations
 
@@ -60,9 +57,8 @@ def optimize_roster(req: OptimizeRequest, background: BackgroundTasks,
     req.facility_id = ctx.facility_id          # enforce tenant from the token
     if req.created_by is None:
         req.created_by = ctx.profile_id
-    # Authorize caller-supplied ids under the RLS-scoped client BEFORE handing them
-    # to the RLS-bypassing service-role solver — otherwise a foreign source_version_id
-    # would leak another facility's roster/demand into this facility's option.
+    # Authorize caller-supplied ids under RLS before the service-role solver uses
+    # them — else a foreign source_version_id would leak another facility's roster.
     if not ctx.client.table("roster_periods").select("id").eq("id", req.period_id).execute().data:
         raise api_error(404, "not_found", "roster period not found")
     if req.source_version_id and not (
@@ -109,12 +105,11 @@ def option_scores(roster_version_id: str, ctx: AuthCtx = Depends(get_ctx)):
 @router.post("/validate-roster", response_model=ValidationOut)
 def validate_roster(body: ValidateRequest, ctx: AuthCtx = Depends(get_ctx)):
     vid = body.roster_version_id
-    # Solver-generated option: return its persisted authoritative hard-constraint result.
+    # Solver option: return its persisted hard-constraint result.
     score = opt.get_option_scores(ctx.client, vid)
     if score is not None:
         out = _to_option_score_out(score)
-        # 'passes' == "no hard violations" (same meaning as the manual branch below).
-        # The stricter publish threshold (score ≥ 60) is enforced only at publish time.
+        # passes == no hard violations; the publish threshold is enforced at publish time.
         return ValidationOut(
             roster_version_id=vid, method="solver-scored",
             passes=(out.hard_violation_count == 0), constraint_score=out.constraint_score,
@@ -128,7 +123,7 @@ def validate_roster(body: ValidateRequest, ctx: AuthCtx = Depends(get_ctx)):
     breaches = [c for c in checks if not c.passes]
     return ValidationOut(
         roster_version_id=vid, method="ratio-check",
-        # an empty roster covers nothing — don't report a vacuous pass.
+        # an empty roster covers nothing — not a vacuous pass.
         passes=bool(grid.dates) and not breaches,
         hard_violation_count=len(breaches), ratio_checks=checks,
     )

@@ -1,10 +1,6 @@
-"""Pure, DB-free inputs for the CP-SAT rostering engine.
+"""DB-free frozen dataclasses of primitives — the CP-SAT solver's inputs.
 
-Everything the solver needs is expressed as frozen dataclasses of primitives
-(minutes as ints, dates as ``datetime.date``) so the model can be built and
-unit-tested without Supabase, an ortools import, or any I/O. The mapping from
-PostgREST rows to these dataclasses lives in ``emma_core.services.optimize`` —
-never here.
+Row mapping lives in ``emma_core.services.optimize``, never here.
 """
 from __future__ import annotations
 
@@ -28,8 +24,7 @@ class StaffInput:
 
 @dataclass(frozen=True, slots=True)
 class DemandSlot:
-    """One staffing requirement: a shift on a date needing `required_count` of a
-    role in a unit. Derived from the source manual roster's working shifts."""
+    """One staffing requirement, derived from the source roster's working shifts."""
     id: str                                      # source shift id (natural key)
     date: Date
     day_index: int                               # (date - period_start).days

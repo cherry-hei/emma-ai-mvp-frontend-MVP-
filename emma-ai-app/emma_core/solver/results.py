@@ -1,7 +1,4 @@
-"""Pure output dataclasses returned by the solver (no DB, no ortools types).
-
-The service layer maps these into DB rows / Pydantic response models.
-"""
+"""Pure output dataclasses returned by the solver — no DB or ortools types."""
 from __future__ import annotations
 
 from dataclasses import dataclass, field

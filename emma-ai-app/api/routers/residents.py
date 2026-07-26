@@ -1,5 +1,4 @@
-"""/units + /resident-counts — facility units and the daily resident-count
-denominator that drives staffing ratios."""
+"""/units + /resident-counts — units and the daily resident-count ratio denominator."""
 from __future__ import annotations
 
 from datetime import date as Date

@@ -1,16 +1,4 @@
-"""Central configuration, loaded from a per-environment .env file.
-
-The active environment is chosen by the APP_ENV variable:
-
-    APP_ENV unset / development  ->  .env             (local `supabase start`)
-    APP_ENV=test                 ->  .env.test        (cloud "emma-test" project)
-    APP_ENV=production           ->  .env.production  (cloud "emma-prod" project)
-
-Each file holds the same keys pointing at a different Supabase project. Real OS
-environment variables still take precedence over the file (handy for CI /
-container deploys). Switching environments is a config change only — no code
-changes. See CLOUD_SETUP.md.
-"""
+"""Config loaded from a per-environment .env selected by APP_ENV (.env / .env.test / .env.production). Real OS env vars take precedence. See CLOUD_SETUP.md."""
 import os
 from pathlib import Path
 
@@ -20,15 +8,9 @@ APP_ROOT = Path(__file__).resolve().parent.parent  # emma-ai-app/
 
 
 def _env_file() -> Path:
-    """Pick the .env file for the active APP_ENV.
-
-    Local dev uses ``.env``. A cloud env (``test``/``production``) uses its own
-    ``.env.<env>`` file. If that file is absent we must NOT silently fall back to
-    the local ``.env`` — that would point a "production" run at the dev database.
-    A missing cloud file is only acceptable when config is supplied via real OS
-    env vars (container / CI, where ``SUPABASE_URL`` is set); otherwise we fail
-    loudly with an actionable message.
-    """
+    """Pick the .env for APP_ENV. A missing cloud file must NOT fall back to local
+    ``.env`` — that would point a prod run at the dev DB; OS env vars must supply
+    the config instead."""
     env = os.getenv("APP_ENV", "development").strip().lower()
     if env in ("", "development"):
         return APP_ROOT / ".env"
@@ -62,9 +44,7 @@ class Settings(BaseSettings):
 
     app_env: str = "development"
 
-    # CORS — the Next.js frontend is a separate browser origin, so it must be
-    # allow-listed or the browser blocks every call. Comma-separated list; set
-    # CORS_ORIGINS in the deployed environment to the real frontend URL(s).
+    # CORS allow-list for the frontend origin(s); set CORS_ORIGINS per deployment.
     cors_origins: str = ("http://localhost:3000,http://127.0.0.1:3000,"
                          "http://localhost:3001,http://127.0.0.1:3001")
 

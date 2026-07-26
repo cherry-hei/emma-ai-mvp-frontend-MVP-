@@ -1,11 +1,4 @@
-"""Single source of truth for domain enums, statuses and display lookups.
-
-DB `staff_rank` / `employment_type` enums and the CHECK-constrained role/status
-columns are mirrored here as StrEnums so the Python side is typo-proof and one
-edit adds a new value everywhere. Shift *codes* are intentionally NOT an enum —
-they are facility-configured data (`shift_definitions`); only their display
-styling is centralized here.
-"""
+"""Domain enums, statuses and display lookups mirroring the DB. Shift codes are intentionally NOT an enum — they're facility-configured data (`shift_definitions`)."""
 from __future__ import annotations
 
 from enum import StrEnum
@@ -100,8 +93,7 @@ class ViolationCode(StrEnum):
     ELIGIBILITY = "eligibility"
 
 
-# A roster option scoring below this has unresolved hard violations => not
-# safe to publish. Surfaced to the UI and enforced by the publish workflow.
+# Below this score a roster has unresolved hard violations and isn't publishable.
 PUBLISH_THRESHOLD = 60
 
 

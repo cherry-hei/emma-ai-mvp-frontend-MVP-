@@ -11,8 +11,7 @@ def get_units(client, facility_id: str) -> list[Unit]:
 
 
 def get_resident_counts(client, facility_id: str, *, on_date=None) -> list[dict]:
-    """Read stored daily resident counts (denominator for ratios). Filter to one
-    day with ``on_date``; otherwise return all rows for the facility."""
+    """Stored daily resident counts; filter to one day with ``on_date``, else all rows."""
     q = (client.table("daily_resident_counts").select("*")
          .eq("facility_id", facility_id))
     if on_date is not None:

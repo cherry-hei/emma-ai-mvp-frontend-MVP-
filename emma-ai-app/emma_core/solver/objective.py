@@ -1,9 +1,5 @@
-"""A/B/C plan weight presets.
-
-The hard-constraint model is identical across the three plans; only these
-soft-penalty weights change, which is what makes A/B/C meaningfully different.
-Values come straight from the project's agreed Solver Contract:
-(agency, ot, future_debt, unmet_request, fairness).
+"""A/B/C plan weight presets — only these soft-penalty weights differ between
+plans. Tuple order: (agency, ot, future_debt, unmet_request, fairness).
 """
 from __future__ import annotations
 
@@ -22,7 +18,6 @@ PLAN_LABELS: dict[PlanMode, str] = {
     PlanMode.C: "Balanced",
 }
 
-# Large enough to dominate the entire achievable soft penalty (which is on a
-# minute-equivalent scale — see model._build_penalties), so covering a shift or
-# meeting a ratio always beats any soft trade-off.
+# Dominates the whole achievable soft penalty (minute-scale), so covering a
+# shift or meeting a ratio always beats any soft trade-off.
 BIG_M = 1_000_000_000

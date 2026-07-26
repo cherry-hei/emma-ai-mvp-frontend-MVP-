@@ -1,17 +1,4 @@
-"""Staff directory reads, enriched for the frontend Staff Portfolio.
-
-Derived fields are scoped to the facility's CURRENT roster period (the one
-covering today, else the most recent), so creating a future period's blank
-roster never zeroes out the live directory:
-  • scheduled_hours   — working minutes assigned to the staff in the current
-                        period's manual roster (÷60).
-  • contracted_period_hours — the effective weekly contract scaled to the period.
-  • status            — 'on_leave' (a leave cell on the reference date),
-                        'scheduled' (has working shifts this period) or
-                        'available'.
-  • certs             — from staff_certificates (empty only when that table isn't
-                        migrated yet; other DB errors propagate).
-"""
+"""Staff directory reads enriched for the Staff Portfolio. Derived fields (scheduled_hours, contracted_period_hours, status, certs) are scoped to the current roster period — the one covering today, else the most recent — so a future period's blank roster never zeroes out the live directory."""
 from __future__ import annotations
 
 from datetime import date as Date
@@ -27,8 +14,7 @@ def _mins(t: str | None) -> int | None:
 
 
 def _duration(shift: dict) -> int:
-    """Minutes for a shift. Trusts the explicit cross_midnight flag (no auto-flip
-    on end<=start, which would double-count contradictory data)."""
+    """Shift minutes. Trusts the explicit cross_midnight flag rather than auto-flipping on end<=start."""
     start, end = _mins(shift.get("start_time")), _mins(shift.get("end_time"))
     if start is None or end is None:
         return 0
@@ -64,8 +50,7 @@ def _manual_version(client, facility_id: str, period_id: str) -> dict | None:
 
 
 def _roster_stats(client, facility_id: str) -> dict:
-    """Per-staff scheduled minutes + on-leave-today flag from the CURRENT period's
-    manual roster, plus period length and the manual version id (for history)."""
+    """Per-staff scheduled minutes and on-leave flag from the current period's manual roster, plus period length and version id."""
     stats: dict = {"by_staff": {}, "period_days": 28, "version_id": None}
     period = _current_period(client, facility_id)
     if not period:
@@ -115,8 +100,7 @@ def _contracts_by_staff(client, facility_id: str) -> dict[str, dict]:
 
 
 def _certs_by_staff(client, facility_id: str) -> dict[str, list[str]]:
-    """Certificate types per staff. Returns {} ONLY when staff_certificates isn't
-    migrated yet; any other DB error propagates (never silently reports 'no certs')."""
+    """Certificate types per staff. Returns {} only when staff_certificates isn't migrated yet; other DB errors propagate."""
     try:
         rows = (client.table("staff_certificates").select("staff_id,cert_type")
                 .eq("facility_id", facility_id).execute().data)
@@ -188,8 +172,7 @@ def get_staff_detail(client, facility_id: str, staff_id: str) -> dict | None:
     contracts = _contracts_by_staff(client, facility_id)
     detail = _enrich(rows[0], stats=stats, certs=certs, contracts=contracts)
 
-    # recent WORKING shift history from the manual/published roster only (never
-    # speculative A/B/C drafts — those live as archived/draft versions).
+    # recent working history from the manual/published roster only, never A/B/C drafts.
     assigns = (client.table("shift_assignments")
                .select("tasks, shift:shifts(date,shift_type,start_time,end_time,is_working,"
                        "version:roster_versions(version_type,status))")

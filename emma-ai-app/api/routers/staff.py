@@ -1,5 +1,4 @@
-"""/staff — facility staff directory (enriched with rostered hours, status,
-certs) for the personnel/admin screens, plus /staff/{id} for the profile modal."""
+"""/staff — staff directory (hours, status, certs) + /staff/{id} profile detail."""
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, Query

@@ -1,9 +1,4 @@
-"""Roster read + manual edit + publish, over HTTP.
-
-Thin wrappers over ``emma_core.services.roster`` (the same functions the removed
-Reflex UI called in-process). Every handler is RLS-scoped by the caller's token
-via the ``get_ctx`` dependency, so no manual facility checks are needed.
-"""
+"""Roster read + manual edit + publish. RLS-scoped by the caller's token via get_ctx."""
 from __future__ import annotations
 
 from datetime import date as Date
@@ -53,7 +48,7 @@ def get_roster(period_id: str,
                version_id: str | None = Query(default=None),
                version_type: str | None = Query(default="manual"),
                ctx: AuthCtx = Depends(get_ctx)):
-    # version_id (a specific A/B/C option) overrides the version_type default.
+    # A specific version_id overrides the version_type default.
     return svc.get_roster_grid(
         ctx.client, ctx.facility_id, period_id,
         version_type=(None if version_id else version_type), version_id=version_id,
@@ -116,9 +111,8 @@ def save_draft(version_id: str, ctx: AuthCtx = Depends(get_ctx)):
 
 @router.post("/rosters/{version_id}/publish")
 def publish(version_id: str, ctx: AuthCtx = Depends(get_ctx)):
-    # Publish guard: a solver-generated option is only publishable when it clears
-    # the constraint threshold with no hard violations. Manual versions (no score
-    # row) are the manager's own roster and publish freely.
+    # A solver option publishes only if it clears the threshold with zero hard
+    # violations; a manual version (no score row) publishes freely.
     score = opt.get_option_scores(ctx.client, version_id)
     if score is not None:
         if score["constraint_score"] < PUBLISH_THRESHOLD or score["hard_violation_count"] > 0:

@@ -1,9 +1,4 @@
-"""Pydantic models returned by services (UI + API consume these).
-
-Boundary models parse raw PostgREST rows so the rest of the code works with
-typed objects instead of stringly-typed dicts. `extra="ignore"` keeps them
-forward-compatible as columns are added.
-"""
+"""Pydantic models returned by services. `extra="ignore"` keeps boundary rows forward-compatible as DB columns are added."""
 from __future__ import annotations
 
 from datetime import date as Date
@@ -94,7 +89,7 @@ class RatioResult(BaseModel):
 
 
 # ── solver / optimize contract (Phase 2) ────────────────────────────────────
-# Request/response for POST /optimize-roster (also used by the Reflex UI in-process).
+# Request/response for POST /optimize-roster.
 class SolverLimitsModel(BaseModel):
     model_config = ConfigDict(extra="ignore")
     max_seconds: float = 10.0
@@ -199,8 +194,7 @@ class PeriodCreateRequest(BaseModel):
     period_start: Date
     period_end: Date
     cycle_type: str = "28day"
-    # Bootstrap a blank editable 'manual' roster version alongside the period so
-    # the grid / solver has a source to work from (nothing else creates one).
+    # Bootstrap a blank 'manual' version so the grid/solver has a source (nothing else creates one).
     create_manual_version: bool = True
 
 

@@ -1,15 +1,10 @@
-"""Roster optimization service — the DB boundary for the Phase 2 solver.
+"""DB boundary for the CP-SAT solver: loads a period into solver inputs, runs the
+requested plan modes, and writes each option back as a roster version. Pass a
+service-role client so the bulk writeback bypasses RLS.
 
-Reads a facility's period into pure solver inputs, runs the CP-SAT engine for the
-requested plan modes, and writes each option back as a roster version with scores
-and violations. Follows the existing PostgREST idioms (``services/roster.py``,
-``scripts/seed.py``). Pass a **service-role** client in production so the bulk
-writeback bypasses RLS — every inserted row still sets ``facility_id`` explicitly.
-
-Reconciliations with current schema (no leave_requests / rule_profiles yet):
-  - Demand = the working shifts of the latest ``manual`` roster version.
-  - Hard leave = source assignments on an ``AL`` shift → (staff, date) unavailable.
-  - Baseline (for the unmet-request proxy) = every source assignment cell.
+Schema reconciliations (no leave_requests / rule_profiles yet): demand = working
+shifts of the latest ``manual`` version; hard leave = source assignments on an
+``AL`` shift; baseline = every source assignment cell.
 """
 from __future__ import annotations
 
@@ -53,9 +48,8 @@ def _duration(start: int, end: int, cross: bool) -> int:
 # ── load: DB rows -> pure SolverInputs ───────────────────────────────────────
 def _source_version(client, facility_id, period_id, source_version_id):
     if source_version_id:
-        # facility_id filter matters: run_optimization is called with the
-        # RLS-bypassing service-role client, so without it a caller-supplied
-        # source_version_id from another facility would leak that facility's roster.
+        # facility_id filter matters: with the RLS-bypassing service-role client, a
+        # source_version_id from another facility would otherwise leak its roster.
         rows = (client.table("roster_versions").select("*")
                 .eq("id", source_version_id).eq("facility_id", facility_id).execute().data)
         return rows[0] if rows else None
@@ -188,19 +182,16 @@ def load_inputs(client, facility_id: str, period_id: str, *, source_version_id=N
 # ── run + writeback ──────────────────────────────────────────────────────────
 def run_optimization(client, request: OptimizeRequest, *, persist: bool = True,
                      job_id: str | None = None) -> OptimizeResponse:
-    """Run the solver for the requested plan mode(s) and (optionally) persist each
-    option as a roster version. Returns scored options either way.
-
-    Pass ``job_id`` to run against an already-enqueued PENDING job (async path);
-    otherwise a RUNNING job row is created inline (synchronous path)."""
+    """Run the solver for the requested plan mode(s), optionally persisting each option
+    as a roster version. Pass ``job_id`` for an already-enqueued PENDING job (async
+    path); otherwise a RUNNING job is created inline."""
     persist = persist and request.writeback.persist
     created_here = job_id is None
     if created_here:
         job_id = _create_job(client, request)
     try:
         if not created_here:
-            # mark the pre-enqueued PENDING job RUNNING — inside the try so a
-            # failure here is captured by _fail_job instead of orphaning it.
+            # inside the try so a failure here is captured by _fail_job, not orphaned.
             _start_job(client, job_id)
         inputs = load_inputs(
             client, request.facility_id, request.period_id,
@@ -307,9 +298,9 @@ def _writeback_version(client, request, inputs, res) -> str:
 
 # ── optimization_jobs lifecycle ──────────────────────────────────────────────
 def enqueue_optimization(client, request: OptimizeRequest) -> str:
-    """Insert a PENDING job and return its id immediately. The HTTP layer schedules
-    a background task that then calls ``run_optimization(..., job_id=job_id)`` so the
-    request returns without blocking on three ~10s CP-SAT solves."""
+    """Insert a PENDING job and return its id immediately; the HTTP layer runs
+    ``run_optimization(..., job_id=job_id)`` in the background so the request doesn't
+    block on the CP-SAT solves."""
     return (client.table("optimization_jobs").insert({
         "facility_id": request.facility_id, "period_id": request.period_id,
         "rule_profile_id": request.rule_profile_id, "status": JobStatus.PENDING,
@@ -362,8 +353,7 @@ def get_job(client, job_id: str) -> dict | None:
 
 # ── option-score reads (compare / publish-guard UI) ──────────────────────────
 def get_option_scores(client, roster_version_id: str) -> dict | None:
-    """Score row + hard-violation detail for one roster version (written at solve
-    time but never read back until now)."""
+    """Score row + hard-violation detail for one roster version."""
     rows = (client.table("roster_option_scores").select("*")
             .eq("roster_version_id", roster_version_id).limit(1).execute().data)
     if not rows:

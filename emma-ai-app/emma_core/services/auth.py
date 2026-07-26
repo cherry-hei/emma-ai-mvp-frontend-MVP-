@@ -8,8 +8,7 @@ from ..models import Profile
 
 
 def sign_in(email: str, password: str):
-    """Return (client, session). The client is bound to the user's token so RLS
-    applies to every subsequent query."""
+    """Return (client, session); the client is bound to the user's token so RLS applies."""
     client = create_client(settings.supabase_url, settings.supabase_anon_key)
     res = client.auth.sign_in_with_password({"email": email, "password": password})
     client.postgrest.auth(res.session.access_token)

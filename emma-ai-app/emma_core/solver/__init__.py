@@ -1,10 +1,8 @@
 """Emma AI Phase 2 rostering engine (OR-Tools CP-SAT).
 
 Generates three roster options — A (Cost-Optimized), B (Staff-Satisfaction),
-C (Balanced) — from pure dataclass inputs. Importing this package does NOT require
-ortools; the wheel is imported lazily the first time a model is built, so the rest
-of ``emma_core`` stays importable without it. The DB mapping + writeback lives in
-``emma_core.services.optimize``.
+C (Balanced) — from pure dataclass inputs. ortools is imported lazily on first
+model build, so importing this package doesn't require the wheel.
 """
 from .inputs import (
     BaselineCell,

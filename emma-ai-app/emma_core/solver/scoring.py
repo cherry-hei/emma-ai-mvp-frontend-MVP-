@@ -9,8 +9,8 @@ _HARD_STEP = 5   # score points shed per unit of unresolved hard slack
 
 
 def _val(solver, expr):
-    """solver.Value for a var / linear expression; passthrough for a plain int
-    (a penalty term degenerates to int 0 when its inputs are empty)."""
+    """solver.Value for a var/expr; passthrough for a plain int (empty penalties
+    degenerate to 0)."""
     return expr if isinstance(expr, int) else solver.Value(expr)
 
 
@@ -51,11 +51,11 @@ def collect_violations(sm: SolverModel, solver) -> list[Violation]:
 
 
 def score(sm: SolverModel, solver, weights) -> tuple[int, int, int]:
-    """(constraint_score, hard_violation_count, soft_penalty_total).
+    """Returns (constraint_score, hard_violation_count, soft_penalty_total).
 
-    constraint_score = 100 - normalized(soft). Any hard slack forces the score
-    below PUBLISH_THRESHOLD and sheds _HARD_STEP per unit, so an unsafe roster
-    can never score as publishable."""
+    Score is 100 - normalized(soft); any hard slack forces it below
+    PUBLISH_THRESHOLD (minus _HARD_STEP per unit) so an unsafe roster can never
+    look publishable."""
     hard = (sum(solver.Value(v) for v in sm.gap.values())
             + sum(solver.Value(v) for v in sm.ratio_short.values()))
     p, ub = sm.penalties, sm.soft_ub

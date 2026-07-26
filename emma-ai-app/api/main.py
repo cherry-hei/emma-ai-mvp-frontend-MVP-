@@ -1,13 +1,4 @@
-"""Emma AI REST API.
-
-The HTTP surface the Next.js frontend consumes. Thin routers over
-``emma_core.services`` (the same domain logic; the Reflex UI that used to call it
-in-process has been removed). Routers are included directly so a broken router
-fails loudly at startup rather than serving a crippled API behind a healthy /health.
-
-CORS is required: the Next.js app is a separate browser origin. Allowed origins
-come from the CORS_ORIGINS setting (see emma_core.config).
-"""
+"""Emma AI REST API — thin routers over emma_core.services, consumed by the Next.js app."""
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -35,9 +26,7 @@ app.add_middleware(
 
 @app.exception_handler(PostgrestAPIError)
 def _postgrest_error(_request: Request, exc: PostgrestAPIError) -> JSONResponse:
-    """Turn a raw PostgREST/DB error into a clean 500 with our {code,message}
-    shape. Surface only the message — never exc.hint/exc.details, which can leak
-    schema internals to the client."""
+    # Surface only the message — hint/details can leak schema internals.
     message = getattr(exc, "message", None) or "database error"
     return JSONResponse(status_code=500,
                         content={"detail": {"code": "db_error", "message": message}})
@@ -45,8 +34,7 @@ def _postgrest_error(_request: Request, exc: PostgrestAPIError) -> JSONResponse:
 
 @app.exception_handler(ValueError)
 def _value_error(_request: Request, exc: ValueError) -> JSONResponse:
-    """Services raise ValueError for bad client input (unknown period, no source
-    roster version). Map it to 422 instead of a 500 traceback."""
+    # Services raise ValueError for bad input — map to 422, not a 500 traceback.
     return JSONResponse(status_code=422,
                         content={"detail": {"code": "invalid_input", "message": str(exc)}})
 

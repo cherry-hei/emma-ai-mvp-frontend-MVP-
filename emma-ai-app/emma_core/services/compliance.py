@@ -1,9 +1,4 @@
-"""Staff-to-resident ratio check (per-shift level).
-
-Slice scope: a staff member counts toward a statutory window if their working
-shift that day overlaps the window at all. (Minute-level overlap accounting is a
-later phase.) Ratios come from the configurable staffing_ratio_rules table.
-"""
+"""Per-shift staff-to-resident ratio check. A staff member counts toward a window if their working shift overlaps it at all (minute-level accounting is a later phase). Rules come from staffing_ratio_rules."""
 from __future__ import annotations
 
 import math
@@ -37,13 +32,7 @@ def _overlaps(s_start: int | None, s_end: int | None, w_start: int, w_end: int) 
 
 def compute_ratios(client, facility_id: str, on_date, *,
                    roster_version_id: str | None = None) -> list[RatioResult]:
-    """Ratio check for a single day.
-
-    Pass ``roster_version_id`` to scope the count to one roster version. This is
-    important once auto A/B/C drafts exist: their shifts land on the same dates as
-    the manual roster, so an unscoped count double-counts staff across versions
-    and would falsely pass. Callers showing a specific roster should always scope.
-    """
+    """Ratio check for a single day. Pass ``roster_version_id`` to scope the count to one version — otherwise A/B/C drafts sharing the same dates double-count staff and falsely pass."""
     d = str(on_date)
 
     residents = sum(r["resident_count"] for r in (

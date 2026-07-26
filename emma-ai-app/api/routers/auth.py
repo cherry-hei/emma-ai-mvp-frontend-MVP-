@@ -1,9 +1,5 @@
-"""/auth/login + /auth/me — thin wrappers over emma_core.services.auth.
-
-Login runs Supabase email/password sign-in server-side and returns a *serializable*
-session (tokens + resolved profile), never a live client. The Next.js app stores the
-access_token and sends it as ``Authorization: Bearer`` on every other call.
-"""
+"""/auth/login + /auth/me. Login returns a serializable session (tokens + profile),
+not a live client; the frontend sends the access_token as a bearer on every call."""
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends

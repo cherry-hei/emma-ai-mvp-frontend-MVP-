@@ -1,15 +1,10 @@
-"""CP-SAT model construction: decision variables, the seven hard constraints,
-and the five soft-penalty expressions.
+"""CP-SAT model construction: decision variables, seven hard constraints, five
+soft-penalty expressions.
 
-Pure with respect to the DB — consumes :class:`SolverInputs` dataclasses. ortools
-is imported lazily inside the functions so merely importing ``emma_core`` (or this
-package) does not require the wheel to be installed.
-
-Hard constraints (Solver Contract):
-  #1 no overlap, #2 approved-leave unavailable, #3 required coverage,
-  #4 SWD ratio, #5 min rest, #6 max hours, #7 task/rank eligibility.
-#2 and #7 are realized by *not creating* an x-variable for impossible pairs;
-#3 and #4 use bounded, heavily-penalized slack (gap / ratio_short) so the engine
+Consumes :class:`SolverInputs`; ortools is imported lazily so importing this
+package doesn't require the wheel. Hard #2 (leave) and #7 (eligibility) are
+enforced by omitting variables for impossible pairs; #3 (coverage) and #4
+(ratio) use bounded, heavily-penalized slack (gap / ratio_short) so the engine
 returns an explainable roster instead of a bare INFEASIBLE.
 """
 from __future__ import annotations
@@ -26,8 +21,8 @@ NOMINAL_SHIFT_MIN = 480   # one 8h shift; the common scale for day-based penalti
 
 
 def eligible(staff: StaffInput, slot: DemandSlot, inputs: SolverInputs) -> bool:
-    """Hard constraints #2 (leave) and #7 (rank / skill / audit): return False for
-    (staff, slot) pairs that must never be assigned, so no variable is created."""
+    """Hard #2 (leave) + #7 (rank/skill/audit): False for pairs that must never
+    be assigned, so no variable is created for them."""
     if inputs.include_staff_ids and staff.id not in inputs.include_staff_ids:
         return False
     if staff.id in inputs.exclude_staff_ids:
@@ -45,8 +40,8 @@ def eligible(staff: StaffInput, slot: DemandSlot, inputs: SolverInputs) -> bool:
 
 @dataclass
 class SolverModel:
-    """Bundle of the CpModel and its variables so objective/scoring can read them
-    without re-deriving anything. Holds ortools objects — not frozen."""
+    """CpModel plus its variables, so objective/scoring read them without
+    re-deriving. Holds ortools objects — not frozen."""
     model: object                       # cp_model.CpModel
     inputs: SolverInputs
     x: dict                             # (staff_id, slot_id) -> BoolVar
@@ -81,9 +76,9 @@ def build_model(inputs: SolverInputs) -> SolverModel:
         for s in eligible_by_slot[sl.id]:
             x[(s.id, sl.id)] = model.NewBoolVar(f"x_{s.id}_{sl.id}")
 
-    # locks: a pin may force a pair eligibility skipped; also detect contradictions
+    # locks: a pin can force an otherwise-ineligible pair; also detect contradictions
     lock_errors: list[str] = []
-    seen_pins: dict[str, str] = {}      # slot_id -> staff pinned (for quick dup detection)
+    seen_pins: dict[str, str] = {}      # slot_id -> pinned staff
     for lock in inputs.locks:
         sl = slot_by_id.get(lock.slot_id)
         if sl is None:
@@ -179,11 +174,9 @@ def build_model(inputs: SolverInputs) -> SolverModel:
 
 
 def _build_penalties(model, inputs, dates, total_demand_minutes, x, agency, ot, works):
-    """The five soft-penalty terms on a shared *minute-equivalent* scale so the
-    A/B/C weights compare like-for-like (a day of debt/deviation ≈ one shift =
-    NOMINAL_SHIFT_MIN). Returns (penalties, soft_ub, raw_unmet) where soft_ub are
-    upper bounds for score normalization and raw_unmet is the unscaled deviation
-    count for the KPI."""
+    """Five soft-penalty terms on a shared minute-equivalent scale, so A/B/C
+    weights compare like-for-like (a day of debt/deviation ≈ one shift =
+    NOMINAL_SHIFT_MIN). Returns (penalties, soft_ub, raw_unmet)."""
     # agency: fills × shift minutes × day cost multiplier (agency_cost_scaled/10)
     def agency_coeff(sl):
         return sl.duration_min * sl.agency_cost_scaled // 10
@@ -243,8 +236,8 @@ def _build_penalties(model, inputs, dates, total_demand_minutes, x, agency, ot, 
 
 
 def _detect_lock_conflicts(inputs, slot_by_id, lock_errors) -> None:
-    """Pre-solve check for locks that can never be satisfied together, so we can
-    report a precise reason rather than a bare INFEASIBLE."""
+    """Flag locks that can never hold together, for a precise reason instead of
+    a bare INFEASIBLE."""
     pins = [lk for lk in inputs.locks if lk.pin and lk.slot_id in slot_by_id]
     by_staff: dict[str, list] = {}
     for lk in pins:

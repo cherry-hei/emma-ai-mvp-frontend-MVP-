@@ -1,10 +1,4 @@
-"""Supabase client factories.
-
-- service client: bypasses RLS — use ONLY for migrations, seeding and trusted
-  admin/server tasks.
-- anon client: subject to RLS — use with a signed-in user's access token so
-  facility_id isolation is enforced.
-"""
+"""Supabase client factories. The service client bypasses RLS (migrations/seeding/trusted server tasks only); the anon client is subject to RLS."""
 from functools import lru_cache
 
 from .config import settings

@@ -1,8 +1,5 @@
-"""/compliance/ratio — per-shift staff-to-resident ratio check for one day.
-
-Pass ``roster_version_id`` to scope the count to a specific roster version; without
-it, shifts from co-existing A/B/C drafts on the same dates would double-count.
-"""
+"""/compliance/ratio — per-shift staff-to-resident ratio for one day.
+Scope with roster_version_id, else co-existing A/B/C drafts double-count."""
 from __future__ import annotations
 
 from datetime import date as Date
