@@ -1,12 +1,36 @@
 'use client'
 
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { STAFF } from '@/lib/data'
+import type { Staff } from '@/lib/types'
+import { api } from '@/lib/api'
+import type { ApiStaff } from '@/lib/apiTypes'
 import { useLang } from '@/components/layout/LanguageContext'
 
-type StaffType = (typeof STAFF)[number]
+type StaffType = Staff
 
 const ROLE_OPTIONS = ['ALL', 'RN', 'EN', 'HW', 'CW', 'PTA', 'PCW', 'AW'] as const
+
+// Map a backend /staff row into the card's display shape. Demo-only fields the
+// API doesn't track yet (certs, worked hours, floor) get neutral placeholders;
+// id is the 1-based index so the demo STATUS/SKILLS/EXTRA maps still line up.
+function mapApiStaff(rows: ApiStaff[]): Staff[] {
+  return rows.map((s, i) => {
+    const total = Math.round((s.contracted_hours ?? 40) * 4)
+    return {
+      id: i + 1,
+      name: s.name,
+      nameEn: s.name_en || s.name,
+      role: s.rank,
+      ward: s.unit_name || '—',
+      floor: '—',
+      certs: [],
+      hoursWorked: Math.round(total * 0.85), // placeholder: API has no worked-hours field yet
+      hoursTotal: total,
+      avatar: (s.name_en || s.name).charAt(0),
+    }
+  })
+}
 
 const STATUS: Record<number, { labelZH: string; labelEN: string; color: string; bg: string }> = {
   1: { labelZH: '當值中', labelEN: 'On Shift',   color: '#1d4ed8', bg: '#eff6ff' },
@@ -57,8 +81,11 @@ function ProfileModal({ staff, idx, onClose }: { staff: StaffType; idx: number; 
   const { lang } = useLang()
   const isZH = lang === 'zh'
   const [tab, setTab] = useState<'ai' | 'history'>('history')
-  const extra = EXTRA[staff.id]
-  const pct = Math.round((staff.hoursWorked / staff.hoursTotal) * 100)
+  const extra = EXTRA[staff.id] ?? {
+    proximity: '—', experience: '—',
+    weeklyH: `${staff.hoursWorked}h / ${staff.hoursTotal}h`, compatibility: 0,
+  }
+  const pct = staff.hoursTotal ? Math.round((staff.hoursWorked / staff.hoursTotal) * 100) : 0
 
   const SHIFT_HISTORY = isZH ? SHIFT_HISTORY_ZH : SHIFT_HISTORY_EN
 
@@ -327,9 +354,24 @@ export default function StaffPage() {
   const [filterRole, setFilterRole] = useState<(typeof ROLE_OPTIONS)[number]>('ALL')
   const [selected, setSelected] = useState<{ staff: StaffType; idx: number } | null>(null)
 
+  // Pull the real staff directory from the API; fall back to demo data if the
+  // API is unreachable or no dev creds are configured, so the page never breaks.
+  const [liveStaff, setLiveStaff] = useState<Staff[] | null>(null)
+  const [live, setLive] = useState(false)
+  useEffect(() => {
+    let cancelled = false
+    api.listStaff()
+      .then((rows) => {
+        if (!cancelled && rows.length) { setLiveStaff(mapApiStaff(rows)); setLive(true) }
+      })
+      .catch(() => { /* API down / no creds → keep demo data */ })
+    return () => { cancelled = true }
+  }, [])
+  const staffList = liveStaff ?? STAFF
+
   const L = {
-    title:     isZH ? 'Staff Portfolio 員工檔案'              : 'Staff Portfolio',
-    subtitle:  isZH ? `${STAFF.length} 位員工 · NAAC大興宿舍` : `${STAFF.length} staff members · NAAC Tai Hing Hostel`,
+    title:     isZH ? 'Staff Portfolio 員工檔案'                                       : 'Staff Portfolio',
+    subtitle:  isZH ? `${staffList.length} 位員工 · NAAC大興宿舍${live ? ' · 即時' : ''}` : `${staffList.length} staff members · NAAC Tai Hing Hostel${live ? ' · live' : ''}`,
     add_staff: isZH ? '＋ 新增員工'                           : '＋ Add Staff',
     search_ph: isZH ? '🔍 搜尋員工...'                        : '🔍 Search staff...',
     skills:    isZH ? '技能'                                  : 'Skills',
@@ -338,12 +380,12 @@ export default function StaffPage() {
 
   const filtered = useMemo(() => {
     const q = search.toLowerCase()
-    return STAFF.filter(s => {
+    return staffList.filter(s => {
       const matchSearch = s.nameEn.toLowerCase().includes(q) || s.name.includes(search)
       const matchRole = filterRole === 'ALL' || s.role === filterRole
       return matchSearch && matchRole
     })
-  }, [search, filterRole])
+  }, [search, filterRole, staffList])
 
   return (
     <div className="p-5 space-y-5">
@@ -378,8 +420,10 @@ export default function StaffPage() {
 
       <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
         {filtered.map((s, i) => {
-          const pct = Math.round((s.hoursWorked / s.hoursTotal) * 100)
-          const status = STATUS[s.id]
+          const pct = s.hoursTotal ? Math.round((s.hoursWorked / s.hoursTotal) * 100) : 0
+          const status = STATUS[s.id] ?? {
+            labelZH: '可調配', labelEN: 'Available', color: '#15803d', bg: '#f0fdf4',
+          }
           return (
             <div key={s.id} className="bg-white p-5 rounded-2xl border border-gray-100 shadow-sm hover:shadow-md transition-all group">
               <div className="flex items-start gap-3 mb-4">
