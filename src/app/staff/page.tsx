@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import type { Staff } from '@/lib/types'
 import { api } from '@/lib/api'
-import type { ApiStaff, StaffDetail } from '@/lib/apiTypes'
+import type { ApiStaff, StaffAiAnalysis, StaffDetail } from '@/lib/apiTypes'
 import { useLang } from '@/components/layout/LanguageContext'
 
 // UI staff = demo shape + optional links to the real API record.
@@ -56,16 +56,6 @@ const SKILLS: Record<number, string[]> = {
   7: ['Infection Ctrl', 'Facility-wide'],
 }
 
-const EXTRA: Record<number, { proximity: string; experience: string; weeklyH: string; compatibility: number }> = {
-  1: { proximity: '0.8km', experience: '6.0 Years', weeklyH: '40h / 44h', compatibility: 95 },
-  2: { proximity: '2.1km', experience: '3.5 Years', weeklyH: '30h / 44h', compatibility: 84 },
-  3: { proximity: '1.5km', experience: '5.0 Years', weeklyH: '37h / 44h', compatibility: 91 },
-  4: { proximity: '3.2km', experience: '2.0 Years', weeklyH: '24h / 44h', compatibility: 72 },
-  5: { proximity: '1.0km', experience: '4.5 Years', weeklyH: '32h / 44h', compatibility: 88 },
-  6: { proximity: '0.5km', experience: '7.0 Years', weeklyH: '33h / 44h', compatibility: 79 },
-  7: { proximity: '1.2km', experience: '8.5 Years', weeklyH: '40h / 44h', compatibility: 98 },
-}
-
 const AVATARS = ['🧑‍⚕️', '👩‍⚕️', '👨‍⚕️', '👩‍⚕️', '🧑‍⚕️', '👩‍⚕️', '👨‍⚕️']
 const PINK = '#f28f9e'
 
@@ -74,17 +64,19 @@ function ProfileModal({ staff, idx, onClose }: { staff: StaffType; idx: number; 
   const isZH = lang === 'zh'
   const [tab, setTab] = useState<'ai' | 'history'>('history')
   const [detail, setDetail] = useState<StaffDetail | null>(null)
+  const [analysis, setAnalysis] = useState<StaffAiAnalysis | null>(null)
+  const [analysisError, setAnalysisError] = useState('')
+
   useEffect(() => {
     if (!staff.apiId) return
     let cancelled = false
     api.staffDetail(staff.apiId).then(d => { if (!cancelled) setDetail(d) }).catch(() => {})
+    api.staffAiAnalysis(staff.apiId)
+      .then(a => { if (!cancelled) setAnalysis(a) })
+      .catch(e => { if (!cancelled) setAnalysisError(e instanceof Error ? e.message : 'Analysis unavailable') })
     return () => { cancelled = true }
   }, [staff.apiId])
 
-  // Live records must NOT borrow the demo EXTRA[1..7] map (fabricated proximity /
-  // compatibility); derive Weekly Load from real rostered/contracted hours.
-  const liveExtra = { proximity: '—', experience: '—', weeklyH: `${staff.hoursWorked}h / ${staff.hoursTotal}h`, compatibility: 0 }
-  const extra = staff.apiId ? liveExtra : (EXTRA[staff.id] ?? liveExtra)
   const pct = staff.hoursTotal ? Math.round((staff.hoursWorked / staff.hoursTotal) * 100) : 0
 
   // Real rostered shift history from the API (empty until the roster is loaded).
@@ -97,18 +89,18 @@ function ProfileModal({ staff, idx, onClose }: { staff: StaffType; idx: number; 
   }))
 
   const L = {
-    compatibility:  isZH ? '配對度'         : 'Compatibility',
-    weekly_load:    isZH ? '本週時數'        : 'Weekly Load',
-    proximity:      isZH ? '距離'            : 'Proximity',
-    experience:     isZH ? '年資'            : 'Experience',
-    hours_month:    isZH ? '本月工時'        : 'Hours This Month',
+    covers:         isZH ? '緊急補更'        : 'Emergency Covers',
+    weekly_load:    isZH ? '本週期時數'      : 'Period Load',
+    night_shifts:   isZH ? '夜更次數'        : 'Night Shifts',
+    units:          isZH ? '服務單位數'      : 'Units Worked',
+    hours_month:    isZH ? '本週期工時'      : 'Hours This Period',
     tab_history:    isZH ? '更表紀錄'        : 'Shift History',
     tab_ai:         isZH ? 'AI 分析'         : 'AI Analysis',
     completed:      isZH ? '已完成'          : 'COMPLETED',
     credentials:    isZH ? '認可資歷'        : 'Verified Credentials',
     ai_skill:       isZH ? 'AI 技能分析'     : 'AI Skill Analysis',
-    skill_prog:     isZH ? '技能進展 (Q1)'   : 'Skill Progression (Q1)',
-    trending:       isZH ? '↑ 上升趨勢'      : '↑ TRENDING UP',
+    skill_prog:     isZH ? '技能證據對比'    : 'Evidence by Skill',
+    evidence:       isZH ? '證據來源'        : 'EVIDENCE-BACKED',
     gaps:           isZH ? '技能缺口'        : 'Critical Skill Gaps',
     training:       isZH ? '建議培訓'        : 'Recommended Training',
     implicit_title: isZH ? 'AI 隱性技能分析' : 'Implicit Skill Derivation',
@@ -117,37 +109,17 @@ function ProfileModal({ staff, idx, onClose }: { staff: StaffType; idx: number; 
     contact:        isZH ? '聯絡員工'        : 'Contact Staff',
     explicit:       isZH ? '顯性'            : 'Explicit',
     implicit:       isZH ? '隱性'            : 'Implicit',
+    no_analysis:    isZH ? '此員工尚未有可分析的實際資料' : 'No analysable records for this staff member yet',
+    loading:        isZH ? '分析載入中…'     : 'Loading analysis…',
+    times:          isZH ? '次'              : '×',
   }
 
-  const realCerts = detail?.certs?.length ? detail.certs : (staff.certs.length ? staff.certs : null)
-  const CREDENTIALS = realCerts ?? (isZH
-    ? ['高級心臟血管救命術 ACLS', '傷口護理', 'Team IC', '高級生命支援認證']
-    : ['ACLS', 'Wound Care', 'Team IC', 'Advanced Life Support'])
-
-  const SKILL_TAGS = isZH
-    ? ['危重護理', '團隊領導', '緊急應變', '傷口護理', '應對投訴證書']
-    : ['Critical Care', 'Team Leadership', 'Emergency Response', 'Wound Care', 'Complaint Handling Certificate']
-
-  const SKILL_BARS = [
-    { skillZH: '危重護理',  skillEN: 'Critical Care',      explicit: 85, implicit: 92 },
-    { skillZH: '團隊領導',  skillEN: 'Team Leadership',    explicit: 70, implicit: 88 },
-    { skillZH: '緊急應變',  skillEN: 'Emergency Response', explicit: 90, implicit: 94 },
-  ]
-
-  const AI_EVENTS = [
-    {
-      date:  '03/15',
-      title: isZH ? '心跳驟停急救'    : 'Cardiac Arrest Response',
-      desc:  isZH ? '成功急救復甦'    : 'Successful Resuscitation',
-      skill: isZH ? '危機領導力'      : 'Crisis Leadership',
-    },
-    {
-      date:  '02/28',
-      title: isZH ? 'B病房超負荷處理' : 'Ward B Overflow Management',
-      desc:  isZH ? '維持1:8護理比例' : 'Maintained 1:8 Ratio',
-      skill: isZH ? '資源優化'        : 'Resource Optimization',
-    },
-  ]
+  const CREDENTIALS = analysis?.explicit_skills.length
+    ? analysis.explicit_skills
+    : (detail?.certificates ?? []).map(c => ({
+        skill: c.cert_type, status: 'valid' as const, score: 100,
+        expiry_date: c.expiry_date, days_left: null,
+      }))
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-6"
@@ -184,16 +156,18 @@ function ProfileModal({ staff, idx, onClose }: { staff: StaffType; idx: number; 
               </div>
             </div>
             <div className="text-right">
-              <div className="text-3xl font-black" style={{ color: '#10b981' }}>{extra.compatibility}%</div>
-              <div className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">{L.compatibility}</div>
+              <div className="text-3xl font-black" style={{ color: '#10b981' }}>
+                {analysis?.activity.emergency_covers ?? 0}
+              </div>
+              <div className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">{L.covers}</div>
             </div>
           </div>
 
           <div className="grid grid-cols-3 gap-4 mb-6">
             {[
-              { label: L.weekly_load, value: extra.weeklyH },
-              { label: L.proximity,   value: extra.proximity },
-              { label: L.experience,  value: extra.experience },
+              { label: L.weekly_load,  value: `${staff.hoursWorked}h / ${staff.hoursTotal}h` },
+              { label: L.night_shifts, value: String(analysis?.activity.night_shifts ?? '—') },
+              { label: L.units,        value: String(analysis?.activity.distinct_units ?? '—') },
             ].map(s => (
               <div key={s.label} className="bg-gray-50 p-4 rounded-2xl">
                 <div className="text-[10px] font-bold text-gray-400 uppercase mb-1">{s.label}</div>
@@ -255,8 +229,22 @@ function ProfileModal({ staff, idx, onClose }: { staff: StaffType; idx: number; 
               <div>
                 <div className="text-[9px] font-bold text-gray-400 uppercase tracking-widest mb-2">{L.credentials}</div>
                 <div className="flex gap-2 flex-wrap">
+                  {CREDENTIALS.length === 0 && (
+                    <span className="text-[10px] text-gray-400">{isZH ? '尚無證書記錄' : 'No certificates on record'}</span>
+                  )}
                   {CREDENTIALS.map(c => (
-                    <span key={c} className="text-[10px] font-bold px-2.5 py-1 rounded-lg bg-gray-50 border border-gray-200 text-gray-600">{c}</span>
+                    <span key={c.skill}
+                      className={`text-[10px] font-bold px-2.5 py-1 rounded-lg border ${
+                        c.status === 'expired' ? 'bg-rose-50 border-rose-200 text-rose-600'
+                          : c.status === 'expiring' ? 'bg-amber-50 border-amber-200 text-amber-700'
+                          : 'bg-gray-50 border-gray-200 text-gray-600'}`}>
+                      {c.skill}
+                      {c.days_left !== null && c.days_left !== undefined && (
+                        <span className="ml-1 font-normal opacity-70">
+                          {c.days_left < 0 ? `${-c.days_left}d ago` : `${c.days_left}d`}
+                        </span>
+                      )}
+                    </span>
                   ))}
                 </div>
               </div>
@@ -265,82 +253,118 @@ function ProfileModal({ staff, idx, onClose }: { staff: StaffType; idx: number; 
                 <div className="text-xl">🧠</div>
                 <div>
                   <div className="text-xs font-bold text-white">{L.ai_skill}</div>
-                  <div className="text-[10px] text-gray-400">{isZH ? '隱性與顯性技能分析' : 'Implicit & Explicit Insights'} · EMMA AI V2.1</div>
-                </div>
-                <span className="ml-auto text-[9px] font-bold px-2 py-0.5 rounded text-white" style={{ background: PINK }}>SKILL RADAR</span>
-              </div>
-
-              <div>
-                <div className="flex gap-1.5 mb-2">
-                  <span className="text-[9px] font-bold px-2 py-0.5 rounded text-white" style={{ background: PINK }}>{L.explicit.toUpperCase()}</span>
-                  <span className="text-[9px] font-bold px-2 py-0.5 rounded bg-purple-600 text-white">{L.implicit.toUpperCase()}</span>
-                </div>
-                <div className="flex flex-wrap gap-1.5">
-                  {SKILL_TAGS.map(s => (
-                    <span key={s} className="text-[10px] px-2.5 py-1 rounded-full border font-medium"
-                      style={{ borderColor: 'rgba(232,24,122,.3)', color: PINK, background: '#fef6fb' }}>{s}</span>
-                  ))}
-                </div>
-              </div>
-
-              <div className="bg-gray-50 p-4 rounded-2xl">
-                <div className="flex items-center justify-between mb-3">
-                  <div className="text-xs font-bold text-gray-700">{L.skill_prog}</div>
-                  <span className="text-[9px] font-bold px-2 py-0.5 rounded bg-emerald-50 text-emerald-700 border border-emerald-200">{L.trending}</span>
-                </div>
-                {SKILL_BARS.map(s => (
-                  <div key={s.skillEN} className="mb-3">
-                    <div className="flex justify-between text-[10px] mb-1">
-                      <span className="font-semibold text-gray-700">{isZH ? s.skillZH : s.skillEN}</span>
-                      <span className="text-gray-400">{L.explicit}: {s.explicit}% · {L.implicit}: {s.implicit}%</span>
-                    </div>
-                    <div className="h-1.5 bg-gray-200 rounded-full overflow-hidden mb-0.5">
-                      <div className="h-full rounded-full" style={{ width: `${s.explicit}%`, background: PINK }} />
-                    </div>
-                    <div className="h-1.5 bg-gray-200 rounded-full overflow-hidden">
-                      <div className="h-full rounded-full bg-purple-500" style={{ width: `${s.implicit}%` }} />
-                    </div>
+                  <div className="text-[10px] text-gray-400">
+                    {analysis
+                      ? `${analysis.activity.working_shifts} shifts · ${analysis.activity.hours}h · ${analysis.activity.tasks_performed} task records`
+                      : (isZH ? '隱性與顯性技能分析' : 'Implicit & Explicit Insights')}
                   </div>
-                ))}
+                </div>
+                <span className="ml-auto text-[9px] font-bold px-2 py-0.5 rounded text-white" style={{ background: PINK }}>
+                  {L.evidence}
+                </span>
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
-                <div className="bg-red-50 border border-red-100 p-3 rounded-2xl">
-                  <div className="text-[9px] font-bold text-red-400 uppercase tracking-widest mb-2">{L.gaps}</div>
-                  {(isZH
-                    ? ['高級兒科生命支援', '電子健康紀錄 (V2)']
-                    : ['Advanced Pediatric Life Support', 'Digital Health Records (V2)']
-                  ).map(g => (
-                    <div key={g} className="text-[10px] text-red-600 flex items-start gap-1 mb-1"><span>⚠</span>{g}</div>
-                  ))}
-                </div>
-                <div className="bg-emerald-50 border border-emerald-100 p-3 rounded-2xl">
-                  <div className="text-[9px] font-bold text-emerald-600 uppercase tracking-widest mb-2">{L.training}</div>
-                  {(isZH
-                    ? ['領導力', '專業傷口護理認證']
-                    : ['Leadership', 'Specialized Wound Care Cert']
-                  ).map(t => (
-                    <div key={t} className="text-[10px] text-emerald-700 flex items-start gap-1 mb-1"><span>✓</span>{t}</div>
-                  ))}
-                </div>
-              </div>
+              {analysisError && (
+                <div className="rounded-2xl border border-rose-200 bg-rose-50 p-3 text-[11px] text-rose-700">{analysisError}</div>
+              )}
+              {!analysis && !analysisError && (
+                <div className="text-[11px] text-gray-400">{L.loading}</div>
+              )}
 
-              <div>
-                <div className="flex items-center gap-2 mb-2">
-                  <div className="text-[9px] font-bold text-gray-400 uppercase tracking-widest">{L.implicit_title}</div>
-                  <span className="text-[9px] font-bold px-2 py-0.5 rounded text-white bg-purple-600">AI DERIVED</span>
-                </div>
-                {AI_EVENTS.map(e => (
-                  <div key={e.date} className="flex gap-3 p-3 bg-gray-50 rounded-2xl border border-gray-100 mb-2">
-                    <div className="text-[10px] font-bold w-8 text-gray-400 flex-shrink-0">{e.date}</div>
-                    <div className="flex-1">
-                      <div className="text-xs font-bold text-gray-800">{e.title}</div>
-                      <div className="text-[10px] text-gray-500">{e.desc}</div>
-                      <div className="text-[9px] font-bold mt-1" style={{ color: PINK }}>{L.skill_gained} {e.skill}</div>
-                    </div>
+              {analysis && analysis.implicit_skills.length > 0 && (
+                <div>
+                  <div className="flex gap-1.5 mb-2">
+                    <span className="text-[9px] font-bold px-2 py-0.5 rounded text-white" style={{ background: PINK }}>{L.explicit.toUpperCase()}</span>
+                    <span className="text-[9px] font-bold px-2 py-0.5 rounded bg-purple-600 text-white">{L.implicit.toUpperCase()}</span>
                   </div>
-                ))}
-              </div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {analysis.implicit_skills.map(s => (
+                      <span key={s.skill} className="text-[10px] px-2.5 py-1 rounded-full border font-medium"
+                        style={{ borderColor: 'rgba(232,24,122,.3)', color: PINK, background: '#fef6fb' }}>
+                        {s.skill} <span className="opacity-60">{s.occurrences}{L.times}</span>
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {analysis && analysis.skill_bars.length > 0 && (
+                <div className="bg-gray-50 p-4 rounded-2xl">
+                  <div className="flex items-center justify-between mb-3">
+                    <div className="text-xs font-bold text-gray-700">{L.skill_prog}</div>
+                    <span className="text-[9px] font-bold px-2 py-0.5 rounded bg-emerald-50 text-emerald-700 border border-emerald-200">
+                      {analysis.activity.working_shifts} shifts
+                    </span>
+                  </div>
+                  {analysis.skill_bars.map(s => (
+                    <div key={s.skill} className="mb-3">
+                      <div className="flex justify-between text-[10px] mb-1">
+                        <span className="font-semibold text-gray-700">{s.skill}</span>
+                        <span className="text-gray-400">{L.explicit}: {s.explicit}% · {L.implicit}: {s.implicit}%</span>
+                      </div>
+                      <div className="h-1.5 bg-gray-200 rounded-full overflow-hidden mb-0.5">
+                        <div className="h-full rounded-full" style={{ width: `${s.explicit}%`, background: PINK }} />
+                      </div>
+                      <div className="h-1.5 bg-gray-200 rounded-full overflow-hidden">
+                        <div className="h-full rounded-full bg-purple-500" style={{ width: `${s.implicit}%` }} />
+                      </div>
+                    </div>
+                  ))}
+                  <p className="text-[9px] text-gray-400 mt-2">{analysis.evidence_note}</p>
+                </div>
+              )}
+
+              {analysis && (
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="bg-red-50 border border-red-100 p-3 rounded-2xl">
+                    <div className="text-[9px] font-bold text-red-400 uppercase tracking-widest mb-2">{L.gaps}</div>
+                    {analysis.gaps.length === 0 && (
+                      <div className="text-[10px] text-red-400">{isZH ? '未發現技能缺口' : 'No gaps detected'}</div>
+                    )}
+                    {analysis.gaps.map(g => (
+                      <div key={`${g.kind}-${g.skill}`} className="text-[10px] text-red-600 flex items-start gap-1 mb-1">
+                        <span>⚠</span>
+                        <span>{g.skill}<span className="text-red-400"> — {g.detail}</span></span>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="bg-emerald-50 border border-emerald-100 p-3 rounded-2xl">
+                    <div className="text-[9px] font-bold text-emerald-600 uppercase tracking-widest mb-2">{L.training}</div>
+                    {analysis.recommended_training.length === 0 && (
+                      <div className="text-[10px] text-emerald-600">{isZH ? '暫無建議' : 'Nothing outstanding'}</div>
+                    )}
+                    {analysis.recommended_training.map(t => (
+                      <div key={t.title} className="text-[10px] text-emerald-700 flex items-start gap-1 mb-1">
+                        <span>✓</span>
+                        <span>{t.title}<span className="text-emerald-600"> — {t.reason}</span></span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {analysis && analysis.events.length > 0 && (
+                <div>
+                  <div className="flex items-center gap-2 mb-2">
+                    <div className="text-[9px] font-bold text-gray-400 uppercase tracking-widest">{L.implicit_title}</div>
+                    <span className="text-[9px] font-bold px-2 py-0.5 rounded text-white bg-purple-600">FROM ROSTER</span>
+                  </div>
+                  {analysis.events.map((e, i) => (
+                    <div key={`${e.date}-${i}`} className="flex gap-3 p-3 bg-gray-50 rounded-2xl border border-gray-100 mb-2">
+                      <div className="text-[10px] font-bold w-12 text-gray-400 flex-shrink-0">{e.date?.slice(5)}</div>
+                      <div className="flex-1">
+                        <div className="text-xs font-bold text-gray-800">{e.title}</div>
+                        <div className="text-[10px] text-gray-500">{e.detail}</div>
+                        <div className="text-[9px] font-bold mt-1" style={{ color: PINK }}>{L.skill_gained} {e.skill}</div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {analysis && analysis.activity.working_shifts === 0 && (
+                <div className="text-[11px] text-gray-400">{L.no_analysis}</div>
+              )}
             </div>
           )}
         </div>

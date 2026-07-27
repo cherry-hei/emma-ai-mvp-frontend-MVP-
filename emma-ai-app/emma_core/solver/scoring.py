@@ -50,6 +50,21 @@ def collect_violations(sm: SolverModel, solver) -> list[Violation]:
     return vs
 
 
+def raw_objectives(sm: SolverModel, solver) -> dict[str, int]:
+    """Unweighted penalty per objective axis — the coordinates a Pareto comparison
+    needs. Weighted totals can't be compared across plans with different weights."""
+    p = sm.penalties
+    return {
+        "agency": _val(solver, p["agency"]),
+        "ot": _val(solver, p["ot"]),
+        "future_debt": _val(solver, p["future_debt"]),
+        "unmet": _val(solver, p["unmet"]),
+        "fairness": _val(solver, p["fairness"]),
+        "hard": (sum(solver.Value(v) for v in sm.gap.values())
+                 + sum(solver.Value(v) for v in sm.ratio_short.values())),
+    }
+
+
 def score(sm: SolverModel, solver, weights) -> tuple[int, int, int]:
     """Returns (constraint_score, hard_violation_count, soft_penalty_total).
 

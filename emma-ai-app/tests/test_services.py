@@ -20,7 +20,7 @@ def test_roster_grid_shape():
     grid = get_roster_grid(sb, _facility("A"))
     assert grid.version_id and grid.status == "draft"
     assert len(grid.rows) == 7
-    assert len(grid.dates) == 7
+    assert len(grid.dates) == 28       # the 7-day pattern repeats across the period
     rn = next(r for r in grid.rows if r.staff.rank == "RN")
     en = next(r for r in grid.rows if r.staff.rank == "EN")
     assert rn.cells[0].shift_type == "P" and rn.cells[0].is_working
@@ -38,8 +38,8 @@ def test_ratio_computation():
     res = compute_ratios(sb, _facility("A"), date(2026, 7, 1))
     assert res
     rn = next(r for r in res if r.rank == "RN")
-    assert rn.residents == 80          # 42 East + 38 West
-    assert rn.required == 2            # ceil(80/60)
+    assert rn.residents == 18          # 10 East + 8 West
+    assert rn.required == 1            # ceil(18/60)
     assert rn.actual >= 0
 
 
@@ -55,7 +55,7 @@ def test_set_and_clear_cell_write_path():
     grid = get_roster_grid(sb, fid)
     ver, staff_id = grid.version_id, grid.rows[0].staff.id
     defs = {d.shift_type: d for d in get_shift_defs(sb, fid)}
-    day = "2026-07-15"  # outside the seeded demo week
+    day = "2026-08-15"  # outside the seeded roster period
 
     set_cell(sb, facility_id=fid, roster_version_id=ver, staff_id=staff_id,
              date=day, shift_type="P", shift_def=defs["P"], tasks=["Test task"])
@@ -82,6 +82,6 @@ def test_resident_count_feeds_ratio():
                        care_level="general", count=100)
     res = compute_ratios(sb, fid, date(2026, 7, 2))
     rn = next(r for r in res if r.rank == "RN")
-    assert rn.residents == 138  # 100 East + 38 West
+    assert rn.residents == 108  # 100 East + 8 West
     set_resident_count(sb, facility_id=fid, date="2026-07-02", unit_id=east,
-                       care_level="general", count=42)  # restore
+                       care_level="general", count=10)  # restore

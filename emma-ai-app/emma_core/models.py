@@ -312,3 +312,68 @@ class ValidationOut(BaseModel):
     constraint_score: int | None = None
     violations: list[ViolationOut] = Field(default_factory=list)
     ratio_checks: list[RatioResult] = Field(default_factory=list)
+
+
+# ── Phase 3 request bodies ──────────────────────────────────────────────────
+# Phase 3 responses are dicts assembled by the services — they are aggregates of
+# many tables that change shape as screens evolve, and pinning a response_model
+# to each one buys nothing but drift. Request bodies stay typed: those are the
+# trust boundary.
+class LeaveRequestCreate(BaseModel):
+    staff_id: str | None = None       # None => the caller's own staff record
+    leave_type: str                   # AL|special|marriage|DO|duty_request|SL|DSL|urgent|late
+    date_start: Date
+    date_end: Date
+    reason: str | None = None
+    remark: str | None = None
+    requested_shift_type: str | None = None
+    document_url: str | None = None
+
+
+class LeaveDecisionRequest(BaseModel):
+    decision: str                     # approve|reject|review
+    note: str | None = None
+
+
+class IncidentCreate(BaseModel):
+    staff_id: str | None = None       # None => the caller's own staff record
+    incident_type: str = "SL"         # SL|DSL|urgent|late
+    date: Date | None = None
+    reason: str | None = None
+    shift_id: str | None = None
+
+
+class IncidentResolveRequest(BaseModel):
+    replacement_staff_id: str
+    auto: bool = True                 # accepted from an Emma suggestion
+    note: str | None = None
+
+
+class ClockRequest(BaseModel):
+    event_type: str                   # clock_in|clock_out
+    shift_id: str | None = None
+    note: str | None = None
+
+
+class TaskStatusRequest(BaseModel):
+    status: str                       # pending|done|skipped
+
+
+class RoiSettingsPatch(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    manager_hourly_rate: float | None = None
+    roster_hours_before: float | None = None
+    roster_hours_after: float | None = None
+    hours_saved_per_incident: float | None = None
+    agency_reduction_pct: float | None = None
+    total_budget: float | None = None
+    salary_budget: float | None = None
+    contract_years: str | None = None       # 3yr|5yr|10yr
+    vacancies_json: dict | None = None
+
+
+class ReportGenerateRequest(BaseModel):
+    report_type: str
+    period_id: str | None = None
+    date_from: Date | None = None
+    date_to: Date | None = None

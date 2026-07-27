@@ -22,6 +22,7 @@ from ..solver import (
     SolverLimits,
     StaffInput,
     build_and_solve,
+    solve_pareto,
 )
 from ..solver.timeutils import to_minutes
 
@@ -181,10 +182,11 @@ def load_inputs(client, facility_id: str, period_id: str, *, source_version_id=N
 
 # ── run + writeback ──────────────────────────────────────────────────────────
 def run_optimization(client, request: OptimizeRequest, *, persist: bool = True,
-                     job_id: str | None = None) -> OptimizeResponse:
+                     job_id: str | None = None, pareto: bool = False) -> OptimizeResponse:
     """Run the solver for the requested plan mode(s), optionally persisting each option
     as a roster version. Pass ``job_id`` for an already-enqueued PENDING job (async
-    path); otherwise a RUNNING job is created inline."""
+    path); otherwise a RUNNING job is created inline. With ``pareto`` the three
+    options come off a non-dominated frontier instead of the fixed A/B/C presets."""
     persist = persist and request.writeback.persist
     created_here = job_id is None
     if created_here:
@@ -200,22 +202,30 @@ def run_optimization(client, request: OptimizeRequest, *, persist: bool = True,
             exclude_staff_ids=request.exclude_staff_ids,
             locked_assignments=request.locked_assignments,
         )
-        modes = [request.plan_mode] if request.plan_mode else [PlanMode.A, PlanMode.B, PlanMode.C]
         limits = SolverLimits(max_seconds=request.solver_limits.max_seconds,
                               workers=request.solver_limits.workers,
                               seed=request.solver_limits.seed)
         if persist and request.writeback.archive_previous_auto:
             _archive_previous(client, request.facility_id, request.period_id)
 
+        meta: dict | None = None
+        if pareto:
+            solved, meta = solve_pareto(inputs, limits)
+        else:
+            modes = ([request.plan_mode] if request.plan_mode
+                     else [PlanMode.A, PlanMode.B, PlanMode.C])
+            solved = build_and_solve(inputs, modes, limits)
+
         options: list[RosterOption] = []
-        for res in build_and_solve(inputs, modes, limits):
+        for res in solved:
             version_id = None
             if persist and res.status != SolveStatus.INFEASIBLE:
                 version_id = _writeback_version(client, request, inputs, res)
             options.append(_to_option(res, version_id))
 
-        _complete_job(client, job_id, options)
-        return OptimizeResponse(job_id=job_id, status=JobStatus.COMPLETED, roster_options=options)
+        _complete_job(client, job_id, options, meta=meta)
+        return OptimizeResponse(job_id=job_id, status=JobStatus.COMPLETED,
+                                roster_options=options)
     except Exception as exc:  # noqa: BLE001
         _fail_job(client, job_id, exc)
         raise
@@ -327,11 +337,12 @@ def _start_job(client, job_id: str) -> None:
     }).eq("id", job_id).execute())
 
 
-def _complete_job(client, job_id: str, options) -> None:
+def _complete_job(client, job_id: str, options, *, meta: dict | None = None) -> None:
+    result = {"roster_options": [o.model_dump(mode="json") for o in options]}
+    if meta:
+        result["pareto"] = meta
     (client.table("optimization_jobs").update({
-        "status": JobStatus.COMPLETED,
-        "result_json": {"roster_options": [o.model_dump(mode="json") for o in options]},
-        "completed_at": _now(),
+        "status": JobStatus.COMPLETED, "result_json": result, "completed_at": _now(),
     }).eq("id", job_id).execute())
 
 

@@ -12,10 +12,11 @@ The frontend consumes the backend's REST API and codegens its typed client from
 `http://localhost:8000/openapi.json`. See [`emma-ai-app/README.md`](emma-ai-app/README.md)
 and [`emma-ai-app/RUNBOOK.md`](emma-ai-app/RUNBOOK.md) for backend details.
 
-## Status — what's real vs. in progress
+## Status — what's real
 
-**Phases 1 and 2 are fully wired to the backend** — real data, RLS-scoped to the
-signed-in facility, no mock:
+**Phases 1, 2 and 3 are fully wired to the backend** — real data, RLS-scoped to the
+signed-in facility. There is no mock data left in the app; `src/lib/data.ts` and the
+fixture-backed `/api/*` route handlers were deleted.
 
 | Screen | Phase | Backing endpoints |
 |---|---|---|
@@ -24,10 +25,50 @@ signed-in facility, no mock:
 | **Roster → AI Suggest** — A/B/C solver | 2 | `/optimize-roster`, `/optimization-jobs`, `/validate-roster` |
 | **Compliance** — ratio, residents, certs | 1 | `/compliance/ratio`, `/resident-counts`, `/units`, `/staff` |
 | **Staff Portfolio** — directory + profile | 1 | `/staff`, `/staff/{id}` |
+| **Dashboard** — KPIs, incident mix, shift mix, alerts | 3 | `/dashboard/summary` |
+| **Approval Centre** — AL / duty / sick queues, approve & reject | 3 | `/leave-requests`, `/leave-requests/stats` |
+| **Alert Centre** — live alerts, cover flow, resolution | 3 | `/alerts`, `/sl-incidents`, `/replacement-candidates`, `/sl-incidents/{id}/resolve` |
+| **ROI** — A1 / A2 / agency, editable baseline | 3 | `/roi/summary`, `/roi/settings` |
+| **Reports** — generation, schedules, thresholds, regulatory sync | 3 | `/reports/*`, `/compliance/thresholds` |
+| **Staff App** — roster, tasks, clock in/out, profile | 3 | `/me/*` |
+| **Staff profile → AI Analysis** | 3 | `/staff/{id}/ai-analysis` |
+| **Roster → Pareto options** (spec 9.1) | 3 | `/optimize-pareto` |
 
-**Phase 3 / 4 screens still render the prototype UI on mock data** (no backend yet —
-to be built next): **Dashboard** stats, **Approval**, **Alert**, **ROI**, **Reports**,
-**staff-app**, and the Staff profile's **AI Analysis** tab.
+**Phase 4 (NLP feedback analysis) is not started.**
+
+## Phase 3 — operations layer
+
+Phase 3 turns the console from a planning tool into an operational one. The
+additions worth knowing about:
+
+- **Emergency cover is compliance-checked before it is suggested** (spec 3.8).
+  `/replacement-candidates` ranks every other active staff member and returns each
+  one either clean or with the explicit reasons it is blocked — rest gap, max
+  hours, approved leave, rank eligibility, medication audit. Resolving an incident
+  re-rosters the shift, records the TOIL owed in `future_debt_ledger`, and stamps
+  the response time that feeds the A2 ROI figure.
+- **Two staffing-ratio methods** (spec 3.6 / 3.7). `/compliance/ratio` is the
+  per-shift check; `/compliance/minute-ratio` walks each statutory window segment
+  by segment and reports breach *minutes*, so a shift that covers half a window can
+  no longer pass the whole window.
+- **ROI is measured, not configured.** Headcount comes from `staff`, incidents from
+  `sl_incidents`, agency spend from `agency_assignments`. Only the baseline
+  assumptions (manager hourly rate, survey hours, agency-reduction %) are editable,
+  and they persist per facility in `roi_settings`.
+- **Threshold monitors are live.** Certificate expiry, PT cap, AN limit, RN-absent
+  shifts, CL accrual and occupancy are computed from the current roster, the
+  certificate register and the debt ledger on every page load.
+- **Reports are reproducible.** `/reports/generate` stores both the parameters and
+  the resulting rows in `reports`, so a report shown to SWD can be re-opened later
+  byte-for-byte. Every generator also streams as CSV.
+- **Pareto roster options** (spec 9.1). `/optimize-pareto` re-solves the same hard
+  model across 15 weight vectors, discards dominated candidates and returns the
+  cost extreme, the staff-satisfaction extreme and the knee — with the frontier in
+  `result_json.pareto`.
+- **The staff app is self-scoped.** Every `/me/*` route resolves the staff record
+  from the caller's own profile, and RLS additionally restricts a `staff` login to
+  its own rows, so a staff token cannot read a colleague's roster, leave or
+  attendance.
 
 ## Getting started
 
@@ -121,10 +162,14 @@ is backend-driven, with a period + date selector and three tabs:
 
 ```
 src/app/        routes: login, dashboard, roster, staff, staff-app, compliance,
-                approval, alert, personnel, reports, roi, + /api route handlers
+                approval, alert, personnel, reports, roi
 src/components/  ui/ (shadcn), layout/ (AuthContext, AppShell, Sidebar, TopNav), roster/
-src/lib/         api.ts (typed client), apiTypes.ts, data.ts, types.ts, utils.ts
+src/lib/         api.ts (typed client), apiTypes.ts, types.ts, utils.ts
 ```
+
+Every page reads through `src/lib/api.ts`; there are no Next.js route handlers and
+no local fixtures. The staff app at `/staff-app` needs an account whose
+`users_profile.staff_id` is set — `staff_a@emma.local` in the seed.
 
 ## Scripts
 

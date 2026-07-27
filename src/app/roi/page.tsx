@@ -1,114 +1,17 @@
 'use client'
 
-import { useState, useMemo } from 'react'
+import { useCallback, useEffect, useState } from 'react'
+import { api } from '@/lib/api'
+import type { RoiSettings, RoiSummary } from '@/lib/apiTypes'
 import { useLang } from '@/components/layout/LanguageContext'
 
 const PINK = '#E8187A'
 
-// ── Tier pricing (5yr contract default) ──────────────────────
-const TIER_DEFS = [
-  { tier: 1, label: '300–500',     max: 500,  rates: { '3yr': 48, '5yr': 45, '10yr': 42 } },
-  { tier: 2, label: '501–800',     max: 800,  rates: { '3yr': 45, '5yr': 42, '10yr': 39 } },
-  { tier: 3, label: '801–1,200',   max: 1200, rates: { '3yr': 42, '5yr': 39, '10yr': 36 } },
-  { tier: 4, label: '1,201–1,700', max: 1700, rates: { '3yr': 39, '5yr': 36, '10yr': 33 } },
-] as const
-
-function getTierDef(n: number) {
-  return TIER_DEFS.find(t => n <= t.max) ?? TIER_DEFS[TIER_DEFS.length - 1]
-}
-
-// Default contract type for per-home cost section
-const DEFAULT_CONTRACT = '5yr' as const
-
-// ── Types ─────────────────────────────────────────────────────────────────────
-interface Inputs {
-  totalFT:             number
-  totalPT:             number
-  managerHourlyRate:   number
-  agencyMonthlyCost:   number
-  slIncidentsPerMonth: number
-  agencyReductionPct:  number
-  // Budget
-  totalBudget:         number
-  salaryBudget:        number
-  // Staff structure
-  rnCount:             number
-  rnVacancy:           number
-  enCount:             number
-  enVacancy:           number
-  hwCount:             number
-  hwVacancy:           number
-  hcaCount:            number
-  hcaVacancy:          number
-  awCount:             number
-  awVacancy:           number
-  swCount:             number
-  ptaCount:            number
-  otaCount:            number
-  ptCount:             number
-  otCount:             number
-}
-
-// ── Helpers ───────────────────────────────────────────────────────────────────
 const fmt = (n: number) => `HK$${Math.round(n).toLocaleString()}`
 
-// ── Core compute ───────────────────────────────
-function compute(i: Inputs) {
-  const totalStaff = i.totalFT + i.totalPT
-
-  // Part A1 — Roster scheduling
-  const rosterHrsBefore = 26
-  const rosterHrsAfter  = 7
-  const rosterHrSaved   = rosterHrsBefore - rosterHrsAfter
-  const a1Saving        = Math.round(rosterHrSaved * i.managerHourlyRate)
-
-  // Part A2 — Emergency cover
-  const emergencyHrSaved = parseFloat((i.slIncidentsPerMonth * 0.75).toFixed(1))
-  const a2Saving         = Math.round(emergencyHrSaved * i.managerHourlyRate)
-
-  const totalAdminSaving = a1Saving + a2Saving
-
-  // Part B — Agency
-  const agencySaving5  = Math.round(i.agencyMonthlyCost * 0.05)
-  const agencySaving8  = Math.round(i.agencyMonthlyCost * 0.08)
-  const agencySaving15 = Math.round(i.agencyMonthlyCost * 0.15)
-  const agencySaving   = Math.round(i.agencyMonthlyCost * i.agencyReductionPct / 100)
-
-  const totalMonthlySaving = totalAdminSaving + agencySaving
-  const annualSavings      = totalMonthlySaving * 12
-
-  // Emma fee — tier pricing (5yr contract)
-  const tierDef        = getTierDef(totalStaff)
-  const tierRate       = tierDef.rates[DEFAULT_CONTRACT]  // HK$/user/mo
-  const emmaAnnualFee  = totalStaff * tierRate * 12
-  const emmaMonthlyFee = Math.round(emmaAnnualFee / 12)
-
-  const netAnnualBenefit = annualSavings - emmaAnnualFee
-  const paybackMonths    = totalMonthlySaving > 0
-    ? parseFloat((emmaAnnualFee / totalMonthlySaving).toFixed(1)) : 99
-  const roiMultiple      = emmaAnnualFee > 0
-    ? parseFloat((annualSavings / emmaAnnualFee).toFixed(1)) : 0
-
-  // 節省佔 Budget 百分比
-  const savingPctOfBudget = i.totalBudget > 0
-    ? parseFloat(((annualSavings / i.totalBudget) * 100).toFixed(1))
-    : 0
-
-  return {
-    rosterHrsBefore, rosterHrsAfter, rosterHrSaved,
-    a1Saving, emergencyHrSaved, a2Saving, totalAdminSaving,
-    agencySaving, agencySaving5, agencySaving8, agencySaving15,
-    totalMonthlySaving, annualSavings,
-    tierDef, tierRate,
-    emmaAnnualFee, emmaMonthlyFee, netAnnualBenefit,
-    paybackMonths, roiMultiple, totalStaff,
-    savingPctOfBudget,
-  }
-}
-
-// ── Sub-components ────────────────────────────────────────────────────────────
-function InputField({ label, value, onChange, suffix = '', hint }: {
-  label: string; value: number; onChange: (v: number) => void
+/* ── inputs ───────────────────────────────────────────────────────────────── */
+function InputField({ label, value, onChange, onCommit, suffix = '', hint }: {
+  label: string; value: number; onChange: (v: number) => void; onCommit: () => void
   suffix?: string; hint?: string
 }) {
   return (
@@ -122,7 +25,8 @@ function InputField({ label, value, onChange, suffix = '', hint }: {
         <input
           type="number"
           value={value || ''}
-          onChange={e => onChange(Number(e.target.value) || 0)}
+          onChange={(e) => onChange(Number(e.target.value) || 0)}
+          onBlur={onCommit}
           className="min-w-0 flex-1 bg-transparent text-sm font-semibold text-slate-800 outline-none tabular-nums"
           placeholder="0"
         />
@@ -132,104 +36,96 @@ function InputField({ label, value, onChange, suffix = '', hint }: {
   )
 }
 
-function SliderField({ label, value, onChange, min, max, step = 1, hint }: {
-  label: string; value: number; onChange: (v: number) => void
-  min: number; max: number; step?: number; hint?: string
-}) {
+function ReadOnlyField({ label, value, sub }: { label: string; value: string; sub?: string }) {
   return (
-    <div className="flex flex-col gap-2">
-      <div className="flex justify-between items-center">
-        <label className="text-xs font-medium text-slate-500">
-          {label}
-          {hint && <span className="ml-1.5 text-[10px] text-slate-400">{hint}</span>}
-        </label>
-        <span className="text-sm font-bold text-pink-500 tabular-nums">{value}%</span>
-      </div>
-      <input
-        type="range" min={min} max={max} step={step} value={value}
-        onChange={e => onChange(Number(e.target.value))}
-        className="w-full accent-pink-500"
-      />
-      <div className="flex justify-between text-[10px] text-slate-400">
-        <span>{min}%</span><span>{max}%</span>
+    <div className="flex flex-col gap-1">
+      <label className="text-xs font-medium text-slate-500">{label}</label>
+      <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
+        <span className="text-sm font-semibold text-slate-800 tabular-nums">{value}</span>
+        {sub && <span className="ml-2 text-[10px] text-slate-400">{sub}</span>}
       </div>
     </div>
   )
 }
 
-function SavingRow({ label, saving, detail, color = 'pink' }: {
-  label: string; saving: number; detail: string; color?: 'pink' | 'emerald' | 'blue'
+function SavingRow({ label, saving, detail, color }: {
+  label: string; saving: number; detail: string; color: 'pink' | 'blue'
 }) {
-  const colors = {
-    pink:    'bg-pink-50 border-pink-100 text-pink-600',
-    emerald: 'bg-emerald-50 border-emerald-100 text-emerald-600',
-    blue:    'bg-blue-50 border-blue-100 text-blue-600',
-  }
+  const cls = color === 'pink'
+    ? 'bg-pink-50 border-pink-100 text-pink-600'
+    : 'bg-blue-50 border-blue-100 text-blue-600'
   return (
-    <div className={`flex items-center justify-between rounded-xl border px-4 py-3 ${colors[color]}`}>
+    <div className={`flex items-center justify-between rounded-xl border px-4 py-3 ${cls}`}>
       <div>
         <p className="text-sm font-semibold text-slate-800">{label}</p>
         <p className="text-[11px] text-slate-500 mt-0.5">{detail}</p>
       </div>
-      <p className={`text-base font-bold tabular-nums ${colors[color].split(' ')[2]}`}>{fmt(saving)}</p>
+      <p className={`text-base font-bold tabular-nums ${cls.split(' ')[2]}`}>{fmt(saving)}</p>
     </div>
   )
 }
 
-// ── Scale Calculator : HK$29,286/mo × (staff ÷ 49) × 12 ─────
-const PILOT_MONTHLY = 29286
-const PILOT_STAFF   = 49
+/* ── scale calculator ─────────────────────────────────────────────────────── */
+function ScaleCalculator({ data, isZH }: { data: RoiSummary; isZH: boolean }) {
+  const [staffCount, setStaffCount] = useState(Math.max(data.staff.total, 300))
 
-function ScaleSlider({ isZH }: { isZH: boolean }) {
-  const [staffCount, setStaffCount] = useState(300)
+  // Scale from this home's own measured monthly saving, not a hardcoded pilot figure.
+  const basisStaff = Math.max(1, data.staff.total)
+  const basisMonthly = data.totals.monthly_saving
+  const tier = data.tiers.find((t) => staffCount <= t.max_staff) ?? data.tiers[data.tiers.length - 1]
+  const contract = data.emma.contract_years
+  const rate = tier.rates[contract]
 
-  const currentTier    = getTierDef(staffCount)
-  const rate5yr        = currentTier.rates['5yr']
-  const monthlyTotal   = Math.round(PILOT_MONTHLY * (staffCount / PILOT_STAFF))
-  const annualSavings  = monthlyTotal * 12
-  const emmaAnnualFee  = staffCount * rate5yr * 12
-  const emmaMonthlyFee = Math.round(emmaAnnualFee / 12)
-  const netAnnual      = annualSavings - emmaAnnualFee
-  const roiMultiple    = (annualSavings / emmaAnnualFee).toFixed(1)
-  const paybackDays    = Math.round((emmaAnnualFee / annualSavings) * 365)
-  const annualMinus15  = Math.round(emmaAnnualFee * 0.85)
+  const monthlyTotal = Math.round(basisMonthly * (staffCount / basisStaff))
+  const annualSavings = monthlyTotal * 12
+  const annualFee = staffCount * rate * 12
+  const netAnnual = annualSavings - annualFee
+  const roiMultiple = annualFee > 0 ? (annualSavings / annualFee).toFixed(1) : '—'
+  const paybackDays = annualSavings > 0 ? Math.round((annualFee / annualSavings) * 365) : 0
 
   return (
     <div>
-      {/* Slider + KPI cards */}
+      <div className="mb-5 rounded-xl bg-blue-50 border border-blue-100 px-4 py-3">
+        <p className="text-[11px] text-blue-700 leading-relaxed">
+          <strong>📊 {isZH ? '規模化計算基準' : 'Scale basis'}:</strong>{' '}
+          {isZH
+            ? `本院舍實測月節省 ${fmt(basisMonthly)}（${basisStaff} 人）× (目標人數 ÷ ${basisStaff}) × 12`
+            : `This home's measured ${fmt(basisMonthly)}/mo across ${basisStaff} staff × (target ÷ ${basisStaff}) × 12`}
+        </p>
+      </div>
+
       <div className="mb-5">
         <div className="flex justify-between items-center mb-2">
           <label className="text-xs font-medium text-slate-600">{isZH ? '員工人數' : 'Staff Count'}</label>
           <div className="flex items-center gap-2">
             <span className="text-[10px] font-bold px-2 py-0.5 rounded-full text-white" style={{ background: PINK }}>
-              Tier {currentTier.tier}
+              Tier {tier.tier}
             </span>
             <span className="text-2xl font-bold tabular-nums" style={{ color: PINK }}>
               {staffCount.toLocaleString()} {isZH ? '人' : 'staff'}
             </span>
           </div>
         </div>
-        <input
-          type="range" min={49} max={1700} step={1} value={staffCount}
-          onChange={e => setStaffCount(Number(e.target.value))}
-          className="w-full accent-pink-500"
-        />
+        <input type="range" min={basisStaff} max={1700} step={1} value={staffCount}
+          onChange={(e) => setStaffCount(Number(e.target.value))}
+          className="w-full accent-pink-500" />
         <div className="flex justify-between text-[10px] text-slate-400 mt-1">
-          <span>49 (Pilot)</span>
-          <span>T1: ≤500</span>
-          <span>T2: ≤800</span>
-          <span>T3: ≤1,200</span>
-          <span>T4: 1,700</span>
+          <span>{basisStaff} ({isZH ? '本院舍' : 'this home'})</span>
+          {data.tiers.map((t) => <span key={t.tier}>T{t.tier}: ≤{t.max_staff}</span>)}
         </div>
       </div>
 
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 mb-5">
         {[
-          { label: isZH ? '月度節省'   : 'Monthly Savings',    value: fmt(monthlyTotal),   sub: `${staffCount} ÷ ${PILOT_STAFF} × HK$${PILOT_MONTHLY.toLocaleString()}`, color: 'text-pink-500' },
-          { label: isZH ? 'Emma 月費'  : 'Emma Monthly Fee',   value: fmt(emmaMonthlyFee), sub: `HK$${rate5yr}/user · Tier ${currentTier.tier} · 5yr`,              color: 'text-slate-700' },
-          { label: isZH ? '年度節省'   : 'Annual Savings',     value: fmt(annualSavings),  sub: isZH ? '月度 × 12' : 'Monthly × 12',                                 color: 'text-emerald-600' },
-          { label: isZH ? '年度淨收益' : 'Net Annual Benefit', value: fmt(netAnnual),      sub: isZH ? '年節省 − Emma 年費' : 'Annual − Emma fee',                     color: 'text-blue-600' },
-        ].map(k => (
+          { label: isZH ? '月度節省' : 'Monthly Savings', value: fmt(monthlyTotal),
+            sub: `${staffCount} ÷ ${basisStaff} × ${fmt(basisMonthly)}`, color: 'text-pink-500' },
+          { label: isZH ? 'Emma 月費' : 'Emma Monthly Fee', value: fmt(Math.round(annualFee / 12)),
+            sub: `HK$${rate}/user · Tier ${tier.tier} · ${contract}`, color: 'text-slate-700' },
+          { label: isZH ? '年度節省' : 'Annual Savings', value: fmt(annualSavings),
+            sub: isZH ? '月度 × 12' : 'Monthly × 12', color: 'text-emerald-600' },
+          { label: isZH ? '年度淨收益' : 'Net Annual Benefit', value: fmt(netAnnual),
+            sub: isZH ? '年節省 − Emma 年費' : 'Annual − Emma fee', color: 'text-blue-600' },
+        ].map((k) => (
           <div key={k.label} className="rounded-xl border border-slate-100 bg-slate-50 p-3.5 text-center">
             <p className="text-[10px] text-slate-500 mb-1">{k.label}</p>
             <p className={`text-lg font-bold tabular-nums ${k.color}`}>{k.value}</p>
@@ -238,10 +134,9 @@ function ScaleSlider({ isZH }: { isZH: boolean }) {
         ))}
       </div>
 
-      {/* Dark ROI banner */}
       <div className="rounded-2xl p-5 mb-5 text-center" style={{ background: '#1a1a2e' }}>
         <p className="text-[11px] font-semibold tracking-widest text-white/40 mb-3">
-          EMMA AI ROI · TIER {currentTier.tier} · {currentTier.label} {isZH ? '人' : 'STAFF'}
+          EMMA AI ROI · TIER {tier.tier} · {tier.label} {isZH ? '人' : 'STAFF'}
         </p>
         <div className="flex items-center justify-center gap-8">
           <div>
@@ -259,47 +154,27 @@ function ScaleSlider({ isZH }: { isZH: boolean }) {
             <p className="text-[10px] text-white/50 mt-1">{isZH ? '年度淨收益' : 'Net Annual Benefit'}</p>
           </div>
         </div>
-        <p className="text-[9px] text-white/30 mt-3">
-          {isZH ? '年費 -15% 預付：' : 'Annual -15% prepay: '}{fmt(annualMinus15)}/yr
-        </p>
       </div>
 
-      {/* Tier 表格 */}
       <div className="space-y-4">
-        {TIER_DEFS.map(tier => {
-          const CONTRACTS: Array<{ yr: '3yr' | '5yr' | '10yr' }> = [
-            { yr: '3yr' },
-            { yr: '5yr' },
-            { yr: '10yr' },
-          ]
-          const repStaff = tier.max
-          const basisAnn = Math.round(PILOT_MONTHLY * (repStaff / PILOT_STAFF)) * 12
-          const isActive = getTierDef(staffCount).tier === tier.tier
-
+        {data.tiers.map((t) => {
+          const repStaff = t.max_staff
+          const basisAnn = Math.round(basisMonthly * (repStaff / basisStaff)) * 12
+          const isActive = tier.tier === t.tier
           return (
-            <div
-              key={tier.tier}
-              className={`rounded-2xl border p-4 transition-colors ${isActive ? 'border-pink-300 bg-pink-50/30' : 'border-slate-200 bg-white'}`}
-            >
+            <div key={t.tier}
+              className={`rounded-2xl border p-4 transition-colors ${isActive ? 'border-pink-300 bg-pink-50/30' : 'border-slate-200 bg-white'}`}>
               <div className="flex items-center gap-2 mb-3">
                 <span className="text-xs font-bold px-2.5 py-1 rounded-full text-white" style={{ background: PINK }}>
-                  Tier {tier.tier}
+                  Tier {t.tier}
                 </span>
-                <span className="text-sm font-semibold text-slate-800">{tier.label} {isZH ? '人' : 'Staff'}</span>
+                <span className="text-sm font-semibold text-slate-800">{t.label} {isZH ? '人' : 'Staff'}</span>
                 {isActive && (
                   <span className="ml-auto text-[9px] font-bold text-pink-600 bg-pink-100 px-2 py-0.5 rounded-full">
                     {isZH ? '目前選擇' : 'Selected'}
                   </span>
                 )}
               </div>
-
-              <div className="mb-3 rounded-lg bg-slate-50 border border-slate-100 px-3 py-2">
-                <p className="text-[10px] text-slate-500">
-                  {isZH ? '計算基準 (最大人數)' : 'Saving Basis (max staff)'}:{' '}
-                  HK${PILOT_MONTHLY.toLocaleString()}/mo × ({repStaff} ÷ {PILOT_STAFF}) × 12 = <strong>{fmt(basisAnn)}</strong>
-                </p>
-              </div>
-
               <div className="overflow-x-auto rounded-xl border border-slate-100">
                 <table className="w-full text-xs">
                   <thead>
@@ -307,32 +182,29 @@ function ScaleSlider({ isZH }: { isZH: boolean }) {
                       {(isZH
                         ? ['合約', '月費/人', '年度節省', 'Emma 年費', '年費-15%', '淨收益', 'ROI', '回本']
                         : ['Contract', 'Rate/User', 'Annual Saving', 'Emma Fee', 'Fee -15%', 'Net Benefit', 'ROI', 'Payback']
-                      ).map(h => (
+                      ).map((h) => (
                         <th key={h} className="px-2 py-2 text-[10px] font-semibold text-slate-400 uppercase text-left">{h}</th>
                       ))}
                     </tr>
                   </thead>
                   <tbody>
-                    {CONTRACTS.map(c => {
-                      const rate  = tier.rates[c.yr]
-                      const fee   = repStaff * rate * 12
-                      const net   = basisAnn - fee
-                      const roi   = (basisAnn / fee).toFixed(1)
-                      const pb    = (fee / (basisAnn / 12)).toFixed(1)
-                      const is5yr = c.yr === '5yr'
+                    {(Object.keys(t.rates) as string[]).map((yr) => {
+                      const r = t.rates[yr]
+                      const fee = repStaff * r * 12
+                      const net = basisAnn - fee
+                      const isChosen = yr === contract
                       return (
-                        <tr key={c.yr} className={`border-b border-slate-50 ${is5yr ? 'bg-emerald-50/50' : ''}`}>
-                          <td className={`px-2 py-2 font-bold ${is5yr ? 'text-emerald-700' : 'text-slate-600'}`}>
-                            {c.yr}
-                            {is5yr && <span className="ml-1 text-[9px] bg-emerald-100 text-emerald-700 px-1.5 py-0.5 rounded">★</span>}
+                        <tr key={yr} className={`border-b border-slate-50 ${isChosen ? 'bg-emerald-50/50' : ''}`}>
+                          <td className={`px-2 py-2 font-bold ${isChosen ? 'text-emerald-700' : 'text-slate-600'}`}>
+                            {yr}{isChosen && <span className="ml-1 text-[9px] bg-emerald-100 text-emerald-700 px-1.5 py-0.5 rounded">★</span>}
                           </td>
-                          <td className="px-2 py-2 font-semibold text-slate-700 tabular-nums">HK${rate}</td>
+                          <td className="px-2 py-2 font-semibold text-slate-700 tabular-nums">HK${r}</td>
                           <td className="px-2 py-2 text-slate-600 tabular-nums">{fmt(basisAnn)}</td>
                           <td className="px-2 py-2 text-slate-500 tabular-nums">{fmt(fee)}</td>
                           <td className="px-2 py-2 text-slate-400 tabular-nums">{fmt(Math.round(fee * 0.85))}</td>
-                          <td className={`px-2 py-2 font-bold tabular-nums ${is5yr ? 'text-emerald-700' : 'text-pink-600'}`}>{fmt(net)}</td>
-                          <td className="px-2 py-2 font-bold text-blue-600">{roi}x</td>
-                          <td className="px-2 py-2 text-slate-500">{pb}mo</td>
+                          <td className={`px-2 py-2 font-bold tabular-nums ${isChosen ? 'text-emerald-700' : 'text-pink-600'}`}>{fmt(net)}</td>
+                          <td className="px-2 py-2 font-bold text-blue-600">{fee ? (basisAnn / fee).toFixed(1) : '—'}x</td>
+                          <td className="px-2 py-2 text-slate-500">{basisAnn ? (fee / (basisAnn / 12)).toFixed(1) : '—'}mo</td>
                         </tr>
                       )
                     })}
@@ -346,517 +218,402 @@ function ScaleSlider({ isZH }: { isZH: boolean }) {
 
       <p className="mt-3 text-[10px] text-slate-400 text-center">
         {isZH
-          ? '★ = NAAC 推薦 5年合約 · 公式: HK$29,286/mo × (員工數 ÷ 49) × 12 · 基於 49 人 Pilot 院舍數據'
-          : '★ = NAAC Recommended 5yr · Formula: HK$29,286/mo × (Staff ÷ 49) × 12 · Based on 49-staff pilot site'}
+          ? '★ = 現時合約年期 · 節省基準取自本院舍實際事件、外購開支及員工人數'
+          : "★ = current contract term · saving basis derived from this home's actual incidents, agency spend and headcount"}
       </p>
     </div>
   )
 }
 
-// ── Main Page ─────────────────────────────────────────────────────────────────
+/* ── page ─────────────────────────────────────────────────────────────────── */
 export default function ROIPage() {
   const { lang } = useLang()
   const isZH = lang === 'zh'
 
-  const [inputs, setInputs] = useState<Inputs>({
-    totalFT:             33,
-    totalPT:             16,
-    managerHourlyRate:   409,
-    agencyMonthlyCost:   148070,
-    slIncidentsPerMonth: 46,
-    agencyReductionPct:  5,
-    totalBudget:         1600000,
-    salaryBudget:        1190800,
-    rnCount:             5,
-    rnVacancy:           0,
-    enCount:             6,
-    enVacancy:           0,
-    hwCount:             8,
-    hwVacancy:           0,
-    hcaCount:            20,
-    hcaVacancy:          0,
-    awCount:             2,
-    awVacancy:           0,
-    swCount:             1,
-    ptaCount:            0,
-    otaCount:            0,
-    ptCount:             0,
-    otCount:             0,
-  })
+  const [data, setData] = useState<RoiSummary | null>(null)
+  const [draft, setDraft] = useState<Partial<RoiSettings>>({})
+  const [error, setError] = useState('')
+  const [saving, setSaving] = useState(false)
 
-  const set = (key: keyof Inputs) => (v: number) =>
-    setInputs(prev => ({ ...prev, [key]: v }))
+  const reload = useCallback(() => {
+    api.roiSummary()
+      .then((d) => {
+        setData(d)
+        setDraft({
+          manager_hourly_rate: Number(d.settings.manager_hourly_rate),
+          roster_hours_before: Number(d.settings.roster_hours_before),
+          roster_hours_after: Number(d.settings.roster_hours_after),
+          hours_saved_per_incident: Number(d.settings.hours_saved_per_incident),
+          agency_reduction_pct: Number(d.settings.agency_reduction_pct),
+          total_budget: Number(d.settings.total_budget),
+          salary_budget: Number(d.settings.salary_budget),
+          contract_years: d.emma.contract_years as RoiSettings['contract_years'],
+          vacancies_json: (d.settings.vacancies_json ?? {}) as Record<string, number>,
+        })
+      })
+      .catch((e) => setError(e instanceof Error ? e.message : 'Failed to load ROI'))
+  }, [])
 
-  const r = useMemo(() => compute(inputs), [inputs])
+  useEffect(() => { reload() }, [reload])
+
+  const commit = useCallback(async (patch: Partial<RoiSettings>) => {
+    setSaving(true)
+    setError('')
+    try {
+      await api.saveRoiSettings(patch)
+      reload()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to save settings')
+    } finally {
+      setSaving(false)
+    }
+  }, [reload])
+
+  const setField = (key: keyof RoiSettings) => (v: number) =>
+    setDraft((p) => ({ ...p, [key]: v }))
+
+  if (error && !data) {
+    return <div className="p-5"><div className="rounded-xl border border-rose-200 bg-rose-50 p-4 text-xs text-rose-700">{error}</div></div>
+  }
+  if (!data) return <div className="p-5 text-xs text-gray-400">{isZH ? '載入中…' : 'Loading…'}</div>
+
+  const T = {
+    title:      isZH ? 'ROI 效益計算' : 'ROI Calculator',
+    sub:        isZH ? '基於本院舍實際數據 · ROI v2.2 公式' : "Computed from this home's actual data · ROI v2.2 formulas",
+    roiMult:    isZH ? 'ROI 倍數' : 'ROI Multiple',
+    monthly:    isZH ? '月度節省' : 'Monthly Savings',
+    annual:     isZH ? '年度節省' : 'Annual Savings',
+    fee:        isZH ? 'Emma 月費' : 'Emma Monthly Fee',
+    net:        isZH ? '年度淨收益' : 'Net Annual Benefit',
+    baseline:   isZH ? 'ROI 基準設定' : 'ROI Baseline',
+    baselineHint: isZH ? '這些數值會儲存到本院舍設定；其餘全部由實際數據計算'
+                       : 'These are saved per facility; everything else is measured',
+    budget:     isZH ? '本月總營運預算' : 'Monthly Operating Budget',
+    salary:     isZH ? '本月薪金預算' : 'Monthly Salary Budget',
+    rate:       isZH ? '經理/ASRN 時薪' : 'Manager/ASRN Hourly Rate',
+    before:     isZH ? '排班前工時（月）' : 'Roster hours before (per month)',
+    after:      isZH ? '排班後工時（月）' : 'Roster hours after (per month)',
+    perIncident: isZH ? '每宗事件節省時數' : 'Hours saved per incident',
+    reduction:  isZH ? '外購減少比例' : 'Agency reduction %',
+    contract:   isZH ? '合約年期' : 'Contract term',
+    staffTitle: isZH ? '員工基準（實際人數）' : 'Staff Baseline (measured headcount)',
+    headcount:  isZH ? '在職人數' : 'Headcount',
+    vacancies:  isZH ? '空缺' : 'Vacancies',
+    totalStaff: isZH ? '總員工人數' : 'Total staff',
+    ftpt:       isZH ? '全職 / 兼職' : 'Full-time / Part-time',
+    partA:      isZH ? 'Part A — 管理時間節省' : 'Part A — Admin Time Saving',
+    partB:      isZH ? 'Part B — 外購費用節省' : 'Part B — Agency Cost Saving',
+    a1:         isZH ? 'A1 · 排班時間節省' : 'A1 · Roster Scheduling Time Saving',
+    a2:         isZH ? 'A2 · 緊急補更節省' : 'A2 · Emergency Cover Saving',
+    incidents:  isZH ? '本月實際事件' : 'Incidents this month (actual)',
+    agencyCost: isZH ? '本月外購開支（實際）' : 'Agency spend this month (actual)',
+    agencyShifts: isZH ? '外購更次' : 'agency shifts',
+    scenario:   isZH ? '方案' : 'Scenario',
+    reductionH: isZH ? '減少%' : 'Reduction',
+    savingH:    isZH ? '月度節省' : 'Monthly Saving',
+    rationale:  isZH ? '備註' : 'Rationale',
+    adopted:    isZH ? '採用 ✓' : 'adopted ✓',
+    summary:    isZH ? '節省彙總' : 'Savings Summary',
+    totalMonthly: isZH ? '月度總節省' : 'Total Monthly Saving',
+    costVs:     isZH ? 'Emma AI 費用 vs 節省' : 'Emma AI Cost vs Savings',
+    scale:      isZH ? '規模化試算' : 'Scale Calculator',
+    payback:    isZH ? '回本月數' : 'Months to Payback',
+    saving:     isZH ? '儲存中…' : 'Saving…',
+    pctBudget:  (p: number) => isZH ? `約佔年度預算 ${p}%` : `${p}% of the annual budget`,
+    noAgency:   isZH ? '本月未有外購開支記錄' : 'No agency spend recorded this month',
+  }
 
   return (
     <div className="p-5 space-y-5">
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-lg font-bold text-gray-900">
-            {isZH ? 'ROI 效益計算' : 'ROI Calculator'}
-          </h1>
+          <h1 className="text-lg font-bold text-gray-900">{T.title}</h1>
+          <p className="text-xs text-gray-500 mt-0.5">
+            {T.sub} · {data.month_start} → {data.month_end}
+            {saving && <span className="ml-2 text-pink-500">{T.saving}</span>}
+          </p>
         </div>
         <div className="flex items-center gap-3">
           <div className="text-right">
-            <div className="text-[10px] text-gray-400">{isZH ? 'ROI 倍數' : 'ROI Multiple'}</div>
-            <div className="text-2xl font-bold text-pink-500">{r.roiMultiple}x</div>
+            <div className="text-[10px] text-gray-400">{T.roiMult}</div>
+            <div className="text-2xl font-bold text-pink-500">{data.emma.roi_multiple ?? '—'}x</div>
           </div>
           <div className="w-12 h-12 rounded-full border-4 border-pink-400 flex items-center justify-center text-[10px] font-bold text-pink-500 text-center leading-tight px-1">
-            {r.paybackMonths}{isZH ? '月' : 'mo'}
+            {data.emma.payback_months ?? '—'}{isZH ? '月' : 'mo'}
           </div>
         </div>
       </div>
 
-     {/* Top Budget Input */}
-     <div className="max-w-xs">
-      <InputField
-      label={isZH ? '本月總營運預算（Total Budget）' : 'Monthly Total Operating Budget'}
-      value={inputs.totalBudget}
-      onChange={set('totalBudget')}
-      suffix="HK$"
-      hint={isZH ? '整體營運預算（含薪金＋其他開支）' : 'Total operating budget incl. salary + other expenses'}
-      />
-      </div>
+      {error && <div className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">{error}</div>}
 
-      {/* KPI Banner */}
+      {/* KPI banner */}
       <div className="grid grid-cols-4 gap-3">
         {[
-          {
-            label: isZH ? '月度節省' : 'Monthly Savings',
-            value: fmt(r.totalMonthlySaving),
-            color: 'text-pink-500',
-          },
-          {
-            label: isZH ? '年度節省' : 'Annual Savings',
-            value: fmt(r.annualSavings),
-            color: 'text-emerald-600',
-            sub: inputs.totalBudget > 0
-              ? (isZH
-                  ? `節省約佔年度 Budget ${r.savingPctOfBudget}%`
-                  : `${r.savingPctOfBudget}% of annual budget`)
-              : (isZH ? '請先輸入總營運預算' : 'Enter total budget to see %'),
-          },
-          {
-            label: isZH ? 'Emma 月費' : 'Emma Monthly Fee',
-            value: fmt(r.emmaMonthlyFee),
-            color: 'text-slate-700',
-          },
-          {
-            label: isZH ? '年度淨收益' : 'Net Annual Benefit',
-            value: fmt(r.netAnnualBenefit),
-            color: 'text-blue-600',
-          },
-        ].map(k => (
+          { label: T.monthly, value: fmt(data.totals.monthly_saving), color: 'text-pink-500' },
+          { label: T.annual,  value: fmt(data.totals.annual_saving),  color: 'text-emerald-600',
+            sub: data.totals.pct_of_annual_budget !== null
+              ? T.pctBudget(data.totals.pct_of_annual_budget) : undefined },
+          { label: T.fee,     value: fmt(data.emma.monthly_fee),      color: 'text-slate-700',
+            sub: `Tier ${data.emma.tier} · HK$${data.emma.rate_per_user}/user · ${data.emma.contract_years}` },
+          { label: T.net,     value: fmt(data.emma.net_annual_benefit), color: 'text-blue-600' },
+        ].map((k) => (
           <div key={k.label} className="bg-white border border-gray-200 rounded-xl p-4">
             <div className="text-[9px] text-gray-500 uppercase tracking-wider mb-1">{k.label}</div>
             <div className={`text-[20px] font-bold tabular-nums ${k.color}`}>{k.value}</div>
-            {'sub' in k && k.sub && (
-              <div className="mt-1 text-[10px] text-gray-500">
-                {k.sub}
-              </div>
-            )}
-            <div className="w-full h-1 bg-gray-100 rounded-full mt-2" />
+            {k.sub && <div className="mt-1 text-[10px] text-gray-500">{k.sub}</div>}
           </div>
         ))}
       </div>
 
-            {/* Section 1: Budget + Staff Inputs + Structure */}
+      {/* Baseline settings */}
       <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
         <div className="mb-4 flex items-center gap-2">
-          <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-pink-50 text-pink-500 text-sm">👥</div>
-          <h2 className="text-base font-semibold text-slate-800">
-            {isZH ? '員工基本資料' : 'Staff Baseline'}
-          </h2>
-          <span className="ml-auto text-[10px] text-slate-400 bg-slate-100 px-2 py-0.5 rounded-full">
-            {`Tier ${r.tierDef.tier} · HK$${r.tierRate}/user/mo (5yr)`}
-          </span>
+          <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-pink-50 text-pink-500 text-sm">⚙️</div>
+          <h2 className="text-base font-semibold text-slate-800">{T.baseline}</h2>
+          <span className="ml-auto text-[10px] text-slate-400">{T.baselineHint}</span>
         </div>
-
-        {/* Salary Budget in staff card */}
-        <div className="mb-4 max-w-xs">
-          <InputField
-            label={isZH ? '本月薪金預算（Salary Budget）' : 'Monthly Staff Salary Budget'}
-            value={inputs.salaryBudget}
-            onChange={set('salaryBudget')}
-            suffix="HK$"
-            hint={isZH ? '只計員工薪金相關開支' : 'Only staff salary-related expenses'}
-          />
-        </div>
-
-        {/* Staff baseline fields */}
         <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
-          <InputField
-            label={isZH ? '全職員工人數' : 'Full-Time Staff'}
-            value={inputs.totalFT}
-            onChange={set('totalFT')}
-            suffix={isZH ? '人' : 'pax'}
-            hint="March 33"
-          />
-          <InputField
-            label={isZH ? '兼職員工人數' : 'Part-Time Staff'}
-            value={inputs.totalPT}
-            onChange={set('totalPT')}
-            suffix={isZH ? '人' : 'pax'}
-            hint="March 16"
-          />
-          <InputField
-            label={isZH ? '經理/ASRN 時薪' : 'Manager/ASRN Hourly Rate'}
-            value={inputs.managerHourlyRate}
-            onChange={set('managerHourlyRate')}
-            suffix="HK$"
-            hint="HK$70,720÷173h=HK$409"
-          />
-          <InputField
-            label={isZH ? '每月 SL/DSL 事件' : 'Monthly SL/DSL Incidents'}
-            value={inputs.slIncidentsPerMonth}
-            onChange={set('slIncidentsPerMonth')}
-            suffix={isZH ? '次' : 'cases'}
-            hint="March 46"
-          />
-        </div>
-
-        {/* Staff Structure */}
-        <div className="mt-4 rounded-xl bg-slate-50 border border-slate-200 px-4 py-3">
-          <p className="text-[11px] font-semibold text-slate-700 mb-2">
-            {isZH ? '員工結構（全職／空缺）' : 'Staff Structure (Full-time / Vacancies)'}
-          </p>
-
-          <div className="grid grid-cols-2 gap-3 md:grid-cols-5">
-            <InputField
-              label={isZH ? 'RN 全職人數' : 'RN full-time headcount'}
-              value={inputs.rnCount}
-              onChange={set('rnCount')}
-              suffix={isZH ? '人' : 'staff'}
-            />
-            <InputField
-              label={isZH ? 'RN 空缺人數' : 'RN vacancy count'}
-              value={inputs.rnVacancy}
-              onChange={set('rnVacancy')}
-              suffix={isZH ? '人' : 'posts'}
-            />
-            <InputField
-              label={isZH ? 'EN 全職人數' : 'EN full-time headcount'}
-              value={inputs.enCount}
-              onChange={set('enCount')}
-              suffix={isZH ? '人' : 'staff'}
-            />
-            <InputField
-              label={isZH ? 'EN 空缺人數' : 'EN vacancy count'}
-              value={inputs.enVacancy}
-              onChange={set('enVacancy')}
-              suffix={isZH ? '人' : 'posts'}
-            />
-            <InputField
-              label={isZH ? 'HW 全職人數' : 'HW full-time headcount'}
-              value={inputs.hwCount}
-              onChange={set('hwCount')}
-              suffix={isZH ? '人' : 'staff'}
-            />
-            <InputField
-              label={isZH ? 'HW 空缺人數' : 'HW vacancy count'}
-              value={inputs.hwVacancy}
-              onChange={set('hwVacancy')}
-              suffix={isZH ? '人' : 'posts'}
-            />
-            <InputField
-              label={isZH ? 'HCA／RCW 全職人數' : 'HCA/RCW full-time headcount'}
-              value={inputs.hcaCount}
-              onChange={set('hcaCount')}
-              suffix={isZH ? '人' : 'staff'}
-            />
-            <InputField
-              label={isZH ? 'HCA／RCW 空缺人數' : 'HCA/RCW vacancy count'}
-              value={inputs.hcaVacancy}
-              onChange={set('hcaVacancy')}
-              suffix={isZH ? '人' : 'posts'}
-            />
-            <InputField
-              label={isZH ? 'AW／AA 全職人數' : 'AW/AA full-time headcount'}
-              value={inputs.awCount}
-              onChange={set('awCount')}
-              suffix={isZH ? '人' : 'staff'}
-            />
-            <InputField
-              label={isZH ? 'AW／AA 空缺人數' : 'AW/AA vacancy count'}
-              value={inputs.awVacancy}
-              onChange={set('awVacancy')}
-              suffix={isZH ? '人' : 'posts'}
-            />
-          </div>
-
-          <div className="mt-3 grid grid-cols-2 gap-3 md:grid-cols-4">
-            <InputField
-              label={isZH ? 'SW 社工人數' : 'SW social worker headcount'}
-              value={inputs.swCount}
-              onChange={set('swCount')}
-              suffix={isZH ? '人' : 'staff'}
-            />
-            <InputField
-              label={isZH ? 'PTA 人數' : 'PTA headcount'}
-              value={inputs.ptaCount}
-              onChange={set('ptaCount')}
-              suffix={isZH ? '人' : 'staff'}
-            />
-            <InputField
-              label={isZH ? 'OTA 人數' : 'OTA headcount'}
-              value={inputs.otaCount}
-              onChange={set('otaCount')}
-              suffix={isZH ? '人' : 'staff'}
-            />
-            <InputField
-              label={isZH ? 'PT／OT 人數' : 'PT/OT total headcount'}
-              value={inputs.ptCount + inputs.otCount}
-              onChange={v => {
-                const half = Math.round(v / 2)
-                setInputs(prev => ({ ...prev, ptCount: half, otCount: v - half }))
+          <InputField label={T.budget} value={draft.total_budget ?? 0} suffix="HK$"
+            onChange={setField('total_budget')} onCommit={() => commit({ total_budget: draft.total_budget })} />
+          <InputField label={T.salary} value={draft.salary_budget ?? 0} suffix="HK$"
+            onChange={setField('salary_budget')} onCommit={() => commit({ salary_budget: draft.salary_budget })} />
+          <InputField label={T.rate} value={draft.manager_hourly_rate ?? 0} suffix="HK$"
+            hint="HK$70,720÷173h" onChange={setField('manager_hourly_rate')}
+            onCommit={() => commit({ manager_hourly_rate: draft.manager_hourly_rate })} />
+          <div className="flex flex-col gap-1">
+            <label className="text-xs font-medium text-slate-500">{T.contract}</label>
+            <select value={draft.contract_years ?? '5yr'}
+              onChange={(e) => {
+                const v = e.target.value as RoiSettings['contract_years']
+                setDraft((p) => ({ ...p, contract_years: v }))
+                commit({ contract_years: v })
               }}
-              suffix={isZH ? '人' : 'staff'}
-            />
+              className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-800 outline-none">
+              {['3yr', '5yr', '10yr'].map((y) => <option key={y} value={y}>{y}</option>)}
+            </select>
           </div>
-        </div>
-
-        <div className="mt-3 rounded-xl bg-slate-50 border border-slate-100 px-3 py-2 flex items-center gap-3">
-          <span className="text-[10px] text-slate-500">
-            {isZH ? '總員工人數' : 'Total staff'}:{' '}
-            <strong className="text-slate-700">{r.totalStaff}</strong>
-          </span>
-          <span className="text-slate-300">|</span>
-          <span className="text-[10px] text-slate-500">
-            NAAC Tier:{' '}
-            <strong style={{ color: PINK }}>
-              Tier {r.tierDef.tier} ({r.tierDef.label})
-            </strong>
-          </span>
-          <span className="text-slate-300">|</span>
-          <span className="text-[10px] text-slate-500">
-            5yr rate/user:{' '}
-            <strong className="text-slate-700">HK${r.tierRate}</strong>
-          </span>
+          <InputField label={T.before} value={draft.roster_hours_before ?? 0} suffix="h"
+            hint={isZH ? '調查 n=2' : 'survey n=2'} onChange={setField('roster_hours_before')}
+            onCommit={() => commit({ roster_hours_before: draft.roster_hours_before })} />
+          <InputField label={T.after} value={draft.roster_hours_after ?? 0} suffix="h"
+            onChange={setField('roster_hours_after')}
+            onCommit={() => commit({ roster_hours_after: draft.roster_hours_after })} />
+          <InputField label={T.perIncident} value={draft.hours_saved_per_incident ?? 0} suffix="h"
+            onChange={setField('hours_saved_per_incident')}
+            onCommit={() => commit({ hours_saved_per_incident: draft.hours_saved_per_incident })} />
+          <InputField label={T.reduction} value={draft.agency_reduction_pct ?? 0} suffix="%"
+            onChange={setField('agency_reduction_pct')}
+            onCommit={() => commit({ agency_reduction_pct: draft.agency_reduction_pct })} />
         </div>
       </div>
 
-      {/* Section 2: Part A — 管理時間節省 */}
+      {/* Staff baseline — measured */}
+      <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+        <div className="mb-4 flex items-center gap-2">
+          <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-pink-50 text-pink-500 text-sm">👥</div>
+          <h2 className="text-base font-semibold text-slate-800">{T.staffTitle}</h2>
+          <span className="ml-auto text-[10px] text-slate-400 bg-slate-100 px-2 py-0.5 rounded-full">
+            Tier {data.emma.tier} · HK${data.emma.rate_per_user}/user/mo ({data.emma.contract_years})
+          </span>
+        </div>
+        <div className="grid grid-cols-2 gap-4 sm:grid-cols-4 mb-4">
+          <ReadOnlyField label={T.totalStaff} value={String(data.staff.total)} />
+          <ReadOnlyField label={T.ftpt} value={`${data.staff.full_time} / ${data.staff.part_time}`} />
+          <ReadOnlyField label={T.incidents} value={String(data.a2.incidents)} />
+          <ReadOnlyField label={T.agencyCost} value={fmt(data.agency.monthly_cost)}
+            sub={`${data.agency.shifts} ${T.agencyShifts}`} />
+        </div>
+        <div className="rounded-xl bg-slate-50 border border-slate-200 px-4 py-3 overflow-x-auto">
+          <table className="w-full text-xs">
+            <thead>
+              <tr className="text-left text-[10px] uppercase text-slate-400">
+                <th className="py-1.5 pr-4">{isZH ? '職級' : 'Rank'}</th>
+                {data.staff.by_rank.map((r) => (
+                  <th key={r.rank} className="py-1.5 px-2 text-center">{r.rank}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              <tr className="border-t border-slate-200">
+                <td className="py-1.5 pr-4 text-slate-500">{T.headcount}</td>
+                {data.staff.by_rank.map((r) => (
+                  <td key={r.rank} className="py-1.5 px-2 text-center font-semibold text-slate-800 tabular-nums">
+                    {r.headcount}
+                  </td>
+                ))}
+              </tr>
+              <tr className="border-t border-slate-100">
+                <td className="py-1.5 pr-4 text-slate-500">{T.vacancies}</td>
+                {data.staff.by_rank.map((r) => (
+                  <td key={r.rank} className="py-1.5 px-2 text-center">
+                    <input type="number" value={r.vacancies}
+                      onChange={(e) => {
+                        const next = { ...(draft.vacancies_json ?? {}), [r.rank]: Number(e.target.value) || 0 }
+                        setDraft((p) => ({ ...p, vacancies_json: next }))
+                      }}
+                      onBlur={() => commit({ vacancies_json: draft.vacancies_json })}
+                      className="w-12 rounded-md border border-slate-200 bg-white px-1 py-0.5 text-center text-xs tabular-nums outline-none focus:border-pink-400" />
+                  </td>
+                ))}
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {/* Part A */}
       <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
         <div className="mb-3 flex items-center gap-2">
           <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-pink-50 text-pink-500 text-sm">⏱️</div>
-          <h2 className="text-base font-semibold text-slate-800">
-            {isZH ? 'Part A — 管理時間節省' : 'Part A — Admin Time Saving'}
-          </h2>
+          <h2 className="text-base font-semibold text-slate-800">{T.partA}</h2>
           <span className="ml-auto text-[9px] font-bold bg-pink-50 text-pink-500 px-2 py-0.5 rounded-full border border-pink-100">
             v2.2 FORMULA
           </span>
         </div>
 
-        {/* A1 */}
         <div className="mb-4 rounded-xl bg-blue-50 border border-blue-100 p-4">
-          <p className="text-xs font-bold text-blue-800 mb-2">
-            A1 · {isZH ? '排班時間節省' : 'Roster Scheduling Time Saving'}
-          </p>
+          <p className="text-xs font-bold text-blue-800 mb-2">{T.a1}</p>
           <div className="grid grid-cols-3 gap-3 mb-3">
-            <div className="rounded-xl bg-white p-3 text-center border border-blue-100">
-              <p className="text-[9px] text-slate-500 mb-1">{isZH ? '排班前（時/月）' : 'Roster Time Before'}</p>
-              <p className="text-xl font-bold text-slate-500 tabular-nums">{r.rosterHrsBefore}h</p>
-              <p className="text-[9px] text-slate-400 mt-1">{isZH ? '調查 n=2 院舍' : 'Survey n=2 homes'}</p>
-            </div>
-            <div className="rounded-xl bg-white p-3 text-center border border-emerald-200">
-              <p className="text-[9px] text-slate-500 mb-1">{isZH ? '排班後（時/月）' : 'Roster Time After'}</p>
-              <p className="text-xl font-bold text-emerald-600 tabular-nums">{r.rosterHrsAfter}h</p>
-              <p className="text-[9px] text-slate-400 mt-1">{isZH ? 'Emma AI 優化後' : 'After Emma AI'}</p>
-            </div>
-            <div className="rounded-xl bg-white p-3 text-center border border-blue-200">
-              <p className="text-[9px] text-slate-500 mb-1">{isZH ? '節省時數' : 'Hours Saved'}</p>
-              <p className="text-xl font-bold text-blue-600 tabular-nums">{r.rosterHrSaved}h</p>
-              <p className="text-[9px] text-slate-400 mt-1">{isZH ? '每月直接節省' : 'Per month direct'}</p>
-            </div>
+            {[
+              { l: isZH ? '排班前' : 'Before', v: `${data.a1.hours_before}h`, c: 'text-slate-500' },
+              { l: isZH ? '排班後' : 'After',  v: `${data.a1.hours_after}h`,  c: 'text-emerald-600' },
+              { l: isZH ? '節省時數' : 'Saved', v: `${data.a1.hours_saved}h`, c: 'text-blue-600' },
+            ].map((x) => (
+              <div key={x.l} className="rounded-xl bg-white p-3 text-center border border-blue-100">
+                <p className="text-[9px] text-slate-500 mb-1">{x.l}</p>
+                <p className={`text-xl font-bold tabular-nums ${x.c}`}>{x.v}</p>
+              </div>
+            ))}
           </div>
           <div className="rounded-lg bg-white/70 px-3 py-2 text-[11px] text-blue-700">
-            <span className="font-bold">A1 {isZH ? '公式' : 'Formula'}:</span>{' '}
-            ({r.rosterHrsBefore}h − {r.rosterHrsAfter}h) × HK${inputs.managerHourlyRate}/hr
-            = {r.rosterHrSaved}h × HK${inputs.managerHourlyRate}
-            = <span className="font-bold">{fmt(r.a1Saving)}/mo</span>
+            <span className="font-bold">A1:</span> {data.a1.formula} = <span className="font-bold">{fmt(data.a1.saving)}/mo</span>
           </div>
-          <p className="text-[9px] text-blue-500 mt-1.5">
-            ⚠ {isZH ? '月份時數，不需 ×4.33 或 ×25%（PDF v2.2 修正）' : 'Monthly hours — no ×4.33 or ×25% conversion (PDF v2.2 correction)'}
-          </p>
         </div>
 
-        {/* A2 */}
         <div className="rounded-xl bg-purple-50 border border-purple-100 p-4">
-          <p className="text-xs font-bold text-purple-800 mb-2">
-            A2 · {isZH ? '緊急召喚節省 (SL/DSL)' : 'Emergency Cover Saving (SL/DSL Incidents)'}
-          </p>
+          <p className="text-xs font-bold text-purple-800 mb-2">{T.a2}</p>
           <div className="grid grid-cols-3 gap-3 mb-3">
-            <div className="rounded-xl bg-white p-3 text-center border border-purple-100">
-              <p className="text-[9px] text-slate-500 mb-1">{isZH ? '每月事件數' : 'Monthly Incidents'}</p>
-              <p className="text-xl font-bold text-slate-700 tabular-nums">{inputs.slIncidentsPerMonth}</p>
-              <p className="text-[9px] text-slate-400 mt-1">March 2026 {isZH ? '實際' : 'actual'}</p>
-            </div>
-            <div className="rounded-xl bg-white p-3 text-center border border-purple-100">
-              <p className="text-[9px] text-slate-500 mb-1">{isZH ? '每次節省時數' : 'Time Saved/Incident'}</p>
-              <p className="text-xl font-bold text-purple-600 tabular-nums">0.75h</p>
-              <p className="text-[9px] text-slate-400 mt-1">{isZH ? 'Emma 自動配對' : 'Emma auto-match'}</p>
-            </div>
-            <div className="rounded-xl bg-white p-3 text-center border border-purple-200">
-              <p className="text-[9px] text-slate-500 mb-1">{isZH ? '節省時數/月' : 'Hours Saved/Month'}</p>
-              <p className="text-xl font-bold text-purple-600 tabular-nums">{r.emergencyHrSaved}h</p>
-              <p className="text-[9px] text-slate-400 mt-1">{inputs.slIncidentsPerMonth} × 0.75h</p>
-            </div>
+            {[
+              { l: T.incidents, v: String(data.a2.incidents), c: 'text-slate-700' },
+              { l: isZH ? '每次節省' : 'Per incident', v: `${data.a2.hours_per_incident}h`, c: 'text-purple-600' },
+              { l: isZH ? '節省時數/月' : 'Hours saved', v: `${data.a2.hours_saved}h`, c: 'text-purple-600' },
+            ].map((x) => (
+              <div key={x.l} className="rounded-xl bg-white p-3 text-center border border-purple-100">
+                <p className="text-[9px] text-slate-500 mb-1">{x.l}</p>
+                <p className={`text-xl font-bold tabular-nums ${x.c}`}>{x.v}</p>
+              </div>
+            ))}
           </div>
           <div className="rounded-lg bg-white/70 px-3 py-2 text-[11px] text-purple-700">
-            <span className="font-bold">A2 {isZH ? '公式' : 'Formula'}:</span>{' '}
-            {inputs.slIncidentsPerMonth} × 0.75h × HK${inputs.managerHourlyRate}/hr
-            = {r.emergencyHrSaved}h × HK${inputs.managerHourlyRate}
-            = <span className="font-bold">{fmt(r.a2Saving)}/mo</span>
+            <span className="font-bold">A2:</span> {data.a2.formula} = <span className="font-bold">{fmt(data.a2.saving)}/mo</span>
           </div>
         </div>
 
-        {/* Part A Total */}
         <div className="mt-4 flex items-center justify-between rounded-xl border-2 border-blue-300 bg-blue-50 px-4 py-3">
           <div>
-            <p className="text-sm font-bold text-slate-800">Part A {isZH ? '合計' : 'Total'} (A1 + A2)</p>
-            <p className="text-[11px] text-slate-500">{fmt(r.a1Saving)} + {fmt(r.a2Saving)}</p>
+            <p className="text-sm font-bold text-slate-800">Part A (A1 + A2)</p>
+            <p className="text-[11px] text-slate-500">{fmt(data.a1.saving)} + {fmt(data.a2.saving)}</p>
           </div>
-          <p className="text-2xl font-bold text-blue-600 tabular-nums">{fmt(r.totalAdminSaving)}/mo</p>
+          <p className="text-2xl font-bold text-blue-600 tabular-nums">{fmt(data.totals.admin_saving)}/mo</p>
         </div>
       </div>
 
-      {/* Section 3: Part B — Agency Cost Saving */}
+      {/* Part B */}
       <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
         <div className="mb-3 flex items-center gap-2">
           <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-pink-50 text-pink-500 text-sm">🏥</div>
-          <h2 className="text-base font-semibold text-slate-800">
-            {isZH ? '兼職費用節省（5% 保守）' : 'Part B — Agency Cost Saving (5% Conservative)'}
-          </h2>
-          <span className="ml-auto text-[9px] font-bold bg-pink-50 text-pink-500 px-2 py-0.5 rounded-full border border-pink-100">
-            v2.2
-          </span>
+          <h2 className="text-base font-semibold text-slate-800">{T.partB}</h2>
         </div>
 
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 mb-4">
-          <InputField
-            label={isZH ? '兼職撥款月費' : 'Agency Monthly Cost'}
-            value={inputs.agencyMonthlyCost} onChange={set('agencyMonthlyCost')}
-            suffix="HK$" hint="March HK$148,070"
-          />
+          <ReadOnlyField label={T.agencyCost} value={fmt(data.agency.monthly_cost)}
+            sub={`${data.agency.shifts} ${T.agencyShifts}`} />
           <div className="rounded-xl bg-slate-50 border border-slate-200 p-3">
-            <p className="text-[10px] text-slate-500 mb-1">{isZH ? '兼職費用明細 (March)' : 'Agency Breakdown (March)'}</p>
-            <p className="text-[11px] text-slate-600">PT RCW 124 {isZH ? '班' : 'shifts'}: HK$118,520</p>
-            <p className="text-[11px] text-slate-600">PT HW/EN 24 {isZH ? '班' : 'shifts'}: HK$29,550</p>
+            <p className="text-[10px] text-slate-500 mb-1">{isZH ? '外購明細' : 'Agency breakdown'}</p>
+            {data.agency.breakdown.length === 0
+              ? <p className="text-[11px] text-slate-400">{T.noAgency}</p>
+              : data.agency.breakdown.map((b) => (
+                <p key={b.role} className="text-[11px] text-slate-600">
+                  {b.role} · {b.shifts} {isZH ? '班' : 'shifts'}: {fmt(b.cost)}
+                </p>
+              ))}
           </div>
         </div>
 
-        {/* 3 scenarios table */}
         <div className="rounded-xl border border-slate-200 overflow-hidden mb-4">
           <table className="w-full text-xs">
             <thead>
               <tr className="bg-slate-50 border-b border-slate-200">
-                {[isZH ? '方案' : 'Scenario', isZH ? '減少%' : 'Reduction', isZH ? '月度節省' : 'Monthly Saving', isZH ? '備註' : 'Rationale'].map(h => (
+                {[T.scenario, T.reductionH, T.savingH, T.rationale].map((h) => (
                   <th key={h} className="px-3 py-2 text-[10px] font-semibold text-slate-500 uppercase text-left">{h}</th>
                 ))}
               </tr>
             </thead>
             <tbody>
-              {[
-                { scenario: isZH ? '保守 — 採用 ✓' : 'Conservative — USED ✓', pct: 5,  saving: r.agencySaving5,  note: isZH ? 'SWD 最低人手要求' : 'SWD minimum staffing floor', active: true },
-                { scenario: isZH ? '中間 — 參考'   : 'Mid case — ref only',    pct: 8,  saving: r.agencySaving8,  note: isZH ? 'Paper 1 pilot 參考' : 'Paper 1 pilot reference',      active: false },
-                { scenario: isZH ? '原始 — 移除'   : 'Original — REMOVED',     pct: 15, saving: r.agencySaving15, note: isZH ? '過於樂觀' : 'Overly optimistic',                      active: false },
-              ].map(row => (
-                <tr key={row.pct} className={`border-b border-slate-100 ${row.active ? 'bg-pink-50' : ''}`}>
-                  <td className={`px-3 py-2.5 font-semibold ${row.active ? 'text-pink-600' : 'text-slate-500'}`}>{row.scenario}</td>
-                  <td className={`px-3 py-2.5 font-bold tabular-nums ${row.active ? 'text-pink-600' : 'text-slate-400'}`}>{row.pct}%</td>
-                  <td className={`px-3 py-2.5 font-bold tabular-nums ${row.active ? 'text-pink-600' : 'text-slate-400'}`}>{fmt(row.saving)}</td>
-                  <td className="px-3 py-2.5 text-slate-500">{row.note}</td>
+              {data.agency.scenarios.map((s) => (
+                <tr key={s.pct} className={`border-b border-slate-100 ${s.adopted ? 'bg-pink-50' : ''}`}>
+                  <td className={`px-3 py-2.5 font-semibold ${s.adopted ? 'text-pink-600' : 'text-slate-500'}`}>
+                    {s.key}{s.adopted ? ` — ${T.adopted}` : ''}
+                  </td>
+                  <td className={`px-3 py-2.5 font-bold tabular-nums ${s.adopted ? 'text-pink-600' : 'text-slate-400'}`}>{s.pct}%</td>
+                  <td className={`px-3 py-2.5 font-bold tabular-nums ${s.adopted ? 'text-pink-600' : 'text-slate-400'}`}>{fmt(s.saving)}</td>
+                  <td className="px-3 py-2.5 text-slate-500">{s.rationale}</td>
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
 
-        <SliderField
-          label={isZH ? '調整兼職減少比例（預設 5%）' : 'Adjust Agency Reduction % (default 5%)'}
-          value={inputs.agencyReductionPct} onChange={set('agencyReductionPct')}
-          min={1} max={20} step={1}
-          hint={isZH ? '（採用 5%）' : '(uses 5%)'}
-        />
-
-        <div className="mt-3 flex items-center justify-between rounded-xl border-2 border-pink-300 bg-pink-50 px-4 py-3">
+        <div className="flex items-center justify-between rounded-xl border-2 border-pink-300 bg-pink-50 px-4 py-3">
           <div>
-            <p className="text-sm font-bold text-slate-800">Part B {isZH ? '合計' : 'Total'}</p>
-            <p className="text-[11px] text-slate-500">{fmt(inputs.agencyMonthlyCost)} × {inputs.agencyReductionPct}%</p>
+            <p className="text-sm font-bold text-slate-800">Part B</p>
+            <p className="text-[11px] text-slate-500">{data.agency.formula}</p>
           </div>
-          <p className="text-2xl font-bold text-pink-600 tabular-nums">{fmt(r.agencySaving)}/mo</p>
+          <p className="text-2xl font-bold text-pink-600 tabular-nums">{fmt(data.agency.saving)}/mo</p>
         </div>
       </div>
 
-      {/* Section 4: Savings Summary */}
+      {/* Summary */}
       <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
         <div className="mb-4 flex items-center gap-2">
           <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-pink-50 text-pink-500 text-sm">💰</div>
-          <h2 className="text-base font-semibold text-slate-800">{isZH ? '節省彙總' : 'Savings Summary'}</h2>
+          <h2 className="text-base font-semibold text-slate-800">{T.summary}</h2>
         </div>
         <div className="space-y-2.5">
-          <SavingRow
-            label={isZH ? '管理時間節省' : 'Admin Time Saving'}
-            saving={r.totalAdminSaving}
-            detail={`A1 ${fmt(r.a1Saving)} + A2 ${fmt(r.a2Saving)}`}
-            color="blue"
-          />
-          <SavingRow
-            label={isZH ? '兼職費用節省（5%）' : 'Agency Cost Saving (5%)'}
-            saving={r.agencySaving}
-            detail={`${fmt(inputs.agencyMonthlyCost)} × ${inputs.agencyReductionPct}% · SWD Cap.459 ${isZH ? '保守估算' : 'conservative'}`}
-            color="pink"
-          />
+          <SavingRow label={T.partA} saving={data.totals.admin_saving} color="blue"
+            detail={`A1 ${fmt(data.a1.saving)} + A2 ${fmt(data.a2.saving)}`} />
+          <SavingRow label={T.partB} saving={data.agency.saving} color="pink"
+            detail={data.agency.formula} />
           <div className="flex items-center justify-between rounded-xl border-2 border-pink-300 bg-pink-50 px-4 py-3.5">
             <div>
-              <p className="text-base font-bold text-slate-800">{isZH ? '月度總節省' : 'Total Monthly Saving'}</p>
+              <p className="text-base font-bold text-slate-800">{T.totalMonthly}</p>
               <p className="text-[10px] text-slate-500 mt-0.5">
-                {isZH ? '以 49 人院舍為基準：HK$29,286/mo' : 'Pilot basis (49 staff): HK$29,286/mo'}
+                {data.staff.total} {isZH ? '名員工 · 本月實測' : 'staff · measured this month'}
               </p>
             </div>
-            <p className="text-2xl font-bold text-pink-600 tabular-nums">{fmt(r.totalMonthlySaving)}</p>
+            <p className="text-2xl font-bold text-pink-600 tabular-nums">{fmt(data.totals.monthly_saving)}</p>
           </div>
         </div>
       </div>
 
-      {/* Section 5: Emma Cost vs ROI */}
+      {/* Emma cost vs ROI */}
       <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
         <div className="mb-4 flex items-center gap-2">
           <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-pink-50 text-pink-500 text-sm">📊</div>
-          <h2 className="text-base font-semibold text-slate-800">{isZH ? 'Emma AI 費用 vs 節省' : 'Emma AI Cost vs Savings'}</h2>
-          <span className="ml-auto text-[10px] text-slate-400 bg-slate-100 px-2 py-0.5 rounded-full">
-            Tier {r.tierDef.tier} · HK${r.tierRate}/user/mo · 5yr
-          </span>
+          <h2 className="text-base font-semibold text-slate-800">{T.costVs}</h2>
         </div>
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 mb-5">
           {[
-            {
-              label: isZH ? 'Emma 月費'  : 'Emma Monthly Fee',
-              value: fmt(r.emmaMonthlyFee),
-              sub:   `${r.totalStaff} × HK$${r.tierRate} (Tier ${r.tierDef.tier} 5yr)`,
-              color: 'text-slate-800',
-            },
-            {
-              label: isZH ? 'Emma 年費'  : 'Emma Annual Fee',
-              value: fmt(r.emmaAnnualFee),
-              sub:   `${r.totalStaff} × HK$${r.tierRate} × 12${isZH ? '月' : 'mo'}`,
-              color: 'text-slate-800',
-            },
-            {
-              label: isZH ? '年度節省'   : 'Annual Savings',
-              value: fmt(r.annualSavings),
-              sub:   isZH ? '月節省 × 12' : 'Monthly × 12',
-              color: 'text-emerald-600',
-            },
-            {
-              label: isZH ? '年度淨收益' : 'Net Annual Benefit',
-              value: fmt(r.netAnnualBenefit),
-              sub:   isZH ? '年節省 − Emma 年費' : 'Annual − Emma fee',
-              color: 'text-blue-600',
-            },
-          ].map(k => (
+            { label: T.fee, value: fmt(data.emma.monthly_fee),
+              sub: `${data.staff.total} × HK$${data.emma.rate_per_user}`, color: 'text-slate-800' },
+            { label: isZH ? 'Emma 年費' : 'Emma Annual Fee', value: fmt(data.emma.annual_fee),
+              sub: `${isZH ? '預付 -15%' : '-15% prepaid'}: ${fmt(data.emma.annual_fee_prepaid)}`, color: 'text-slate-800' },
+            { label: T.annual, value: fmt(data.totals.annual_saving),
+              sub: isZH ? '月節省 × 12' : 'Monthly × 12', color: 'text-emerald-600' },
+            { label: T.net, value: fmt(data.emma.net_annual_benefit),
+              sub: isZH ? '年節省 − Emma 年費' : 'Annual − Emma fee', color: 'text-blue-600' },
+          ].map((k) => (
             <div key={k.label} className="rounded-xl border border-slate-100 bg-slate-50 p-3.5 text-center">
               <p className="text-[10px] text-slate-500 mb-1">{k.label}</p>
               <p className={`text-lg font-bold tabular-nums ${k.color}`}>{k.value}</p>
@@ -864,57 +621,39 @@ export default function ROIPage() {
             </div>
           ))}
         </div>
-
         <div className="rounded-2xl p-5 text-center" style={{ background: '#1a1a2e' }}>
           <p className="text-[11px] font-semibold tracking-widest text-white/40 mb-3">
-            EMMA AI ROI · TIER {r.tierDef.tier} · {r.tierDef.label} {isZH ? '人 · 5yr HK$' : 'STAFF · 5yr HK$'}{r.tierRate}/user/mo
+            EMMA AI ROI · TIER {data.emma.tier} · {data.emma.tier_label} · {data.emma.contract_years} HK${data.emma.rate_per_user}/user/mo
           </p>
           <div className="flex items-center justify-center gap-8">
             <div>
-              <p className="text-4xl font-bold text-pink-400 tabular-nums">{r.roiMultiple}x</p>
-              <p className="text-[10px] text-white/50 mt-1">{isZH ? 'ROI 倍數' : 'ROI Multiple'}</p>
+              <p className="text-4xl font-bold text-pink-400 tabular-nums">{data.emma.roi_multiple ?? '—'}x</p>
+              <p className="text-[10px] text-white/50 mt-1">{T.roiMult}</p>
             </div>
             <div className="w-px h-12 bg-white/10" />
             <div>
-              <p className="text-4xl font-bold text-emerald-400 tabular-nums">{r.paybackMonths}</p>
-              <p className="text-[10px] text-white/50 mt-1">{isZH ? '回本月數' : 'Months to Payback'}</p>
+              <p className="text-4xl font-bold text-emerald-400 tabular-nums">{data.emma.payback_months ?? '—'}</p>
+              <p className="text-[10px] text-white/50 mt-1">{T.payback}</p>
             </div>
             <div className="w-px h-12 bg-white/10" />
             <div>
-              <p className="text-3xl font-bold text-blue-400 tabular-nums">{fmt(r.netAnnualBenefit)}</p>
-              <p className="text-[10px] text-white/50 mt-1">{isZH ? '年度淨收益' : 'Net Annual Benefit'}</p>
+              <p className="text-3xl font-bold text-blue-400 tabular-nums">{fmt(data.emma.net_annual_benefit)}</p>
+              <p className="text-[10px] text-white/50 mt-1">{T.net}</p>
             </div>
           </div>
         </div>
       </div>
 
-      {/* Section 6: Scale Calculator */}
+      {/* Scale calculator */}
       <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
         <div className="mb-4 flex items-center gap-2">
           <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-pink-50 text-pink-500 text-sm">📈</div>
-          <h2 className="text-base font-semibold text-slate-800">
-            {isZH ? '規模化試算' : 'Scale Calculator'}
-          </h2>
+          <h2 className="text-base font-semibold text-slate-800">{T.scale}</h2>
           <span className="ml-auto text-[10px] text-slate-400 bg-slate-100 px-2 py-0.5 rounded-full">
             {isZH ? 'Sales Demo 用途' : 'Sales Demo'}
           </span>
         </div>
-
-        <div className="mb-5 rounded-xl bg-blue-50 border border-blue-100 px-4 py-3">
-          <p className="text-[11px] text-blue-700 leading-relaxed">
-            <strong>📊 {isZH ? '規模化計算基準' : 'Scale Calculator Formula'}:</strong>{' '}
-            {isZH
-              ? `年度節省 = HK$${PILOT_MONTHLY.toLocaleString()}/mo × (員工數 ÷ ${PILOT_STAFF}) × 12。Pilot: 一個 ${PILOT_STAFF} 人院舍，月節省 HK$${PILOT_MONTHLY.toLocaleString()}（A1+A2+B 5%）。`
-              : `Annual Saving = HK$${PILOT_MONTHLY.toLocaleString()}/mo × (Staff Count ÷ ${PILOT_STAFF}) × 12. Pilot: one ${PILOT_STAFF}-staff home, HK$${PILOT_MONTHLY.toLocaleString()}/mo saving (A1+A2+B 5%).`}
-          </p>
-          <p className="text-[10px] text-blue-600 mt-1.5">
-            {isZH
-              ? 'Emma 年費 = 員工數 × Tier 月費 × 12 (NAAC Option B 5yr 合約)'
-              : 'Emma Fee = Staff × Tier Rate × 12 (NAAC Option B 5yr contract)'}
-          </p>
-        </div>
-
-        <ScaleSlider isZH={isZH} />
+        <ScaleCalculator data={data} isZH={isZH} />
       </div>
     </div>
   )

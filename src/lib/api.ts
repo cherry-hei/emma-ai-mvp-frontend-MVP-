@@ -9,10 +9,14 @@
 // signals AuthContext to route to /login. Tokens live in localStorage — for a
 // higher-security posture, move auth to a server-side BFF with httpOnly cookies.
 import type {
-  ApiError, ApiStaff, CompareOptionsResponse, CreatePeriodResponse, JobView,
-  OptimizeResponse, PeriodOut, Profile, RatioResult, ResidentCountOut, RosterGrid,
-  RosterOption, SessionOut, ShiftDef, StaffDetail, TaskDefOut, Unit, ValidationOut,
-  VersionOut,
+  AlertItem, ApiError, ApiStaff, CompareOptionsResponse, CreatePeriodResponse,
+  DashboardSummary, EventTrigger, FutureDebtRow, GeneratedReport, Incident,
+  IncidentStats, JobView, LeaveCategory, LeaveGroup, LeaveRequest, LeaveStats,
+  MyAttendance, MyProfile, MyRoster, MySummary, MyTask, OptimizeResponse, PeriodOut,
+  Profile, RatioResult, RegulatoryDoc, ReplacementCandidate, ReportRow,
+  ReportSchedule, ReportType, ResidentCountOut, RoiSettings, RoiSummary, RosterGrid,
+  RosterOption, SessionOut, ShiftDef, StaffAiAnalysis, StaffDetail, TaskDefOut,
+  ThresholdMonitor, Unit, ValidationOut, VersionOut,
 } from './apiTypes'
 
 const BASE = (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000').replace(/\/+$/, '')
@@ -259,6 +263,124 @@ export const api = {
     }),
 
   job: (jobId: string) => apiFetch<JobView>(`/optimization-jobs/${jobId}`),
+
+  // ── Phase 3 · approval centre ───────────────────────────────────────────────
+  leaveRequests: (params?: {
+    group?: LeaveGroup; category?: LeaveCategory; search?: string
+    unitId?: string; dateFrom?: string; dateTo?: string; staffId?: string
+  }) => {
+    const q = new URLSearchParams()
+    if (params?.group) q.set('group', params.group)
+    if (params?.category) q.set('category', params.category)
+    if (params?.search) q.set('search', params.search)
+    if (params?.unitId) q.set('unit_id', params.unitId)
+    if (params?.dateFrom) q.set('date_from', params.dateFrom)
+    if (params?.dateTo) q.set('date_to', params.dateTo)
+    if (params?.staffId) q.set('staff_id', params.staffId)
+    const qs = q.toString()
+    return apiFetch<LeaveRequest[]>(`/leave-requests${qs ? `?${qs}` : ''}`)
+  },
+
+  leaveStats: () => apiFetch<LeaveStats>('/leave-requests/stats'),
+
+  createLeaveRequest: (body: {
+    staff_id?: string; leave_type: string; date_start: string; date_end: string
+    reason?: string; remark?: string; requested_shift_type?: string; document_url?: string
+  }) => apiFetch<LeaveRequest>('/leave-requests', {
+    method: 'POST', body: JSON.stringify(body),
+  }),
+
+  decideLeaveRequest: (id: string, decision: 'approve' | 'reject' | 'review', note?: string) =>
+    apiFetch<LeaveRequest>(`/leave-requests/${id}`, {
+      method: 'PATCH', body: JSON.stringify({ decision, note }),
+    }),
+
+  // ── Phase 3 · alert centre + emergency cover ────────────────────────────────
+  incidents: (params?: { status?: string; limit?: number }) => {
+    const q = new URLSearchParams()
+    if (params?.status) q.set('status', params.status)
+    if (params?.limit) q.set('limit', String(params.limit))
+    const qs = q.toString()
+    return apiFetch<Incident[]>(`/sl-incidents${qs ? `?${qs}` : ''}`)
+  },
+
+  incidentStats: () => apiFetch<IncidentStats>('/sl-incidents/stats'),
+
+  createIncident: (body: {
+    staff_id?: string; incident_type?: string; date?: string; reason?: string; shift_id?: string
+  }) => apiFetch<{ id: string }>('/sl-incidents', { method: 'POST', body: JSON.stringify(body) }),
+
+  // compliance_checked=false also returns blocked candidates, with their reasons.
+  replacementCandidates: (incidentId: string, opts?: { complianceChecked?: boolean; refresh?: boolean }) => {
+    const q = new URLSearchParams({ incident_id: incidentId })
+    if (opts?.complianceChecked === false) q.set('compliance_checked', 'false')
+    if (opts?.refresh) q.set('refresh', 'true')
+    return apiFetch<ReplacementCandidate[]>(`/replacement-candidates?${q.toString()}`)
+  },
+
+  resolveIncident: (incidentId: string, body: {
+    replacement_staff_id: string; auto?: boolean; note?: string
+  }) => apiFetch<{ resolution_minutes: number; future_debt: { quantity: number } | null }>(
+    `/sl-incidents/${incidentId}/resolve`, { method: 'POST', body: JSON.stringify(body) }),
+
+  alerts: () => apiFetch<AlertItem[]>('/alerts'),
+
+  futureDebt: () => apiFetch<FutureDebtRow[]>('/future-debt'),
+
+  // ── Phase 3 · dashboard, ROI, compliance monitors ───────────────────────────
+  dashboard: () => apiFetch<DashboardSummary>('/dashboard/summary'),
+
+  roiSummary: () => apiFetch<RoiSummary>('/roi/summary'),
+  roiSettings: () => apiFetch<RoiSettings>('/roi/settings'),
+  saveRoiSettings: (patch: Partial<RoiSettings>) =>
+    apiFetch<RoiSettings>('/roi/settings', { method: 'PUT', body: JSON.stringify(patch) }),
+
+  thresholds: () => apiFetch<ThresholdMonitor[]>('/compliance/thresholds'),
+
+  // ── Phase 3 · reports ───────────────────────────────────────────────────────
+  reportSchedules: () => apiFetch<ReportSchedule[]>('/reports/schedules'),
+  reportTypes: () => apiFetch<ReportType[]>('/reports/types'),
+  eventTriggers: () => apiFetch<EventTrigger[]>('/reports/event-triggers'),
+  regulatoryDocs: () => apiFetch<RegulatoryDoc[]>('/reports/regulatory-docs'),
+  reports: () => apiFetch<ReportRow[]>('/reports'),
+  generateReport: (reportType: string) =>
+    apiFetch<GeneratedReport>('/reports/generate', {
+      method: 'POST', body: JSON.stringify({ report_type: reportType }),
+    }),
+  runReportSchedule: (scheduleId: string) =>
+    apiFetch<GeneratedReport>(`/reports/schedules/${scheduleId}/run`, { method: 'POST' }),
+
+  // ── Phase 3 · staff app (always the caller's own records) ───────────────────
+  mySummary: () => apiFetch<MySummary>('/me/summary'),
+  myRoster: (days = 7) => apiFetch<MyRoster>(`/me/roster?days=${days}`),
+  myProfile: () => apiFetch<MyProfile>('/me/profile'),
+  myTasks: (date?: string) => apiFetch<MyTask[]>(`/me/tasks${date ? `?date=${date}` : ''}`),
+  setTaskStatus: (taskId: string, status: 'pending' | 'done') =>
+    apiFetch<MyTask>(`/me/tasks/${taskId}`, { method: 'PATCH', body: JSON.stringify({ status }) }),
+  myAttendance: () => apiFetch<MyAttendance>('/me/attendance'),
+  clock: (eventType: 'clock_in' | 'clock_out') =>
+    apiFetch<{ id: string; event_at: string }>('/me/attendance/clock', {
+      method: 'POST', body: JSON.stringify({ event_type: eventType }),
+    }),
+
+  // ── Phase 3 · staff AI analysis ─────────────────────────────────────────────
+  staffAiAnalysis: (staffId: string) =>
+    apiFetch<StaffAiAnalysis>(`/staff/${staffId}/ai-analysis`),
+}
+
+/** Download a generated report as CSV without leaving the page. */
+export async function downloadReportCsv(reportType: string): Promise<void> {
+  const token = getToken()
+  const res = await fetch(`${BASE}/reports/download/${reportType}.csv`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  })
+  if (!res.ok) throw await toError(res)
+  const url = URL.createObjectURL(await res.blob())
+  const a = document.createElement('a')
+  a.href = url
+  a.download = `${reportType}.csv`
+  a.click()
+  URL.revokeObjectURL(url)
 }
 
 // Enqueue an A/B/C solve and poll the job until it finishes; returns the options.

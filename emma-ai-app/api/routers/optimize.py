@@ -50,26 +50,49 @@ def _to_option_score_out(row: dict, *, with_violations: bool = True) -> OptionSc
 
 
 # ── generate (async) + poll ──────────────────────────────────────────────────
-@router.post("/optimize-roster", response_model=OptimizeResponse)
-def optimize_roster(req: OptimizeRequest, background: BackgroundTasks,
-                    sync: bool = Query(default=False),
-                    ctx: AuthCtx = Depends(get_ctx)):
-    req.facility_id = ctx.facility_id          # enforce tenant from the token
+def _authorize_optimize(req: OptimizeRequest, ctx: AuthCtx) -> None:
+    """Stamp the tenant from the token and authorize caller-supplied ids under RLS
+    before the service-role solver touches them — else a foreign source_version_id
+    would leak another facility's roster."""
+    req.facility_id = ctx.facility_id
     if req.created_by is None:
         req.created_by = ctx.profile_id
-    # Authorize caller-supplied ids under RLS before the service-role solver uses
-    # them — else a foreign source_version_id would leak another facility's roster.
     if not ctx.client.table("roster_periods").select("id").eq("id", req.period_id).execute().data:
         raise api_error(404, "not_found", "roster period not found")
     if req.source_version_id and not (
             ctx.client.table("roster_versions").select("id")
             .eq("id", req.source_version_id).execute().data):
         raise api_error(404, "not_found", "source roster version not found")
+
+
+@router.post("/optimize-roster", response_model=OptimizeResponse)
+def optimize_roster(req: OptimizeRequest, background: BackgroundTasks,
+                    sync: bool = Query(default=False),
+                    ctx: AuthCtx = Depends(get_ctx)):
+    _authorize_optimize(req, ctx)
     service_client = get_service_client()
     if sync:
         return opt.run_optimization(service_client, req)
     job_id = opt.enqueue_optimization(service_client, req)
     background.add_task(opt.run_optimization, service_client, req, job_id=job_id)
+    return OptimizeResponse(job_id=job_id, status=JobStatus.PENDING, roster_options=[])
+
+
+@router.post("/optimize-pareto", response_model=OptimizeResponse)
+def optimize_pareto(req: OptimizeRequest, background: BackgroundTasks,
+                    sync: bool = Query(default=False),
+                    ctx: AuthCtx = Depends(get_ctx)):
+    """Phase 3 multi-objective variant: sweep the weight space, discard dominated
+    candidates and return the cost extreme, the satisfaction extreme and the knee.
+    Same job/poll contract as /optimize-roster; the frontier lands in
+    result_json.pareto."""
+    _authorize_optimize(req, ctx)
+    service_client = get_service_client()
+    if sync:
+        return opt.run_optimization(service_client, req, pareto=True)
+    job_id = opt.enqueue_optimization(service_client, req)
+    background.add_task(opt.run_optimization, service_client, req,
+                        job_id=job_id, pareto=True)
     return OptimizeResponse(job_id=job_id, status=JobStatus.PENDING, roster_options=[])
 
 
