@@ -4,7 +4,7 @@ Deploy the Emma AI **frontend** (Next.js 16 · React 19 · Tailwind v4 · shadcn
 **AWS Amplify Hosting**. Amplify is the natural "push-to-deploy" home for Next.js
 on AWS: it detects Next.js, runs the managed **SSR** adapter (the app uses server
 components and `/api` route handlers, so a plain static export won't work), and
-redeploys on every push — the frontend analog of App Runner.
+redeploys on every push — the frontend analog of the API's push-to-deploy setup.
 
 Do these first:
 1. [`SETUP_SUPABASE_DB.md`](SETUP_SUPABASE_DB.md) — the database.
@@ -20,7 +20,7 @@ Do these first:
 ## Prerequisites
 
 1. Backend API deployed and reachable at an HTTPS URL, e.g.
-   `https://abc123xyz.ap-southeast-1.awsapprunner.com`.
+   `https://emma-ai-api.ecs.ap-southeast-1.on.aws`.
 2. This repo on **GitHub**, frontend branch pushed.
 3. An **AWS account** with permission to create Amplify apps.
 
@@ -71,7 +71,7 @@ Amplify → your app → **Hosting → Environment variables**. Set:
 
 | Variable | Value | Notes |
 |---|---|---|
-| `NEXT_PUBLIC_API_URL` | your App Runner URL, e.g. `https://abc123xyz.ap-southeast-1.awsapprunner.com` | Base URL of the backend API. **No trailing slash.** |
+| `NEXT_PUBLIC_API_URL` | your API URL from Setup 2, e.g. `https://emma-ai-api.ecs.ap-southeast-1.on.aws` | Base URL of the backend API. **No trailing slash.** |
 
 **Do NOT set** the local-dev auto-login vars in a hosted environment:
 
@@ -105,10 +105,11 @@ Open it and confirm the app loads.
 The API and UI are on **different origins**, so the browser enforces CORS. Take the
 Amplify URL from Step 3 and add it to the backend's `CORS_ORIGINS`:
 
-- Go to **App Runner → your service → Configuration → Environment variables**.
-- Set `CORS_ORIGINS` to the Amplify origin (comma-separated if several), e.g.
-  `https://main.d1a2b3c4e5.amplifyapp.com`.
-- Save → App Runner redeploys.
+- Set the `CORS_ORIGINS` **repository variable** (GitHub → Settings → Secrets and
+  variables → Actions → Variables) to the Amplify origin, comma-separated if
+  several, e.g. `https://main.d1a2b3c4e5.amplifyapp.com`.
+- Re-run the *Deploy API to AWS* workflow (Actions → **Run workflow**) so the new
+  value reaches the running service.
 
 Then reload the UI. If the browser console shows a **CORS error**, the origin in
 `CORS_ORIGINS` doesn't exactly match (scheme + host + no trailing slash).
@@ -142,22 +143,23 @@ Watch progress in Amplify → your app → the branch's build log.
 
 ---
 
-## Alternative — containerized UI on App Runner
+## Alternative — containerized UI on ECS Express Mode
 
-If you'd rather run the UI the same way as the API (one platform, container-based),
-build a Next.js **standalone** image and deploy it on App Runner instead of
-Amplify:
+If you'd rather run the UI the same way as the API (one platform,
+container-based), build a Next.js **standalone** image and deploy it as a second
+ECS Express Mode service instead of using Amplify:
 
 1. In `next.config.ts`, set `output: 'standalone'`.
 2. Add a UI `Dockerfile` (multi-stage: `npm ci` → `npm run build` → run
-   `node .next/standalone/server.js`, expose the App Runner `$PORT`, pass
+   `node .next/standalone/server.js`, listen on `8080`, pass
    `NEXT_PUBLIC_API_URL` as a **build arg** since it's inlined at build time).
-3. Create a second App Runner service from that Dockerfile (same steps as
+3. Create a second Express Mode service from that image (same steps as
    [`SETUP_BACKEND_AWS.md`](SETUP_BACKEND_AWS.md)), then do the CORS handshake in
    Step 4.
 
-Amplify is simpler for Next.js (native SSR support, no Dockerfile). Use App Runner
-only if you specifically want a single container platform for both apps.
+Amplify is simpler for Next.js (native SSR support, no Dockerfile) and avoids a
+second Application Load Balancer's monthly cost. Go container-based only if you
+specifically want one platform for both apps.
 
 > **Not S3 + CloudFront static hosting:** that only serves a static export
 > (`next export`). This app relies on SSR / server components / `/api` route
@@ -180,7 +182,7 @@ only if you specifically want a single container platform for both apps.
 ## The full picture
 
 ```
-Browser ──HTTPS──▶ Amplify (Next.js UI)  ──HTTPS──▶ App Runner (FastAPI API) ──▶ Supabase Cloud (Postgres + Auth + RLS)
+Browser ──HTTPS──▶ Amplify (Next.js UI)  ──HTTPS──▶ ECS Express (FastAPI API) ──▶ Supabase Cloud (Postgres + Auth + RLS)
           Setup 3                          Setup 2                                Setup 1
 ```
 

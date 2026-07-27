@@ -3,14 +3,16 @@
 # Production image for the Emma AI REST API (FastAPI + uvicorn).
 #
 # The frontend is a separate Next.js app (repo `main`); this container serves
-# ONLY the JSON API. AWS App Runner terminates HTTPS and forwards to $PORT — no
-# reverse proxy or static-file serving is needed, so there is no Caddy here.
+# ONLY the JSON API. The ECS Express Mode load balancer terminates HTTPS and
+# forwards to the container port — no reverse proxy or static-file serving is
+# needed, so there is no Caddy here.
 #
-# Config comes from environment variables (App Runner service config):
-#   SUPABASE_URL, SUPABASE_ANON_KEY, SUPABASE_SERVICE_ROLE_KEY, APP_ENV,
-#   CORS_ORIGINS (comma-separated Next.js origins). See AWS_DEPLOY.md.
+# Config comes from environment variables (ECS task definition):
+#   SUPABASE_URL, SUPABASE_ANON_KEY, APP_ENV, CORS_ORIGINS (comma-separated
+#   Next.js origins) as plain env; SUPABASE_SERVICE_ROLE_KEY and DATABASE_URL
+#   injected from Secrets Manager. See SETUP_BACKEND_AWS.md.
 #
-# Build context = repo ROOT. In App Runner set: Dockerfile = ./Dockerfile.
+# Build context = repo ROOT (the image needs emma-ai-app/).
 
 FROM python:3.12-slim
 
