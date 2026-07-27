@@ -1,26 +1,32 @@
 'use client'
 import { useState } from 'react'
-import { useRouter } from 'next/navigation'
+import { usePathname, useRouter } from 'next/navigation'
 import { useLang } from '@/components/layout/LanguageContext'
 import { useAuth, roleLabel } from '@/components/layout/AuthContext'
+import { ROUTES, activeItem } from '@/components/layout/navRoutes'
 
 const PINK = '#f28f9e'
 
 const TABS = [
-  { key: 'topnav_roster',     path: '/roster' },
-  { key: 'topnav_staffing',   path: '/personnel' },
-  { key: 'topnav_compliance', path: '/compliance' },
-  { key: 'topnav_reports',    path: '/reports' },
+  { key: 'topnav_roster',     path: ROUTES.roster     },
+  { key: 'topnav_staffing',   path: ROUTES.staff      },
+  { key: 'topnav_compliance', path: ROUTES.compliance },
+  { key: 'topnav_reports',    path: ROUTES.reports    },
 ]
 
 export function TopNav() {
-  const [active, setActive] = useState('topnav_roster')
   const [search, setSearch]   = useState('')
   const [menuOpen, setMenuOpen] = useState(false)
+  const pathname = usePathname()
   const router = useRouter()
   const { lang, setLang, t }  = useLang()
   const { user, signOut } = useAuth()
   const isZH = lang === 'zh'
+
+  // Derived from the URL, not click state: arriving from the sidebar, a deep link
+  // or the back button all light the same tab. Screens with no tab (dashboard,
+  // ROI, alerts, approval) simply highlight nothing.
+  const active = activeItem(TABS, pathname)?.key
 
   // 'A' / 'B' from "Care Home A (…)", else first letter of the email.
   const avatarLetter =
@@ -38,7 +44,7 @@ export function TopNav() {
         {TABS.map(({ key, path }) => (
           <button
             key={key}
-            onClick={() => { setActive(key); router.push(path) }}
+            onClick={() => router.push(path)}
             className="px-3 py-1.5 rounded text-xs font-medium transition-all"
             style={{
               color:      active === key ? PINK : '#6b7280',

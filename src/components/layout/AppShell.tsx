@@ -4,6 +4,7 @@ import { usePathname, useRouter } from 'next/navigation'
 import { Sidebar } from './Sidebar'
 import { TopNav } from './TopNav'
 import { useAuth } from './AuthContext'
+import { CHROMELESS } from './navRoutes'
 
 function Splash() {
   return (
@@ -19,13 +20,16 @@ function Splash() {
   )
 }
 
-// Client shell: owns the auth gate. The /login route renders bare (no sidebar/topnav);
-// every other route requires a signed-in session, else it redirects to /login.
+// Client shell: owns the auth gate. /login and the phone-sized /staff-app render
+// bare — both bring their own chrome, so wrapping them in the desktop sidebar +
+// top bar would frame a mobile screen inside admin navigation. Every route other
+// than /login requires a signed-in session, else it redirects to /login.
 export function AppShell({ children }: { children: ReactNode }) {
   const pathname = usePathname()
   const router = useRouter()
   const { status } = useAuth()
   const isLogin = pathname === '/login'
+  const bare = CHROMELESS.includes(pathname)
 
   useEffect(() => {
     if (status === 'anon' && !isLogin) router.replace('/login')
@@ -38,6 +42,8 @@ export function AppShell({ children }: { children: ReactNode }) {
   }
 
   if (status !== 'authed') return <Splash />
+
+  if (bare) return <>{children}</>
 
   return (
     <div className="flex h-screen overflow-hidden bg-gray-50">

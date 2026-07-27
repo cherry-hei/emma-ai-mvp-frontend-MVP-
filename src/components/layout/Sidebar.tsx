@@ -2,20 +2,20 @@
 import { usePathname, useRouter } from 'next/navigation'
 import { useLang } from '@/components/layout/LanguageContext'
 import { useAuth, roleLabel } from '@/components/layout/AuthContext'
+import { ROUTES, isActiveRoute } from '@/components/layout/navRoutes'
 
 const PINK       = '#E8187A'
 const PINK_HOVER = '#c9156a'
 
 const NAV = [
-  { key: 'nav_dashboard', icon: '🏠', path: '/dashboard' },
-  { key: 'nav_roster',      icon: '📅',  path: '/roster'     },
-  { key: 'nav_compliance',  icon: '✅',  path: '/compliance' },
-  { key: 'nav_approval',    icon: '👥✓', path: '/approval'   },
-  { key: 'nav_personnel',   icon: '👤',  path: '/staff'      },
-  { key: 'nav_roi',         icon: '📈',  path: '/roi'        },
-  { key: 'nav_reports',     icon: '📊',  path: '/reports'    },
-  { key: 'nav_alert',       icon: '🔔',  path: '/alert', badge: '3' },
-  { key: 'nav_ai',          icon: '🤖',  path: '/insights'   },
+  { key: 'nav_dashboard',   icon: '🏠',  path: ROUTES.dashboard  },
+  { key: 'nav_roster',      icon: '📅',  path: ROUTES.roster     },
+  { key: 'nav_compliance',  icon: '✅',  path: ROUTES.compliance },
+  { key: 'nav_approval',    icon: '👥✓', path: ROUTES.approval   },
+  { key: 'nav_personnel',   icon: '👤',  path: ROUTES.staff      },
+  { key: 'nav_roi',         icon: '📈',  path: ROUTES.roi        },
+  { key: 'nav_reports',     icon: '📊',  path: ROUTES.reports    },
+  { key: 'nav_alert',       icon: '🔔',  path: ROUTES.alert, badge: '3' },
 ]
 
 export function Sidebar() {
@@ -33,7 +33,6 @@ export function Sidebar() {
     nav_roi:        { zh: 'ROI',        en: 'ROI'           },
     nav_reports:    { zh: '報告',       en: 'Reports'       },
     nav_alert:      { zh: '警報',       en: 'Alert'         },
-    nav_ai:         { zh: 'AI 洞察',    en: 'AI Insights'   },
     urgent_alert:   { zh: '🚨 緊急警報', en: '🚨 Urgent Alert' },
     staff_shortage: { zh: 'P更人手不足 — F3', en: 'P-shift understaffed — F3' },
     new_request:    { zh: '+ 新增請求', en: '+ New Request'  },
@@ -76,7 +75,7 @@ export function Sidebar() {
       {/* Nav */}
       <nav className="flex-1 px-2 py-2 space-y-0.5">
         {NAV.map(({ key, icon, path, badge }) => {
-          const active = pathname === path || (path !== '/' && pathname.startsWith(path))
+          const active = isActiveRoute(pathname, path)
           return (
             <button
               key={path}
