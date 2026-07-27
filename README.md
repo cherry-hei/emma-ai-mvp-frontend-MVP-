@@ -32,9 +32,32 @@ fixture-backed `/api/*` route handlers were deleted.
 | **Reports** — generation, schedules, thresholds, regulatory sync | 3 | `/reports/*`, `/compliance/thresholds` |
 | **Staff App** — roster, tasks, clock in/out, profile | 3 | `/me/*` |
 | **Staff profile → AI Analysis** | 3 | `/staff/{id}/ai-analysis` |
-| **Roster → Pareto options** (spec 9.1) | 3 | `/optimize-pareto` |
 
 **Phase 4 (NLP feedback analysis) is not started.**
+
+### Built on the backend, no UI yet
+
+- **Pareto roster options** (spec 9.1) — `POST /optimize-pareto` works and is
+  tested, but the Roster page's *AI Roster Suggest* button still calls
+  `/optimize-roster` (the fixed A/B/C presets). Pointing it at the Pareto
+  endpoint is a one-line change; the response contract is identical.
+
+### Registries, not yet automation
+
+These tables and screens are real and read live, but nothing executes them on a
+schedule — they are the data model and the manual trigger, not the daemon:
+
+- `report_schedules` carries `next_run_at`, but no cron fires it. **Generate Now**
+  works today.
+- `event_trigger_rules` + `facility_events` produce genuine month-to-date counts;
+  nothing auto-creates an event or performs the described action (pre-filling an
+  Annex 8.3 draft, etc.).
+- `regulatory_documents` is a version register. Emma does not yet fetch upstream
+  documents to detect a change.
+- Notifications deliver **in-app only**. Email and WhatsApp rows are persisted
+  with status `queued` for a delivery worker that does not exist yet.
+- Reports render as JSON and CSV. PDF/Excel export and `file_url` object storage
+  (spec 7.1) are not built.
 
 ## Phase 3 — operations layer
 
