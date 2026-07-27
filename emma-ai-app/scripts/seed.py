@@ -20,6 +20,7 @@ from datetime import date as Date, datetime, timedelta, timezone
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 
 from emma_core.db import get_service_client  # noqa: E402
+from emma_core.shifttime import paid_minutes  # noqa: E402
 
 DEV_PASSWORD = "EmmaDev123!"
 
@@ -63,12 +64,17 @@ def wipe() -> None:
         print("  (auth wipe skipped:", e, ")")
 
 
-def seed_shift_defs(facility_id: str, defs: list[tuple]) -> None:
-    ins_many("shift_definitions", [{
-        "facility_id": facility_id, "shift_type": code, "label": label,
-        "start_time": start, "end_time": end, "cross_midnight": cross,
-        "is_working": working,
-    } for code, label, start, end, cross, working in defs])
+def seed_shift_defs(facility_id: str, defs: list[tuple], splits: dict) -> None:
+    rows = []
+    for code, label, start, end, cross, working in defs:
+        segments = splits.get(code)
+        rows.append({
+            "facility_id": facility_id, "shift_type": code, "label": label,
+            "start_time": start, "end_time": end, "cross_midnight": cross,
+            "is_working": working, "segments": segments,
+            "paid_minutes": paid_minutes({"segments": segments}) if segments else None,
+        })
+    ins_many("shift_definitions", rows)
 
 
 def seed_ratio_rules(facility_id: str, cw_rank: str) -> None:
@@ -87,28 +93,37 @@ def seed_ratio_rules(facility_id: str, cw_rank: str) -> None:
     } for (r, s, e, ratio, mn) in rules])
 
 
-# time maps per shift code -> (start, end, cross_midnight, is_working)
+# time maps per shift code -> (start, end, cross_midnight, is_working).
+# For a split shift these are the FIRST duty window only; SPLIT_* below carries
+# the full truth and takes priority everywhere (see emma_core/shifttime.py).
 SHIFT_TIMES_A = {
     "A": ("07:00", "15:00", False, True), "B": ("08:00", "16:00", False, True),
     "E": ("09:00", "17:00", False, True), "P": ("13:30", "21:30", False, True),
-    "N": ("21:30", "07:00", True, True),  "AN": ("07:00", "13:30", True, True),
+    "N": ("21:30", "07:00", True, True),  "AN": ("07:00", "13:30", False, True),
     "OFF": (None, None, False, False), "AL": (None, None, False, False),
     "SLEEP": (None, None, False, False), "DO": (None, None, False, False),
 }
 SHIFT_TIMES_B = {
     "7A": ("07:00", "19:00", False, True), "9A": ("09:00", "21:00", False, True),
     "7P": ("19:00", "07:00", True, True),  "A": ("07:00", "16:00", False, True),
-    "P": ("12:30", "21:30", False, True),  "AN": ("07:00", "14:30", True, True),
+    "P": ("12:30", "21:30", False, True),  "AN": ("07:00", "14:30", False, True),
     "OFF": (None, None, False, False), "DO": (None, None, False, False),
     "AL": (None, None, False, False), "SLEEP": (None, None, False, False),
 }
+
+# Split shifts, straight from the scheduling spec:
+#   Home A  A/N更: 07:00–13:30 且當晚 21:30–07:00 (次日)   ->  6.5h +  9.5h = 16h
+#   Home B  A/N更: 07:00–14:30 且 21:15–07:15 (次日)       ->  7.5h + 10.0h = 17.5h
+# The chain that follows is A/N -> SLEEP -> DO, which the seeded patterns honour.
+SPLIT_A = {"AN": [{"start": "07:00", "end": "13:30"}, {"start": "21:30", "end": "07:00"}]}
+SPLIT_B = {"AN": [{"start": "07:00", "end": "14:30"}, {"start": "21:15", "end": "07:15"}]}
 
 PERIOD_A_START, PERIOD_A_DAYS = "2026-07-01", 28
 PERIOD_B_START, PERIOD_B_DAYS = "2026-07-01", 31
 
 
 def seed_roster(facility_id, version_id, staff_ids, ranks, units, pattern,
-                times, task_map, dates) -> dict[str, list[str]]:
+                times, splits, task_map, dates) -> dict[str, list[str]]:
     """One shift + assignment per staff per day. The 7-day pattern repeats across
     the whole period so a 28-day cycle really has 28 days of roster — the KPI,
     fairness and report screens all read a full period.
@@ -120,11 +135,14 @@ def seed_roster(facility_id, version_id, staff_ids, ranks, units, pattern,
         for d, day in enumerate(dates):
             code = pattern[i][d % 7]
             start, end, cross, working = times[code]
+            segments = splits.get(code)
             shift_rows.append({
                 "facility_id": facility_id, "roster_version_id": version_id,
                 "date": day, "shift_type": code, "start_time": start,
                 "end_time": end, "cross_midnight": cross, "unit_id": units[i],
                 "required_rank": ranks[i], "required_count": 1, "is_working": working,
+                "segments": segments,
+                "paid_minutes": paid_minutes({"segments": segments}) if segments else None,
             })
             meta.append((i, staff_id, d, code))
 
@@ -550,7 +568,7 @@ def main() -> None:
         ("AL", "Annual Leave", None, None, False, False),
         ("SLEEP", "Sleeping Day", None, None, False, False),
         ("DO", "Rest Day", None, None, False, False),
-    ])
+    ], SPLIT_A)
     seed_ratio_rules(fa, "CW")
     seed_task_definitions(fa)
 
@@ -562,14 +580,19 @@ def main() -> None:
         "facility_id": fa, "period_id": period_a, "version_type": "manual",
         "label": "July 2026 draft", "status": "draft",
     })
+    # Weekly patterns sized to the 44h local-FT contract, with the spec's A/N ->
+    # SLEEP -> DO chain honoured. Previously the AW worked all seven days and the
+    # PCW six nights, which put them 27-30% over contract before any overtime —
+    # that is a rostering breach, not an OT signal, and it drowned the real alerts.
+    #   A/N = 16h, N = 9.5h, everything else 8h.
     pattern_a = [
-        ["P", "A", "P", "AN", "SLEEP", "OFF", "AL"],
-        ["OFF", "P", "P", "A", "P", "AN", "SLEEP"],
-        ["A", "AN", "SLEEP", "OFF", "A", "A", "OFF"],
-        ["P", "P", "OFF", "P", "P", "A", "A"],
-        ["A", "A", "A", "A", "A", "OFF", "OFF"],
-        ["N", "N", "N", "OFF", "N", "N", "N"],
-        ["P", "P", "P", "P", "P", "A", "A"],
+        ["P", "A", "P", "AN", "SLEEP", "OFF", "AL"],      # RN   8+8+8+16   = 40h
+        ["OFF", "P", "P", "A", "P", "A", "DO"],           # EN   5 x 8      = 40h
+        ["A", "AN", "SLEEP", "OFF", "A", "A", "OFF"],     # HW   8+16+8+8   = 40h
+        ["P", "P", "OFF", "P", "P", "A", "DO"],           # CW   5 x 8      = 40h
+        ["A", "A", "A", "A", "A", "OFF", "OFF"],          # PTA  5 x 8      = 40h
+        ["N", "N", "SLEEP", "OFF", "N", "N", "DO"],       # PCW  4 x 9.5    = 38h
+        ["P", "P", "P", "P", "P", "OFF", "OFF"],          # AW   5 x 8      = 40h
     ]
     tasks_a = {
         0: ["Med Checking", "ICP Review", "FU Chat"],
@@ -579,7 +602,7 @@ def main() -> None:
         6: ["Infection Control"],
     }
     roster_a = seed_roster(fa, ver_a, a_ids, a_ranks, a_units, pattern_a,
-                           SHIFT_TIMES_A, tasks_a, dates_a)
+                           SHIFT_TIMES_A, SPLIT_A, tasks_a, dates_a)
 
     def shift_lookup_a(staff_id: str, day: Date) -> str | None:
         """The staff member's working shift id on `day`, else None."""
@@ -622,7 +645,7 @@ def main() -> None:
         ("DO", "Rest Day", None, None, False, False),
         ("AL", "Annual Leave", None, None, False, False),
         ("SLEEP", "Sleeping Day", None, None, False, False),
-    ])
+    ], SPLIT_B)
     seed_ratio_rules(fb, "HCA")
 
     period_b = ins("roster_periods", {
@@ -633,12 +656,14 @@ def main() -> None:
         "facility_id": fb, "period_id": period_b, "version_type": "manual",
         "label": "July 2026 draft", "status": "draft",
     })
+    # Home B: imported HCA 72h/week, local staff 49.5h/week (spec: 11 working days
+    # + 3 rest days per fortnight). 7A/7P are 12h, A/P are 9h.
     pattern_b = [
-        ["7A", "7A", "7P", "OFF", "7A", "7A", "7A"],
-        ["A", "A", "P", "P", "OFF", "A", "A"],
-        ["P", "P", "A", "A", "P", "OFF", "DO"],
+        ["7A", "7A", "7P", "OFF", "7A", "7A", "7A"],      # HCA  6 x 12 = 72h
+        ["A", "A", "P", "P", "OFF", "A", "DO"],           # HW   5 x 9  = 45h
+        ["P", "P", "A", "A", "P", "OFF", "DO"],           # EN   5 x 9  = 45h
     ]
-    seed_roster(fb, ver_b, b_ids, b_ranks, b_units, pattern_b, SHIFT_TIMES_B, {}, dates_b)
+    seed_roster(fb, ver_b, b_ids, b_ranks, b_units, pattern_b, SHIFT_TIMES_B, SPLIT_B, {}, dates_b)
 
     # ---- auth users + profiles ----
     print("Creating dev auth users ...")

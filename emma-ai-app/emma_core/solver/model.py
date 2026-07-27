@@ -132,8 +132,9 @@ def build_model(inputs: SolverInputs) -> SolverModel:
                     continue
                 if rule.unit_id is not None and sl.unit_id != rule.unit_id:
                     continue
-                if not window_overlap(sl.start_min, sl.end_min, sl.cross_midnight,
-                                      rule.window_start_min, rule.window_end_min):
+                segments = sl.segments or ((sl.start_min, sl.end_min, sl.cross_midnight),)
+                if not any(window_overlap(s, e, c, rule.window_start_min,
+                                          rule.window_end_min) for s, e, c in segments):
                     continue
                 members.extend(x[(s.id, sl.id)] for s in eligible_by_slot[sl.id])
                 members.append(agency[sl.id])

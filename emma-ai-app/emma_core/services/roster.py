@@ -172,6 +172,8 @@ def set_cell(client, *, facility_id, roster_version_id, staff_id, date, shift_ty
         "start_time": shift_def.start_time, "end_time": shift_def.end_time,
         "cross_midnight": shift_def.cross_midnight,
         "is_working": shift_def.is_working,
+        # a manually placed A/N cell must keep its split-shift shape
+        "segments": shift_def.segments, "paid_minutes": shift_def.paid_minutes,
     }).execute().data[0]["id"])
 
     assignment_id = (client.table("shift_assignments").insert({

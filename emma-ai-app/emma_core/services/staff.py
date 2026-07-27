@@ -3,24 +3,15 @@ from __future__ import annotations
 
 from datetime import date as Date
 
+from ..shifttime import paid_minutes
+
 LEAVE_CODES = {"AL", "SL", "DSL"}   # non-working leave shift codes
 
 
-def _mins(t: str | None) -> int | None:
-    if not t:
-        return None
-    h, m = t.split(":")[:2]
-    return int(h) * 60 + int(m)
-
-
 def _duration(shift: dict) -> int:
-    """Shift minutes. Trusts the explicit cross_midnight flag rather than auto-flipping on end<=start."""
-    start, end = _mins(shift.get("start_time")), _mins(shift.get("end_time"))
-    if start is None or end is None:
-        return 0
-    if shift.get("cross_midnight"):
-        return (1440 - start) + end
-    return max(0, end - start)
+    """Paid shift minutes — segment-aware (see emma_core.shifttime), so a split
+    A/N shift counts its two duty windows, not the elapsed span between them."""
+    return paid_minutes(shift)
 
 
 def _iso(v) -> str:

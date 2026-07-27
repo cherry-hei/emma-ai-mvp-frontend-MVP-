@@ -29,10 +29,16 @@ class DemandSlot:
     date: Date
     day_index: int                               # (date - period_start).days
     shift_type: str
+    # start/end/cross describe the OUTER envelope — the whole span the staff
+    # member is unavailable, which is what overlap and rest checks need.
     start_min: int                               # minutes from midnight
     end_min: int
     cross_midnight: bool
-    duration_min: int
+    duration_min: int                            # PAID minutes (sum of segments)
+    # Duty windows as (start, end, crosses). A split A/N shift has two; an
+    # ordinary shift has one equal to the envelope. Ratio coverage uses these,
+    # so a nurse is not counted as present during an unpaid rest gap.
+    segments: tuple[tuple[int, int, bool], ...] = ()
     unit_id: str | None = None
     required_rank: str | None = None             # None => any rank
     required_count: int = 1

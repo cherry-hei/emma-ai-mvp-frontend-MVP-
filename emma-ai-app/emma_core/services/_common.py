@@ -9,6 +9,8 @@ from __future__ import annotations
 import calendar
 from datetime import date as Date, datetime, timezone
 
+from ..shifttime import covers_window, day_spans, envelope, paid_minutes, to_minutes
+
 LEAVE_CODES = {"AL", "SL", "DSL"}        # non-working codes that mean "away"
 OFF_CODES = {"OFF", "DO", "SLEEP"}       # non-working codes that mean "free"
 
@@ -26,29 +28,23 @@ def as_date(v) -> Date:
     return v if isinstance(v, Date) else Date.fromisoformat(iso(v))
 
 
-def to_min(t: str | None) -> int | None:
-    """'HH:MM[:SS]' -> minutes past midnight."""
-    if not t:
-        return None
-    h, m = str(t).split(":")[:2]
-    return int(h) * 60 + int(m)
+to_min = to_minutes
 
 
 def shift_minutes(shift: dict) -> int:
-    """Paid minutes for a shift row. Trusts the explicit cross_midnight flag."""
-    start, end = to_min(shift.get("start_time")), to_min(shift.get("end_time"))
-    if start is None or end is None:
-        return 0
-    if shift.get("cross_midnight") or end <= start:
-        return (1440 - start) + end
-    return end - start
+    """Paid minutes for a shift row — segment-aware, so a split A/N shift counts
+    its two duty windows, not the elapsed span between them."""
+    return paid_minutes(shift)
+
+
+def shift_envelope(shift: dict) -> tuple[int, int, bool] | None:
+    """Outer span of a shift, for overlap and minimum-rest checks."""
+    return envelope(shift)
 
 
 def day_intervals(start: int, end: int) -> list[tuple[int, int]]:
     """Split a possibly cross-midnight window into same-day [start, end) intervals."""
-    if end <= start:
-        return [(start, 1440), (0, end)]
-    return [(start, end)]
+    return day_spans(start, end, end <= start)
 
 
 def overlaps(a_start: int | None, a_end: int | None, b_start: int, b_end: int) -> bool:
@@ -59,6 +55,11 @@ def overlaps(a_start: int | None, a_end: int | None, b_start: int, b_end: int) -
             if x0 < y1 and y0 < x1:
                 return True
     return False
+
+
+def shift_covers(shift: dict, win_start: int, win_end: int) -> bool:
+    """Is the staff member on duty at any point inside the window?"""
+    return covers_window(shift, win_start, win_end)
 
 
 def month_bounds(on: Date | None = None) -> tuple[str, str]:

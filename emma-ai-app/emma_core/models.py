@@ -24,6 +24,9 @@ class ShiftDef(BaseModel):
     end_time: str | None = None
     cross_midnight: bool = False
     is_working: bool = True
+    # Split shifts (A/N) carry their separate duty windows; None = contiguous.
+    segments: list[dict] | None = None
+    paid_minutes: int | None = None
 
 
 class FacilityLite(BaseModel):

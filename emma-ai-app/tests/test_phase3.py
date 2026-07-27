@@ -52,6 +52,62 @@ def test_rank_substitution_only_allows_equal_or_more_senior_care_ranks():
     assert can_cover_rank("CW", None)        # no requirement => anyone
 
 
+# ── offline: split shifts (A/N) ──────────────────────────────────────────────
+# Spec: Home A A/N = 07:00–13:30 AND 21:30–07:00 next day (6.5h + 9.5h = 16h);
+# Home B = 07:00–14:30 AND 21:15–07:15 (7.5h + 10h = 17.5h).
+AN_HOME_A = {
+    "start_time": "07:00", "end_time": "13:30", "cross_midnight": False,
+    "segments": [{"start": "07:00", "end": "13:30"}, {"start": "21:30", "end": "07:00"}],
+}
+AN_HOME_B = {
+    "start_time": "07:00", "end_time": "14:30", "cross_midnight": False,
+    "segments": [{"start": "07:00", "end": "14:30"}, {"start": "21:15", "end": "07:15"}],
+}
+
+
+def test_split_shift_pays_the_segments_not_the_elapsed_span():
+    from emma_core.shifttime import paid_minutes
+
+    assert paid_minutes(AN_HOME_A) == 960          # 16h, not the 30.5h envelope
+    assert paid_minutes(AN_HOME_B) == 1050         # 17.5h
+    # ordinary shifts are untouched
+    assert paid_minutes({"start_time": "07:00", "end_time": "15:00"}) == 480
+    assert paid_minutes({"start_time": "21:30", "end_time": "07:00",
+                         "cross_midnight": True}) == 570
+
+
+def test_split_shift_is_unavailable_across_the_whole_envelope():
+    from emma_core.shifttime import envelope
+
+    # 07:00 -> 07:00 next day: rest/overlap checks must block the entire span,
+    # even though only 16h of it is paid.
+    assert envelope(AN_HOME_A) == (420, 420, True)
+
+
+def test_split_shift_is_off_duty_during_its_rest_gap():
+    from emma_core.shifttime import covers_window
+
+    assert covers_window(AN_HOME_A, 420, 1200)     # 07:00–20:00, via the morning
+    assert covers_window(AN_HOME_A, 1080, 420)     # 18:00–07:00, via the night
+    # 15:00–21:00 is the unpaid gap — counting it would overstate coverage
+    assert not covers_window(AN_HOME_A, 900, 1260)
+
+
+def test_shift_without_segments_keeps_the_old_meaning():
+    from emma_core.shifttime import duty_segments, paid_minutes
+
+    legacy = {"start_time": "07:00", "end_time": "13:30", "cross_midnight": True}
+    assert duty_segments(legacy) == ((420, 810, True),)
+    assert paid_minutes(legacy) == 1830             # genuinely a 30.5h span
+
+
+def test_explicit_paid_minutes_overrides_the_clock():
+    from emma_core.shifttime import paid_minutes
+
+    # a facility may pay a sleep-in at less than wall-clock time
+    assert paid_minutes({**AN_HOME_A, "paid_minutes": 780}) == 780
+
+
 # ── offline: Gini ────────────────────────────────────────────────────────────
 def test_gini_is_zero_when_even_and_one_when_concentrated():
     from emma_core.services.kpi import gini
@@ -466,6 +522,43 @@ def test_task_completion_round_trip(staff_token):
 
     client.patch(f'/me/tasks/{task["id"]}', json={"status": original},
                  headers=_auth(staff_token))
+
+
+def test_seeded_an_shift_is_sixteen_hours(token):
+    """End-to-end guard on the defect: the seeded A/N shift must reach the API as
+    16 paid hours, and nobody may be rostered past their contracted maximum
+    purely because a split shift was measured end-to-end."""
+    from emma_core.shifttime import paid_minutes
+
+    from emma_core.db import get_service_client
+    sb = get_service_client()
+    facility = sb.table("facilities").select("id").eq("code", "A").execute().data[0]["id"]
+
+    an = (sb.table("shifts").select("*")
+          .eq("facility_id", facility).eq("shift_type", "AN").limit(1).execute().data)
+    assert an, "the seeded roster should contain A/N shifts"
+    assert paid_minutes(an[0]) == 960
+
+    # With A/N paid as 16h and the weekly patterns sized to contract, no one is
+    # over — so an hours alert now means a real rostering breach, not the defect.
+    alerts = client.get("/alerts", headers=_auth(token)).json()
+    over = [a["detail"] for a in alerts if a["kind"] == "hours"]
+    assert not over, f"unexpected hours-over-contract alerts: {over}"
+
+    staff = client.get("/staff", headers=_auth(token)).json()
+    for s in staff:
+        assert s["scheduled_hours"] <= s["contracted_period_hours"], (
+            f'{s["name_en"]}: {s["scheduled_hours"]}h rostered vs '
+            f'{s["contracted_period_hours"]}h contracted'
+        )
+
+
+def test_split_shift_does_not_inflate_staff_hours(staff_token):
+    body = client.get("/me/summary", headers=_auth(staff_token)).json()
+    hours = body["hours"]
+    assert hours["scheduled_hours"] <= hours["contracted_hours"], (
+        f'{hours["scheduled_hours"]}h rostered vs {hours["contracted_hours"]}h contracted'
+    )
 
 
 def test_attendance_reports_paired_hours(staff_token):

@@ -18,6 +18,7 @@ import math
 from datetime import date as Date, timedelta
 
 from ..models import RatioResult
+from ..shifttime import covers_window, day_spans, duty_spans, to_minutes
 
 CERT_WARN_DAYS = 90
 AN_MONTHLY_LIMIT = 2          # facility policy: at most 2 AN shifts per staff per month
@@ -27,27 +28,12 @@ EXTERNAL_TYPES = {"local_pt", "agency", "outsource", "casual"}
 
 
 def _mins(t: str | None) -> int | None:
-    if not t:
-        return None
-    parts = str(t).split(":")
-    return int(parts[0]) * 60 + int(parts[1])
+    return to_minutes(t)
 
 
 def _intervals(start: int, end: int) -> list[tuple[int, int]]:
     """Split a possibly cross-midnight window into same-day intervals."""
-    if end <= start:
-        return [(start, 1440), (0, end)]
-    return [(start, end)]
-
-
-def _overlaps(s_start: int | None, s_end: int | None, w_start: int, w_end: int) -> bool:
-    if s_start is None or s_end is None:
-        return False
-    for a, b in _intervals(s_start, s_end):
-        for c, d in _intervals(w_start, w_end):
-            if a < d and c < b:
-                return True
-    return False
+    return day_spans(start, end, end <= start)
 
 
 def _requirement(rule: dict, residents: int) -> tuple[int, str]:
@@ -74,7 +60,9 @@ def _evaluate_day(rules: list[dict], residents: int, shift_by: dict[str, dict],
         count = 0
         for a in assigns:
             sh = shift_by.get(a["shift_id"])
-            if not sh or not _overlaps(_mins(sh["start_time"]), _mins(sh["end_time"]), ws, we):
+            # covers_window walks each duty segment, so a split A/N shift does not
+            # count as present during its unpaid afternoon rest.
+            if not sh or not covers_window(sh, ws, we):
                 continue
             if rule.get("staff_rank") and a.get("role") != rule["staff_rank"]:
                 continue
@@ -134,7 +122,8 @@ def _minute_eval(rules: list[dict], residents: int, shift_by: dict[str, dict],
         rank = rule.get("staff_rank")
         windows = _intervals(_mins(rule["time_window_start"]), _mins(rule["time_window_end"]))
 
-        # on-duty intervals of every staff member the rule counts
+        # on-duty intervals of every staff member the rule counts — duty_spans
+        # expands a split shift into its separate windows
         duty: list[tuple[int, int]] = []
         for a in assigns:
             sh = shift_by.get(a["shift_id"])
@@ -142,10 +131,7 @@ def _minute_eval(rules: list[dict], residents: int, shift_by: dict[str, dict],
                 continue
             if rank and a.get("role") != rank:
                 continue
-            s, e = _mins(sh.get("start_time")), _mins(sh.get("end_time"))
-            if s is None or e is None:
-                continue
-            duty.extend(_intervals(s, e))
+            duty.extend(duty_spans(sh))
 
         segments, breach_minutes, window_minutes = [], 0, 0
         min_actual = None

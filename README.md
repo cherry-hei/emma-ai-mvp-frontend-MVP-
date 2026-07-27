@@ -93,6 +93,28 @@ additions worth knowing about:
   its own rows, so a staff token cannot read a colleague's roster, leave or
   attendance.
 
+## Split shifts (A/N)
+
+The Code of Practice A/N shift is **two disjoint duty windows**, not one long one —
+per the scheduling spec, Home A works 07:00–13:30 *and* 21:30–07:00 the next day
+(6.5h + 9.5h = **16h paid**); Home B works 07:00–14:30 *and* 21:15–07:15
+(**17.5h**). The unpaid rest gap between them is real.
+
+Three consumers need three different answers, so all shift-time maths lives in one
+place — [`emma_core/shifttime.py`](emma-ai-app/emma_core/shifttime.py):
+
+| Question | Function | A/N answer |
+|---|---|---|
+| How many hours is this worth? | `paid_minutes()` | 16h — the sum of the segments |
+| When is this person unavailable? | `envelope()` | 07:00 → 07:00 next day (24h), for rest + overlap checks |
+| When are they on the floor? | `duty_spans()` | the two windows separately, so they are *not* counted present during the afternoon gap |
+
+`shift_definitions.segments` / `shifts.segments` (jsonb) hold the duty windows;
+a row without them is an ordinary contiguous shift and behaves exactly as before.
+`paid_minutes` can override the clock where a facility pays a handover or sleep-in
+differently. Segments survive manual cell edits and solver writeback, so an A/N
+shift cannot silently revert to its elapsed span.
+
 ## Getting started
 
 ### One command (Windows) — runs both apps

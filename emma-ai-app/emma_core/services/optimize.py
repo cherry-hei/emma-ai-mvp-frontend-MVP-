@@ -24,6 +24,7 @@ from ..solver import (
     build_and_solve,
     solve_pareto,
 )
+from ..shifttime import duty_segments, envelope, paid_minutes
 from ..solver.timeutils import to_minutes
 
 _AUDIT_RANKS = {"RN", "EN", "HW"}      # slots of these ranks involve medication duty
@@ -42,8 +43,12 @@ def _min_to_time(m: int | None) -> str | None:
     return None if m is None else f"{m // 60:02d}:{m % 60:02d}:00"
 
 
-def _duration(start: int, end: int, cross: bool) -> int:
-    return (1440 - start) + end if (cross or end <= start) else end - start
+def _segments_json(segments) -> list[dict] | None:
+    """Solver segments back to the jsonb shape stored on shifts."""
+    if len(segments) <= 1:
+        return None                                # ordinary contiguous shift
+    return [{"start": _min_to_time(s)[:5], "end": _min_to_time(e)[:5]}
+            for s, e, _ in segments]
 
 
 # ── load: DB rows -> pure SolverInputs ───────────────────────────────────────
@@ -136,15 +141,17 @@ def load_inputs(client, facility_id: str, period_id: str, *, source_version_id=N
                     leave.add((a["staff_id"], d))
         if not working:
             continue
-        start = to_minutes(s.get("start_time")) or 0
-        end = to_minutes(s.get("end_time")) or 0
-        cross = bool(s.get("cross_midnight"))
+        segments = duty_segments(s)
+        span = envelope(s)
+        if not span:
+            continue
+        start, end, cross = span
         rank = s.get("required_rank")
         cal = cal_by_date.get(d)
         demand.append(DemandSlot(
             id=s["id"], date=d, day_index=(d - period_start).days, shift_type=s["shift_type"],
             start_min=start, end_min=end, cross_midnight=cross,
-            duration_min=_duration(start, end, cross),
+            duration_min=paid_minutes(s), segments=segments,
             unit_id=s.get("unit_id"), required_rank=rank,
             required_count=int(s.get("required_count") or 1),
             requires_medication=rank in _AUDIT_RANKS,
@@ -275,6 +282,9 @@ def _writeback_version(client, request, inputs, res) -> str:
             "cross_midnight": sl.cross_midnight, "unit_id": sl.unit_id,
             "required_rank": sl.required_rank, "required_count": sl.required_count,
             "is_working": True,
+            # carry the split-shift shape through, else a solver option would
+            # silently re-inflate an A/N shift back to its elapsed span
+            "segments": _segments_json(sl.segments), "paid_minutes": sl.duration_min,
         }).execute().data[0]["id"])
         slot_to_shift[sl.id] = new_id
 
