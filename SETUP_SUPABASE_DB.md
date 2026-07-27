@@ -50,7 +50,7 @@ cd E:\kuro\test\emma-ai\emma-ai-app
 
 In the Supabase dashboard, create **`emma-test`** and **`emma-prod`**, both in the
 **Singapore (`ap-southeast-1`)** region — closest to Hong Kong (Supabase has no HK
-region). Use the **same region for App Runner** so the API↔DB hop stays in-region.
+region). Use the **same region for the API** so the API↔DB hop stays in-region.
 
 For each project, **save the database password** in a secrets manager (never in
 this repo). You will also need, from each project's dashboard:

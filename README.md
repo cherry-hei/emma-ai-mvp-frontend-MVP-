@@ -227,5 +227,13 @@ no local fixtures. The staff app at `/staff-app` needs an account whose
 
 ## Deployment
 
-Containerized via [`Dockerfile`](Dockerfile); see [`AWS_DEPLOY.md`](AWS_DEPLOY.md)
-for the AWS deployment guide.
+Three pieces, deployed in this order:
+
+1. **Database** — Supabase Cloud → [`SETUP_SUPABASE_DB.md`](SETUP_SUPABASE_DB.md)
+2. **API** — AWS ECS Express Mode, containerized via [`Dockerfile`](Dockerfile),
+   auto-deployed by [`.github/workflows/deploy-api.yml`](.github/workflows/deploy-api.yml)
+   → [`SETUP_BACKEND_AWS.md`](SETUP_BACKEND_AWS.md)
+3. **UI** — AWS Amplify Hosting → [`SETUP_UI_AWS.md`](SETUP_UI_AWS.md)
+
+Push to `develop` redeploys the API; push to the Amplify-connected branch
+redeploys the UI.
