@@ -1,0 +1,163 @@
+# Deploy the Emma AI REST API (FastAPI) to AWS ECS Express Mode.
+#
+# Flow: build repo-root Dockerfile -> push image to ECR -> create/update the
+# ECS Express Gateway service. Everything is read from repository VARIABLES
+# (Settings -> Secrets and variables -> Actions -> Variables tab); no secret
+# values live in GitHub - only Secrets Manager ARNs, which are identifiers.
+#
+# Auth: OIDC AssumeRole (no long-lived AWS keys). The IAM role
+# `github-actions-emma-api` trusts this repo on branch `main` only.
+# See SETUP_BACKEND_AWS.md for the full setup guide.
+
+name: Deploy API to AWS
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "Dockerfile"
+      - "emma-ai-app/**"
+      - ".github/workflows/deploy-api.yml"
+  workflow_dispatch: {}
+
+permissions:
+  id-token: write # OIDC token for AssumeRoleWithWebIdentity
+  contents: read
+
+concurrency:
+  group: deploy-api
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Build, push and deploy
+    runs-on: ubuntu-latest
+    env:
+      AWS_REGION: ${{ vars.AWS_REGION }}
+      AWS_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
+      ECR_REPOSITORY: ${{ vars.ECR_REPOSITORY }}
+      ECS_SERVICE: ${{ vars.ECS_SERVICE }}
+      ECS_CLUSTER: ${{ vars.ECS_CLUSTER }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ vars.AWS_ACCOUNT_ID }}:role/github-actions-emma-api
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: ecr-login
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build and push image
+        id: build
+        env:
+          REGISTRY: ${{ steps.ecr-login.outputs.registry }}
+        run: |
+          IMAGE_URI="$REGISTRY/$ECR_REPOSITORY:${GITHUB_SHA::12}"
+          docker build -t "$IMAGE_URI" .
+          docker push "$IMAGE_URI"
+          # Also move the :latest tag for convenience.
+          docker tag "$IMAGE_URI" "$REGISTRY/$ECR_REPOSITORY:latest"
+          docker push "$REGISTRY/$ECR_REPOSITORY:latest"
+          echo "image_uri=$IMAGE_URI" >> "$GITHUB_OUTPUT"
+
+      - name: Create or update ECS Express Gateway service
+        env:
+          IMAGE_URI: ${{ steps.build.outputs.image_uri }}
+          APP_ENV: ${{ vars.APP_ENV }}
+          SUPABASE_URL: ${{ vars.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ vars.SUPABASE_ANON_KEY }}
+          CORS_ORIGINS: ${{ vars.CORS_ORIGINS }}
+          SECRET_ARN_SERVICE_ROLE_KEY: ${{ vars.SECRET_ARN_SERVICE_ROLE_KEY }}
+          SECRET_ARN_DATABASE_URL: ${{ vars.SECRET_ARN_DATABASE_URL }}
+        run: |
+          set -euo pipefail
+
+          EXEC_ROLE_ARN="arn:aws:iam::${AWS_ACCOUNT_ID}:role/ecsTaskExecutionRole"
+          INFRA_ROLE_ARN="arn:aws:iam::${AWS_ACCOUNT_ID}:role/ecsInfrastructureRoleForExpressServices"
+          SERVICE_ARN="arn:aws:ecs:${AWS_REGION}:${AWS_ACCOUNT_ID}:service/${ECS_CLUSTER}/${ECS_SERVICE}"
+
+          # The COMPLETE set of env vars and secrets. Never remove an entry to
+          # "keep the old value" - anything absent is dropped from the new task
+          # definition (see SETUP_BACKEND_AWS.md -> Changing configuration later).
+          ENVIRONMENT=$(cat <<EOF
+          [
+            {"name": "APP_ENV", "value": "${APP_ENV}"},
+            {"name": "SUPABASE_URL", "value": "${SUPABASE_URL}"},
+            {"name": "SUPABASE_ANON_KEY", "value": "${SUPABASE_ANON_KEY}"},
+            {"name": "CORS_ORIGINS", "value": "${CORS_ORIGINS}"},
+            {"name": "PORT", "value": "8080"}
+          ]
+          EOF
+          )
+          SECRETS=$(cat <<EOF
+          [
+            {"name": "SUPABASE_SERVICE_ROLE_KEY", "valueFrom": "${SECRET_ARN_SERVICE_ROLE_KEY}"},
+            {"name": "DATABASE_URL", "valueFrom": "${SECRET_ARN_DATABASE_URL}"}
+          ]
+          EOF
+          )
+
+          if aws ecs describe-express-gateway-service \
+               --service-arn "$SERVICE_ARN" --region "$AWS_REGION" \
+               >/dev/null 2>&1; then
+            echo "Service exists - updating..."
+            aws ecs update-express-gateway-service \
+              --service-arn "$SERVICE_ARN" \
+              --region "$AWS_REGION" \
+              --primary-container "{
+                \"image\": \"${IMAGE_URI}\",
+                \"containerPort\": 8080,
+                \"environment\": ${ENVIRONMENT},
+                \"secrets\": ${SECRETS}
+              }" \
+              --execution-role-arn "$EXEC_ROLE_ARN" \
+              --health-check-path /health \
+              --scaling-target '{"minTaskCount": 1, "maxTaskCount": 1}'
+          else
+            echo "Service not found - creating..."
+            aws ecs create-express-gateway-service \
+              --service-name "$ECS_SERVICE" \
+              --cluster "$ECS_CLUSTER" \
+              --region "$AWS_REGION" \
+              --primary-container "{
+                \"image\": \"${IMAGE_URI}\",
+                \"containerPort\": 8080,
+                \"environment\": ${ENVIRONMENT},
+                \"secrets\": ${SECRETS}
+              }" \
+              --execution-role-arn "$EXEC_ROLE_ARN" \
+              --infrastructure-role-arn "$INFRA_ROLE_ARN" \
+              --health-check-path /health \
+              --scaling-target '{"minTaskCount": 1, "maxTaskCount": 1}'
+          fi
+
+      - name: Wait for deployment and print service URL
+        run: |
+          set -euo pipefail
+          SERVICE_ARN="arn:aws:ecs:${AWS_REGION}:${AWS_ACCOUNT_ID}:service/${ECS_CLUSTER}/${ECS_SERVICE}"
+
+          echo "Waiting for the service to stabilise (first run can take ~8-12 min)..."
+          for i in $(seq 1 60); do
+            STATUS=$(aws ecs describe-express-gateway-service \
+              --service-arn "$SERVICE_ARN" --region "$AWS_REGION" \
+              --query 'service.status' --output text 2>/dev/null || echo "PENDING")
+            echo "[$i/60] status: $STATUS"
+            if [ "$STATUS" = "ACTIVE" ]; then
+              break
+            fi
+            sleep 20
+          done
+
+          URL=$(aws ecs describe-express-gateway-service \
+            --service-arn "$SERVICE_ARN" --region "$AWS_REGION" \
+            --query 'service.ingressPaths[0].endpoint' --output text 2>/dev/null || true)
+          echo "=================================================="
+          echo "Service endpoint: $URL"
+          echo "Health check:     curl <endpoint>/health"
+          echo "=================================================="
