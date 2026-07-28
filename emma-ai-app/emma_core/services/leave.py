@@ -60,6 +60,17 @@ def list_requests(client, facility_id: str, *, group: str | None = None,
                   unit_id: str | None = None, date_from: Date | None = None,
                   date_to: Date | None = None, staff_id: str | None = None) -> list[dict]:
     """`group` is the Approval page's main tab: 'pending' (open) or 'approved' (decided)."""
+    # SQL: select * from leave_requests
+    #      where facility_id = :facility_id
+    #        [and status = any('{pending,reviewed}')]    -- group = 'pending'
+    #        [and status = any('{approved,rejected}')]   -- group = 'approved'
+    #        [and category = :category]                  -- when category is given
+    #        [and staff_id = :staff_id]                  -- when staff_id is given
+    #        [and date_end   >= :date_from]              -- overlap, not containment
+    #        [and date_start <= :date_to]
+    #      order by created_at desc
+    # `search` and `unit_id` are NOT pushed down — both need the staff row, so they
+    # are applied in the Python loop below against staff_by_id().
     q = client.table("leave_requests").select("*").eq("facility_id", facility_id)
     if group == "pending":
         q = q.in_("status", list(PENDING_STATES))
@@ -97,6 +108,13 @@ def create_request(client, facility_id: str, *, staff_id: str, leave_type: str,
     if date_end < date_start:
         raise ValueError("date_end is before date_start")
     category = category_for(leave_type)
+    # SQL: insert into leave_requests
+    #        (facility_id, staff_id, category, leave_type, date_start, date_end,
+    #         requested_shift_type, reason, remark, document_url, status)
+    #      values (:facility_id, :staff_id, :category, :leave_type, :date_start,
+    #              :date_end, :requested_shift_type, :reason, :remark,
+    #              :document_url, 'pending')
+    #      returning *
     row = client.table("leave_requests").insert({
         "facility_id": facility_id, "staff_id": staff_id, "category": category,
         "leave_type": leave_type, "date_start": str(date_start), "date_end": str(date_end),
@@ -117,6 +135,8 @@ def decide(client, facility_id: str, request_id: str, *, decision: str,
            profile_id: str | None, note: str | None = None) -> dict:
     """decision: 'approve' | 'reject' | 'review'. 'review' only flags the request as
     read by the superintendent; it stays in the pending queue."""
+    # SQL: select * from leave_requests
+    #      where facility_id = :facility_id and id = :request_id
     rows = (client.table("leave_requests").select("*")
             .eq("facility_id", facility_id).eq("id", request_id).execute().data)
     if not rows:
@@ -134,6 +154,12 @@ def decide(client, facility_id: str, request_id: str, *, decision: str,
     else:
         raise ValueError(f"unknown decision {decision!r}")
 
+    # SQL: update leave_requests
+    #      set <the keys of `patch` above>   -- 'review': status, reviewed_at
+    #                                        -- approve/reject: status, reviewed_at,
+    #                                        --   decided_by, decided_at, decision_note
+    #      where facility_id = :facility_id and id = :request_id
+    #      returning *
     row = (client.table("leave_requests").update(patch)
            .eq("facility_id", facility_id).eq("id", request_id).execute().data[0])
 
@@ -152,6 +178,12 @@ def decide(client, facility_id: str, request_id: str, *, decision: str,
 def stats(client, facility_id: str, on: Date | None = None) -> dict:
     """Approval Centre header numbers for the calendar month containing `on`."""
     start, end = month_bounds(on)
+    # SQL: select status, decided_at, created_at from leave_requests
+    #      where facility_id = :facility_id
+    #        and created_at >= :month_start::date
+    #        and created_at <= (:month_end::date + time '23:59:59')
+    # The four counters are tallied in Python rather than as
+    # `count(*) filter (where status = ...)`, so one fetch serves all of them.
     rows = (client.table("leave_requests").select("status,decided_at,created_at")
             .eq("facility_id", facility_id)
             .gte("created_at", f"{start}T00:00:00Z").lte("created_at", f"{end}T23:59:59Z")
@@ -172,6 +204,12 @@ def stats(client, facility_id: str, on: Date | None = None) -> dict:
 def approved_leave_dates(client, facility_id: str, start: Date, end: Date) -> set[tuple[str, str]]:
     """{(staff_id, 'YYYY-MM-DD')} for approved leave overlapping [start, end] — the
     availability filter used by roster edits and replacement suggestions."""
+    # SQL: select staff_id, date_start, date_end from leave_requests
+    #      where facility_id = :facility_id
+    #        and status = 'approved'
+    #        and date_start <= :end and date_end >= :start   -- range overlap
+    # The per-day expansion into (staff_id, date) pairs happens in Python below;
+    # in SQL it would be a `generate_series(date_start, date_end, '1 day')` join.
     rows = (client.table("leave_requests").select("staff_id,date_start,date_end")
             .eq("facility_id", facility_id).eq("status", "approved")
             .lte("date_start", str(end)).gte("date_end", str(start)).execute().data)

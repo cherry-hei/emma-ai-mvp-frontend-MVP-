@@ -532,8 +532,12 @@ def test_seeded_an_shift_is_sixteen_hours(token):
 
     from emma_core.db import get_service_client
     sb = get_service_client()
+    # SQL: select id from facilities where code = 'A'
     facility = sb.table("facilities").select("id").eq("code", "A").execute().data[0]["id"]
 
+    # SQL: select * from shifts
+    #      where facility_id = :facility and shift_type = 'AN'
+    #      limit 1
     an = (sb.table("shifts").select("*")
           .eq("facility_id", facility).eq("shift_type", "AN").limit(1).execute().data)
     assert an, "the seeded roster should contain A/N shifts"

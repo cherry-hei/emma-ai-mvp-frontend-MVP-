@@ -22,11 +22,14 @@ def _context(client, facility_id: str, period_id: str | None):
 
 
 def _roster_rows(client, version_id: str) -> tuple[dict[str, dict], list[dict]]:
+    # SQL: select * from shifts where roster_version_id = :version_id
     shifts = (client.table("shifts").select("*")
               .eq("roster_version_id", version_id).execute().data)
     if not shifts:
         return {}, []
     by_id = {s["id"]: s for s in shifts}
+    # SQL: select * from shift_assignments where shift_id = any(:shift_ids)
+    # (the cancelled / unassigned filter runs in the comprehension, not the query)
     assigns = [a for a in (client.table("shift_assignments").select("*")
                            .in_("shift_id", list(by_id)).execute().data)
                if a.get("status") != "cancelled" and a.get("staff_id")]
@@ -52,6 +55,9 @@ def conflict_rate(client, facility_id: str, period_id: str | None = None) -> dic
         return {"period_id": None, "assignments": 0, "hard_violations": 0,
                 "conflict_rate_pct": 0.0, "by_rule": []}
     _, assigns = _roster_rows(client, version["id"])
+    # SQL: select rule_code, severity, resolved from violation_log
+    #      where facility_id = :facility_id and roster_version_id = :version_id
+    # (the hard/unresolved filter and per-rule tally are done in Python below)
     violations = (client.table("violation_log").select("rule_code,severity,resolved")
                   .eq("facility_id", facility_id)
                   .eq("roster_version_id", version["id"]).execute().data)
@@ -75,6 +81,10 @@ def shift_fairness(client, facility_id: str, period_id: str | None = None) -> di
         return {"period_id": None, "eligible_staff": 0, "by_shift_type": []}
 
     by_id, assigns = _roster_rows(client, version["id"])
+    # SQL: select id, rank, employment_type, status, created_at from staff
+    #      where facility_id = :facility_id and status = 'active'
+    # (the "on the books before the period opened, not external" eligibility test is
+    #  applied in Python below)
     staff_rows = (client.table("staff").select("id,rank,employment_type,status,created_at")
                   .eq("facility_id", facility_id).eq("status", "active").execute().data)
     period_start = as_date(period["period_start"])
@@ -131,6 +141,9 @@ def ai_acceptance(client, facility_id: str, period_id: str | None = None) -> dic
         return {"period_id": None, "ai_assignments": 0, "overrides": 0,
                 "acceptance_rate_pct": None, "override_rate_pct": 0.0}
 
+    # SQL: select id, version_type, created_at from roster_versions
+    #      where facility_id = :facility_id and period_id = :period_id
+    # (all version types come back; the A/B/C split happens in Python below)
     versions = (client.table("roster_versions").select("id,version_type,created_at")
                 .eq("facility_id", facility_id).eq("period_id", period["id"])
                 .execute().data)
@@ -140,6 +153,9 @@ def ai_acceptance(client, facility_id: str, period_id: str | None = None) -> dic
 
     overrides = 0
     if version_ids:
+        # SQL: select count(*) from manual_override_log
+        #      where facility_id = :facility_id
+        #        and roster_version_id = any(:version_ids)
         overrides = (client.table("manual_override_log").select("id", count="exact")
                      .eq("facility_id", facility_id)
                      .in_("roster_version_id", version_ids).execute().count or 0)
@@ -181,6 +197,7 @@ def external_workforce(client, facility_id: str, period_id: str | None = None) -
                 "by_role": []}
 
     by_id, assigns = _roster_rows(client, version["id"]) if version else ({}, [])
+    # SQL: select id, rank, employment_type from staff where facility_id = :facility_id
     staff = {s["id"]: s for s in (
         client.table("staff").select("id,rank,employment_type")
         .eq("facility_id", facility_id).execute().data)}
@@ -200,6 +217,9 @@ def external_workforce(client, facility_id: str, period_id: str | None = None) -
             external += 1
             slot["external"] += 1
 
+    # SQL: select cost, date, role from agency_assignments
+    #      where facility_id = :facility_id
+    #        and date >= :period_start and date <= :period_end
     agency_rows = (client.table("agency_assignments").select("cost,date,role")
                    .eq("facility_id", facility_id)
                    .gte("date", str(period["period_start"]))

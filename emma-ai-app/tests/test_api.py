@@ -208,6 +208,7 @@ def test_optimize_sync_path(token):
     # tidy the audit job row (run_optimization records one even with persist=False)
     try:
         from emma_core.db import get_service_client
+        # SQL: delete from optimization_jobs where id = :job_id
         get_service_client().table("optimization_jobs").delete().eq("id", data["job_id"]).execute()
     except Exception:  # noqa: BLE001 — cleanup best-effort
         pass
@@ -219,9 +220,11 @@ def test_optimize_rejects_cross_facility_source_version(token):
     Home B's demand into a Home A option)."""
     from emma_core.db import get_service_client
     sb = get_service_client()
+    # SQL: select id from facilities where code = 'B'
     fac_b = sb.table("facilities").select("id").eq("code", "B").execute().data
     if not fac_b:
         pytest.skip("no Home B facility seeded")
+    # SQL: select id from roster_versions where facility_id = :fac_b limit 1
     ver_b = (sb.table("roster_versions").select("id")
              .eq("facility_id", fac_b[0]["id"]).limit(1).execute().data)
     if not ver_b:

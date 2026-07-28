@@ -56,9 +56,17 @@ def _source_version(client, facility_id, period_id, source_version_id):
     if source_version_id:
         # facility_id filter matters: with the RLS-bypassing service-role client, a
         # source_version_id from another facility would otherwise leak its roster.
+        # SQL: select * from roster_versions
+        #      where id = :source_version_id and facility_id = :facility_id
         rows = (client.table("roster_versions").select("*")
                 .eq("id", source_version_id).eq("facility_id", facility_id).execute().data)
         return rows[0] if rows else None
+    # SQL: select * from roster_versions
+    #      where facility_id = :facility_id
+    #        and period_id = :period_id
+    #        and version_type = 'manual'
+    #      order by created_at desc
+    #      limit 1
     rows = (client.table("roster_versions").select("*")
             .eq("facility_id", facility_id).eq("period_id", period_id)
             .eq("version_type", "manual").order("created_at", desc=True).limit(1).execute().data)
@@ -68,6 +76,8 @@ def _source_version(client, facility_id, period_id, source_version_id):
 def load_inputs(client, facility_id: str, period_id: str, *, source_version_id=None,
                 include_staff_ids=None, exclude_staff_ids=None,
                 locked_assignments=None) -> SolverInputs:
+    # SQL: select * from roster_periods
+    #      where id = :period_id and facility_id = :facility_id
     periods = (client.table("roster_periods").select("*")
                .eq("id", period_id).eq("facility_id", facility_id).execute().data)
     if not periods:
@@ -80,23 +90,39 @@ def load_inputs(client, facility_id: str, period_id: str, *, source_version_id=N
     if not src:
         raise ValueError("no source 'manual' roster version to derive demand from")
 
+    # Seven flat reads that together become SolverInputs. They are deliberately
+    # unjoined: the solver wants whole tables in memory, not a denormalised row set.
+    #
+    # SQL: select * from shifts where roster_version_id = :source_version_id
     shifts = client.table("shifts").select("*").eq("roster_version_id", src["id"]).execute().data
     shift_ids = [s["id"] for s in shifts]
     assigns = []
     if shift_ids:
+        # SQL: select * from shift_assignments where shift_id = any(:shift_ids)
         assigns = (client.table("shift_assignments").select("*")
                    .in_("shift_id", shift_ids).execute().data)
 
+    # SQL: select * from staff where facility_id = :facility_id and status = 'active'
     staff_rows = (client.table("staff").select("*")
                   .eq("facility_id", facility_id).eq("status", "active").execute().data)
+    # SQL: select * from staff_contracts where facility_id = :facility_id
     contracts = client.table("staff_contracts").select("*").eq("facility_id", facility_id).execute().data
     contract_by_staff = {c["staff_id"]: c for c in contracts}
+    # SQL: select * from staffing_ratio_rules
+    #      where (facility_id = :facility_id or facility_id is null)   -- null = statutory
+    #        and active = true
     rules = (client.table("staffing_ratio_rules").select("*")
              .or_(f"facility_id.eq.{facility_id},facility_id.is.null")
              .eq("active", True).execute().data)
+    # SQL: select * from daily_resident_counts
+    #      where facility_id = :facility_id
+    #        and date >= :period_start and date <= :period_end
     counts = (client.table("daily_resident_counts").select("*")
               .eq("facility_id", facility_id)
               .gte("date", str(period_start)).lte("date", str(period_end)).execute().data)
+    # SQL: select * from calendar_days
+    #      where (facility_id = :facility_id or facility_id is null)
+    # (unbounded by date — the whole calendar is pulled, then indexed by date below)
     calendar = (client.table("calendar_days").select("*")
                 .or_(f"facility_id.eq.{facility_id},facility_id.is.null").execute().data)
     cal_by_date = {_as_date(c["date"]): c for c in calendar}
@@ -259,6 +285,11 @@ def _to_option(res, version_id) -> RosterOption:
 
 
 def _archive_previous(client, facility_id, period_id) -> None:
+    # SQL: update roster_versions set status = 'archived'
+    #      where facility_id = :facility_id and period_id = :period_id
+    #        and version_type = any('{A,B,C}')
+    #        and status = 'draft'
+    #      returning *
     (client.table("roster_versions").update({"status": RosterStatus.ARCHIVED})
      .eq("facility_id", facility_id).eq("period_id", period_id)
      .in_("version_type", [PlanMode.A, PlanMode.B, PlanMode.C])
@@ -266,6 +297,10 @@ def _archive_previous(client, facility_id, period_id) -> None:
 
 
 def _writeback_version(client, request, inputs, res) -> str:
+    # SQL: insert into roster_versions
+    #        (facility_id, period_id, version_type, label, status, created_by)
+    #      values (:facility_id, :period_id, :plan_mode, :label, 'draft', :created_by)
+    #      returning id
     version_id = (client.table("roster_versions").insert({
         "facility_id": request.facility_id, "period_id": request.period_id,
         "version_type": str(res.plan_mode), "label": f"{res.label} · auto",
@@ -273,6 +308,17 @@ def _writeback_version(client, request, inputs, res) -> str:
     }).execute().data[0]["id"])
 
     # one fresh shift per demand slot; keep source-slot -> new-shift id map
+    #
+    # SQL (once per demand slot — an N-statement loop, not a single multi-row insert,
+    #      because each returned shift id has to be mapped back to its solver slot):
+    #      insert into shifts
+    #        (facility_id, roster_version_id, date, shift_type, start_time, end_time,
+    #         cross_midnight, unit_id, required_rank, required_count, is_working,
+    #         segments, paid_minutes)
+    #      values (:facility_id, :version_id, :date, :shift_type, :start_time,
+    #              :end_time, :cross_midnight, :unit_id, :required_rank,
+    #              :required_count, true, :segments::jsonb, :paid_minutes)
+    #      returning id
     slot_to_shift: dict[str, str] = {}
     for sl in inputs.demand:
         new_id = (client.table("shifts").insert({
@@ -293,8 +339,20 @@ def _writeback_version(client, request, inputs, res) -> str:
         "staff_id": a.staff_id, "role": a.role, "status": "assigned", "is_agency": a.is_agency,
     } for a in res.assignments if a.slot_id in slot_to_shift]
     if rows:
+        # SQL: insert into shift_assignments
+        #        (facility_id, shift_id, staff_id, role, status, is_agency)
+        #      values (...), (...), ...      -- one tuple per solver assignment
+        #      returning *
         client.table("shift_assignments").insert(rows).execute()
 
+    # SQL: insert into roster_option_scores
+    #        (facility_id, roster_version_id, plan_mode, constraint_score,
+    #         hard_violation_count, soft_penalty_total, objective_weights_json,
+    #         infeasible_reasons_json)
+    #      values (:facility_id, :version_id, :plan_mode, :constraint_score,
+    #              :hard_violation_count, :soft_penalty_total,
+    #              :weights::jsonb, :infeasible_reasons::jsonb)
+    #      returning *
     client.table("roster_option_scores").insert({
         "facility_id": request.facility_id, "roster_version_id": version_id,
         "plan_mode": str(res.plan_mode), "constraint_score": res.constraint_score,
@@ -311,6 +369,11 @@ def _writeback_version(client, request, inputs, res) -> str:
         "severity": v.severity, "message": v.message, "resolved": False,
     } for v in res.violations]
     if vrows:
+        # SQL: insert into violation_log
+        #        (facility_id, roster_version_id, rule_code, shift_id, severity,
+        #         message, resolved)
+        #      values (...), (...), ...      -- one tuple per solver violation
+        #      returning *
         client.table("violation_log").insert(vrows).execute()
 
     return version_id
@@ -321,6 +384,12 @@ def enqueue_optimization(client, request: OptimizeRequest) -> str:
     """Insert a PENDING job and return its id immediately; the HTTP layer runs
     ``run_optimization(..., job_id=job_id)`` in the background so the request doesn't
     block on the CP-SAT solves."""
+    # SQL: insert into optimization_jobs
+    #        (facility_id, period_id, rule_profile_id, status, plan_mode,
+    #         solver_limits_json, input_payload_json)
+    #      values (:facility_id, :period_id, :rule_profile_id, 'pending', :plan_mode,
+    #              :solver_limits::jsonb, :input_payload::jsonb)
+    #      returning id
     return (client.table("optimization_jobs").insert({
         "facility_id": request.facility_id, "period_id": request.period_id,
         "rule_profile_id": request.rule_profile_id, "status": JobStatus.PENDING,
@@ -331,6 +400,12 @@ def enqueue_optimization(client, request: OptimizeRequest) -> str:
 
 
 def _create_job(client, request: OptimizeRequest) -> str:
+    # SQL: insert into optimization_jobs
+    #        (facility_id, period_id, rule_profile_id, status, plan_mode,
+    #         solver_limits_json, input_payload_json, started_at)
+    #      values (:facility_id, :period_id, :rule_profile_id, 'running', :plan_mode,
+    #              :solver_limits::jsonb, :input_payload::jsonb, now())
+    #      returning id
     return (client.table("optimization_jobs").insert({
         "facility_id": request.facility_id, "period_id": request.period_id,
         "rule_profile_id": request.rule_profile_id, "status": JobStatus.RUNNING,
@@ -342,6 +417,9 @@ def _create_job(client, request: OptimizeRequest) -> str:
 
 
 def _start_job(client, job_id: str) -> None:
+    # SQL: update optimization_jobs set status = 'running', started_at = now()
+    #      where id = :job_id
+    #      returning *
     (client.table("optimization_jobs").update({
         "status": JobStatus.RUNNING, "started_at": _now(),
     }).eq("id", job_id).execute())
@@ -351,6 +429,10 @@ def _complete_job(client, job_id: str, options, *, meta: dict | None = None) -> 
     result = {"roster_options": [o.model_dump(mode="json") for o in options]}
     if meta:
         result["pareto"] = meta
+    # SQL: update optimization_jobs
+    #      set status = 'completed', result_json = :result::jsonb, completed_at = now()
+    #      where id = :job_id
+    #      returning *
     (client.table("optimization_jobs").update({
         "status": JobStatus.COMPLETED, "result_json": result, "completed_at": _now(),
     }).eq("id", job_id).execute())
@@ -358,6 +440,10 @@ def _complete_job(client, job_id: str, options, *, meta: dict | None = None) -> 
 
 def _fail_job(client, job_id: str, exc: Exception) -> None:
     try:
+        # SQL: update optimization_jobs
+        #      set status = 'failed', error_json = :error::jsonb, completed_at = now()
+        #      where id = :job_id
+        #      returning *
         (client.table("optimization_jobs").update({
             "status": JobStatus.FAILED,
             "error_json": {"type": type(exc).__name__, "message": str(exc)},
@@ -368,6 +454,7 @@ def _fail_job(client, job_id: str, exc: Exception) -> None:
 
 
 def get_job(client, job_id: str) -> dict | None:
+    # SQL: select * from optimization_jobs where id = :job_id
     rows = client.table("optimization_jobs").select("*").eq("id", job_id).execute().data
     return rows[0] if rows else None
 
@@ -375,11 +462,17 @@ def get_job(client, job_id: str) -> dict | None:
 # ── option-score reads (compare / publish-guard UI) ──────────────────────────
 def get_option_scores(client, roster_version_id: str) -> dict | None:
     """Score row + hard-violation detail for one roster version."""
+    # SQL: select * from roster_option_scores
+    #      where roster_version_id = :roster_version_id
+    #      limit 1
     rows = (client.table("roster_option_scores").select("*")
             .eq("roster_version_id", roster_version_id).limit(1).execute().data)
     if not rows:
         return None
     score = rows[0]
+    # SQL: select * from violation_log
+    #      where roster_version_id = :roster_version_id
+    #      order by created_at
     score["violations"] = (client.table("violation_log").select("*")
                            .eq("roster_version_id", roster_version_id)
                            .order("created_at").execute().data)
@@ -388,6 +481,9 @@ def get_option_scores(client, roster_version_id: str) -> dict | None:
 
 def list_period_option_scores(client, period_id: str) -> list[dict]:
     """All A/B/C option scores for a period, for the side-by-side compare table."""
+    # SQL: select id, version_type, label, status from roster_versions
+    #      where period_id = :period_id
+    #        and version_type = any('{A,B,C}')
     versions = (client.table("roster_versions").select("id,version_type,label,status")
                 .eq("period_id", period_id)
                 .in_("version_type", [PlanMode.A, PlanMode.B, PlanMode.C])
@@ -395,6 +491,9 @@ def list_period_option_scores(client, period_id: str) -> list[dict]:
     by_version = {v["id"]: v for v in versions}
     if not by_version:
         return []
+    # SQL: select * from roster_option_scores
+    #      where roster_version_id = any(:version_ids)
+    # (the label/status columns are grafted on in Python rather than joined)
     scores = (client.table("roster_option_scores").select("*")
               .in_("roster_version_id", list(by_version)).execute().data)
     for s in scores:

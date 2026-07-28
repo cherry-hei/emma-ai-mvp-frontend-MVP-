@@ -25,6 +25,10 @@ def resolve_staff_id(profile) -> str:
 
 
 def _staff_row(client, facility_id: str, staff_id: str) -> dict:
+    # SQL: select s.*, jsonb_build_object('name', u.name) as unit
+    #      from staff s
+    #      left join facility_units u on u.id = s.primary_unit_id
+    #      where s.facility_id = :facility_id and s.id = :staff_id
     rows = (client.table("staff").select("*, unit:facility_units(name)")
             .eq("facility_id", facility_id).eq("id", staff_id).execute().data)
     if not rows:
@@ -41,12 +45,17 @@ def _my_shifts(client, facility_id: str, staff_id: str,
     version = operative_version(client, facility_id, period["id"])
     if not version:
         return []
+    # SQL: select * from shifts
+    #      where roster_version_id = :version_id
+    #        and date >= :start and date <= :end
     shifts = (client.table("shifts").select("*")
               .eq("roster_version_id", version["id"])
               .gte("date", str(start)).lte("date", str(end)).execute().data)
     if not shifts:
         return []
     by_id = {s["id"]: s for s in shifts}
+    # SQL: select * from shift_assignments
+    #      where shift_id = any(:shift_ids) and staff_id = :staff_id
     assigns = (client.table("shift_assignments").select("*")
                .in_("shift_id", list(by_id)).eq("staff_id", staff_id).execute().data)
 
@@ -83,6 +92,7 @@ def my_roster(client, facility_id: str, staff_id: str, *, days: int = 7,
     end = start + timedelta(days=days - 1)
     cells = _my_shifts(client, facility_id, staff_id, start, end)
     by_date = {c["date"]: c for c in cells}
+    # SQL: select id, name from facility_units where facility_id = :facility_id
     unit_names = {u["id"]: u["name"] for u in (
         client.table("facility_units").select("id,name")
         .eq("facility_id", facility_id).execute().data)}
@@ -120,6 +130,10 @@ def hours_progress(client, facility_id: str, staff_id: str) -> dict:
     minutes = sum(c["minutes"] for c in cells)
 
     st = _staff_row(client, facility_id, staff_id)
+    # SQL: select * from staff_contracts
+    #      where facility_id = :facility_id and staff_id = :staff_id
+    #      order by effective_from desc
+    #      limit 1
     contracts = (client.table("staff_contracts").select("*")
                  .eq("facility_id", facility_id).eq("staff_id", staff_id)
                  .order("effective_from", desc=True).limit(1).execute().data)
@@ -158,6 +172,11 @@ def summary(client, facility_id: str, staff_id: str) -> dict:
                     "worst_label": worst.label,
                 }
 
+    # SQL: select count(*) from notifications
+    #      where facility_id = :facility_id and staff_id = :staff_id
+    #        and status <> 'read'
+    # (count="exact" makes PostgREST return the count in the Content-Range header;
+    #  the selected `id` rows themselves are discarded — only .count is read.)
     unread = (client.table("notifications").select("id", count="exact")
               .eq("facility_id", facility_id).eq("staff_id", staff_id)
               .neq("status", "read").execute())
@@ -182,6 +201,9 @@ def summary(client, facility_id: str, staff_id: str) -> dict:
 
 def profile(client, facility_id: str, staff_id: str) -> dict:
     st = _staff_row(client, facility_id, staff_id)
+    # SQL: select cert_type, expiry_date from staff_certificates
+    #      where facility_id = :facility_id and staff_id = :staff_id
+    #      order by expiry_date
     certs = (client.table("staff_certificates").select("cert_type,expiry_date")
              .eq("facility_id", facility_id).eq("staff_id", staff_id)
              .order("expiry_date").execute().data)
@@ -216,12 +238,19 @@ def colleagues_on(client, facility_id: str, on: Date) -> list[dict]:
     version = operative_version(client, facility_id, period["id"])
     if not version:
         return []
+    # SQL: select * from shifts
+    #      where roster_version_id = :version_id
+    #        and date = :on
+    #        and is_working = true
     shifts = (client.table("shifts").select("*")
               .eq("roster_version_id", version["id"]).eq("date", str(on))
               .eq("is_working", True).execute().data)
     if not shifts:
         return []
     by_id = {s["id"]: s for s in shifts}
+    # SQL: select shift_id, staff_id, status from shift_assignments
+    #      where shift_id = any(:shift_ids)
+    # (cancelled rows are dropped in the Python loop, not by the query)
     assigns = (client.table("shift_assignments").select("shift_id,staff_id,status")
                .in_("shift_id", list(by_id)).execute().data)
     staff = staff_by_id(client, facility_id)

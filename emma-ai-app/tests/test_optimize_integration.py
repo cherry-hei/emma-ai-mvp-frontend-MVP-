@@ -28,6 +28,7 @@ try:
     from emma_core.db import get_service_client
 
     _sb = get_service_client()
+    # SQL: select id from facilities limit 1   -- reachability probe, result unused
     _sb.table("facilities").select("id").limit(1).execute()
 except Exception:  # noqa: BLE001 — no DB to integrate against
     _sb = None
@@ -36,7 +37,12 @@ pytestmark = pytest.mark.skipif(_sb is None, reason="local Supabase not reachabl
 
 
 def _home_a_manual():
+    # SQL: select id from facilities where code = 'A'
     fid = _sb.table("facilities").select("id").eq("code", "A").execute().data[0]["id"]
+    # SQL: select * from roster_versions
+    #      where facility_id = :fid and version_type = 'manual'
+    #      order by created_at desc
+    #      limit 1
     mv = (_sb.table("roster_versions").select("*")
           .eq("facility_id", fid).eq("version_type", "manual")
           .order("created_at", desc=True).limit(1).execute().data)
@@ -49,7 +55,10 @@ def _cleanup(resp) -> None:
     violation_log (all ON DELETE CASCADE); the job row is deleted separately."""
     for o in resp.roster_options:
         if o.roster_version_id:
+            # SQL: delete from roster_versions where id = :roster_version_id
+            # (shifts / assignments / scores cascade off the version)
             _sb.table("roster_versions").delete().eq("id", o.roster_version_id).execute()
+    # SQL: delete from optimization_jobs where id = :job_id
     _sb.table("optimization_jobs").delete().eq("id", resp.job_id).execute()
 
 
@@ -57,6 +66,7 @@ def test_phase2_tables_exist():
     """The solver migration must be applied. A missing table raises PostgREST's
     APIError here — catching the 'migration authored but never applied' gap."""
     for t in PHASE2_TABLES:
+        # SQL: select * from <t> limit 1   -- existence probe; a missing table errors
         _sb.table(t).select("*").limit(1).execute()
 
 
@@ -75,6 +85,8 @@ def test_run_optimization_persists_against_real_db():
 
         version_ids = [o.roster_version_id for o in resp.roster_options if o.roster_version_id]
         assert version_ids, "at least one option should persist a roster version"
+        # SQL: select id from roster_option_scores
+        #      where roster_version_id = any(:version_ids)
         scores = (_sb.table("roster_option_scores").select("id")
                   .in_("roster_version_id", version_ids).execute().data)
         assert len(scores) == len(version_ids)

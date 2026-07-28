@@ -20,6 +20,9 @@ def _iso(v) -> str:
 
 def _current_period(client, facility_id: str) -> dict | None:
     """The period covering today, else the most recent by start date."""
+    # SQL: select * from roster_periods
+    #      where facility_id = :facility_id
+    #      order by period_start desc
     periods = (client.table("roster_periods").select("*")
                .eq("facility_id", facility_id)
                .order("period_start", desc=True).execute().data)
@@ -33,6 +36,12 @@ def _current_period(client, facility_id: str) -> dict | None:
 
 
 def _manual_version(client, facility_id: str, period_id: str) -> dict | None:
+    # SQL: select * from roster_versions
+    #      where facility_id = :facility_id
+    #        and version_type = 'manual'
+    #        and period_id = :period_id
+    #      order by created_at desc
+    #      limit 1
     rows = (client.table("roster_versions").select("*")
             .eq("facility_id", facility_id).eq("version_type", "manual")
             .eq("period_id", period_id)
@@ -55,11 +64,14 @@ def _roster_stats(client, facility_id: str) -> dict:
     if not ver:
         return stats
     stats["version_id"] = ver["id"]
+    # SQL: select * from shifts where roster_version_id = :version_id
     shifts = (client.table("shifts").select("*")
               .eq("roster_version_id", ver["id"]).execute().data)
     shift_by = {s["id"]: s for s in shifts}
     assigns = []
     if shift_by:
+        # SQL: select shift_id, staff_id from shift_assignments
+        #      where shift_id = any(:shift_ids)
         assigns = (client.table("shift_assignments").select("shift_id,staff_id")
                    .in_("shift_id", list(shift_by)).execute().data)
     for a in assigns:
@@ -76,6 +88,11 @@ def _roster_stats(client, facility_id: str) -> dict:
 
 def _contracts_by_staff(client, facility_id: str) -> dict[str, dict]:
     """The currently-effective contract per staff (fallback: most recent)."""
+    # SQL: select * from staff_contracts
+    #      where facility_id = :facility_id
+    #      order by effective_from desc
+    # (the "effective today" window test runs in Python below so the fallback pass
+    #  can reuse the same rows instead of issuing a second query)
     rows = (client.table("staff_contracts").select("*")
             .eq("facility_id", facility_id)
             .order("effective_from", desc=True).execute().data)
@@ -94,6 +111,9 @@ def _certs_by_staff(client, facility_id: str) -> dict[str, list[dict]]:
     """Certificates per staff as {cert_type, expiry_date} records. Returns {} only when
     staff_certificates isn't migrated yet; other DB errors propagate."""
     try:
+        # SQL: select staff_id, cert_type, expiry_date from staff_certificates
+        #      where facility_id = :facility_id
+        #      order by expiry_date
         rows = (client.table("staff_certificates").select("staff_id,cert_type,expiry_date")
                 .eq("facility_id", facility_id).order("expiry_date").execute().data)
     except Exception as exc:  # noqa: BLE001
@@ -138,6 +158,14 @@ def _enrich(st: dict, *, stats: dict, certs: dict, contracts: dict) -> dict:
 
 def list_staff(client, facility_id: str, *, search: str | None = None,
                rank: str | None = None) -> list[dict]:
+    # SQL: select s.*, jsonb_build_object('name', u.name) as unit
+    #      from staff s
+    #      left join facility_units u on u.id = s.primary_unit_id
+    #      where s.facility_id = :facility_id
+    #      order by s.created_at
+    # `search` and `rank` are NOT pushed down — they are applied in the Python loop
+    # below (a rank filter would be `and s.rank = :rank`, search an ilike on
+    # s.name / s.name_en).
     rows = (client.table("staff").select("*, unit:facility_units(name)")
             .eq("facility_id", facility_id).order("created_at").execute().data)
     stats = _roster_stats(client, facility_id)
@@ -158,6 +186,10 @@ def list_staff(client, facility_id: str, *, search: str | None = None,
 
 
 def get_staff_detail(client, facility_id: str, staff_id: str) -> dict | None:
+    # SQL: select s.*, jsonb_build_object('name', u.name) as unit
+    #      from staff s
+    #      left join facility_units u on u.id = s.primary_unit_id
+    #      where s.facility_id = :facility_id and s.id = :staff_id
     rows = (client.table("staff").select("*, unit:facility_units(name)")
             .eq("facility_id", facility_id).eq("id", staff_id).execute().data)
     if not rows:
@@ -168,6 +200,20 @@ def get_staff_detail(client, facility_id: str, staff_id: str) -> dict | None:
     detail = _enrich(rows[0], stats=stats, certs=certs, contracts=contracts)
 
     # recent working history from the manual/published roster only, never A/B/C drafts.
+    #
+    # SQL: select a.tasks,
+    #             jsonb_build_object(
+    #               'date', sh.date, 'shift_type', sh.shift_type,
+    #               'start_time', sh.start_time, 'end_time', sh.end_time,
+    #               'is_working', sh.is_working,
+    #               'version', jsonb_build_object('version_type', v.version_type,
+    #                                             'status', v.status)) as shift
+    #      from shift_assignments a
+    #      left join shifts sh on sh.id = a.shift_id
+    #      left join roster_versions v on v.id = sh.roster_version_id
+    #      where a.staff_id = :staff_id
+    # The is_working / manual-or-published filter and the "10 most recent" cut are
+    # applied in Python below, not in the query.
     assigns = (client.table("shift_assignments")
                .select("tasks, shift:shifts(date,shift_type,start_time,end_time,is_working,"
                        "version:roster_versions(version_type,status))")

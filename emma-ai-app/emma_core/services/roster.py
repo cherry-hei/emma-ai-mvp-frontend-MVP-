@@ -16,9 +16,11 @@ def _delete_shift_if_empty(client, shift_id: str) -> None:
     """Drop the shift only when no assignments remain. shift_id is ON DELETE CASCADE,
     so deleting a shift shared by sibling assignments (required_count > 1) would wipe
     their cells."""
+    # SQL: select id from shift_assignments where shift_id = :shift_id limit 1
     remaining = (client.table("shift_assignments").select("id")
                  .eq("shift_id", shift_id).limit(1).execute().data)
     if not remaining:
+        # SQL: delete from shifts where id = :shift_id
         client.table("shifts").delete().eq("id", shift_id).execute()
 
 
@@ -28,8 +30,15 @@ def _latest_version(client, facility_id: str, period_id: str | None = None,
     A/B/C options don't hijack the main view; pass ``version_type=None`` for any, or an
     explicit ``version_id`` for a specific option."""
     if version_id:
+        # SQL: select * from roster_versions where id = :version_id
         rows = client.table("roster_versions").select("*").eq("id", version_id).execute().data
         return rows[0] if rows else None
+    # SQL: select * from roster_versions
+    #      where facility_id = :facility_id
+    #        [and period_id = :period_id]        -- when period_id is given
+    #        [and version_type = :version_type]  -- unless version_type is None
+    #      order by created_at desc
+    #      limit 1
     q = client.table("roster_versions").select("*").eq("facility_id", facility_id)
     if period_id:
         q = q.eq("period_id", period_id)
@@ -46,20 +55,30 @@ def get_roster_grid(client, facility_id: str, period_id: str | None = None, *,
     if not ver:
         return RosterGrid()
 
+    # The grid is assembled from four flat reads and pivoted in Python below; there is
+    # no single query that returns the staff × day shape the UI wants.
     period = None
     if ver.get("period_id"):
+        # SQL: select * from roster_periods where id = :period_id
         p = client.table("roster_periods").select("*").eq("id", ver["period_id"]).execute().data
         period = p[0] if p else None
 
+    # SQL: select * from shifts where roster_version_id = :version_id
     shifts = client.table("shifts").select("*").eq("roster_version_id", ver["id"]).execute().data
     shift_by_id = {s["id"]: s for s in shifts}
     shift_ids = list(shift_by_id)
 
     assigns = []
     if shift_ids:
+        # SQL: select * from shift_assignments where shift_id = any(:shift_ids)
         assigns = (client.table("shift_assignments").select("*")
                    .in_("shift_id", shift_ids).execute().data)
 
+    # SQL: select s.*, jsonb_build_object('name', u.name) as unit
+    #      from staff s
+    #      left join facility_units u on u.id = s.primary_unit_id
+    #      where s.facility_id = :facility_id
+    #      order by s.created_at
     staff_rows = (client.table("staff").select("*, unit:facility_units(name)")
                   .eq("facility_id", facility_id).order("created_at").execute().data)
 
@@ -102,6 +121,9 @@ def get_roster_grid(client, facility_id: str, period_id: str | None = None, *,
 
 
 def get_shift_defs(client, facility_id: str) -> list[ShiftDef]:
+    # SQL: select * from shift_definitions
+    #      where facility_id = :facility_id
+    #      order by is_working desc      -- working codes first, OFF/leave last
     rows = (client.table("shift_definitions").select("*")
             .eq("facility_id", facility_id).order("is_working", desc=True)
             .execute().data)
@@ -110,6 +132,10 @@ def get_shift_defs(client, facility_id: str) -> list[ShiftDef]:
 
 def list_task_definitions(client, facility_id: str) -> list[dict]:
     """Facility-scoped task-code dictionary; template rows (facility_id null) are shared."""
+    # SQL: select * from task_definitions
+    #      where (facility_id = :facility_id or facility_id is null)   -- null = template
+    #        and active = true
+    #      order by task_code
     return (client.table("task_definitions").select("*")
             .or_(f"facility_id.eq.{facility_id},facility_id.is.null")
             .eq("active", True).order("task_code").execute().data)
@@ -117,6 +143,9 @@ def list_task_definitions(client, facility_id: str) -> list[dict]:
 
 # ── periods / versions ──────────────────────────────────────────────────────
 def list_periods(client, facility_id: str) -> list[dict]:
+    # SQL: select * from roster_periods
+    #      where facility_id = :facility_id
+    #      order by period_start desc
     return (client.table("roster_periods").select("*")
             .eq("facility_id", facility_id).order("period_start", desc=True)
             .execute().data)
@@ -126,12 +155,21 @@ def create_period(client, *, facility_id, period_start, period_end, cycle_type="
                   created_by=None, create_manual_version=True):
     """Create a roster period and, by default, a blank 'manual' version to hang shifts
     on (the grid, manual edit and solver all need one and nothing else bootstraps it)."""
+    # SQL: insert into roster_periods
+    #        (facility_id, period_start, period_end, cycle_type, status)
+    #      values (:facility_id, :period_start, :period_end, :cycle_type, 'planning')
+    #      returning *
     period = (client.table("roster_periods").insert({
         "facility_id": facility_id, "period_start": str(period_start),
         "period_end": str(period_end), "cycle_type": cycle_type, "status": "planning",
     }).execute().data[0])
     version = None
     if create_manual_version:
+        # SQL: insert into roster_versions
+        #        (facility_id, period_id, version_type, label, status, created_by)
+        #      values (:facility_id, :period_id, 'manual', 'Manual roster',
+        #              'draft', :created_by)
+        #      returning *
         version = (client.table("roster_versions").insert({
             "facility_id": facility_id, "period_id": period["id"],
             "version_type": "manual", "label": "Manual roster",
@@ -141,6 +179,10 @@ def create_period(client, *, facility_id, period_start, period_end, cycle_type="
 
 
 def list_versions(client, facility_id: str, period_id: str | None = None) -> list[dict]:
+    # SQL: select * from roster_versions
+    #      where facility_id = :facility_id
+    #        [and period_id = :period_id]   -- when period_id is given
+    #      order by created_at desc
     q = client.table("roster_versions").select("*").eq("facility_id", facility_id)
     if period_id:
         q = q.eq("period_id", period_id)
@@ -152,20 +194,34 @@ def set_cell(client, *, facility_id, roster_version_id, staff_id, date, shift_ty
              shift_def: ShiftDef, tasks=None, changed_by=None):
     """Upsert one staff/day cell (create/replace shift + assignment) and log to manual_override_log."""
     tasks = tasks or []
+    # SQL: select id from shifts
+    #      where roster_version_id = :roster_version_id and date = :date
     existing_shifts = (client.table("shifts").select("id")
                        .eq("roster_version_id", roster_version_id).eq("date", str(date))
                        .execute().data)
     existing_shift_ids = [s["id"] for s in existing_shifts]
     old = None
     if existing_shift_ids:
+        # SQL: select * from shift_assignments
+        #      where shift_id = any(:existing_shift_ids) and staff_id = :staff_id
         found = (client.table("shift_assignments").select("*")
                  .in_("shift_id", existing_shift_ids).eq("staff_id", staff_id)
                  .execute().data)
         old = found[0] if found else None
         for a in found:  # clear any prior cell for this staff/day
+            # SQL: delete from shift_assignments where id = :assignment_id
+            # (one statement per row rather than `id = any(...)`, because each
+            #  deletion is followed by the empty-shift check below)
             client.table("shift_assignments").delete().eq("id", a["id"]).execute()
             _delete_shift_if_empty(client, a["shift_id"])
 
+    # SQL: insert into shifts
+    #        (facility_id, roster_version_id, date, shift_type, start_time, end_time,
+    #         cross_midnight, is_working, segments, paid_minutes)
+    #      values (:facility_id, :roster_version_id, :date, :shift_type,
+    #              :start_time, :end_time, :cross_midnight, :is_working,
+    #              :segments::jsonb, :paid_minutes)
+    #      returning id
     shift_id = (client.table("shifts").insert({
         "facility_id": facility_id, "roster_version_id": roster_version_id,
         "date": str(date), "shift_type": shift_type,
@@ -176,11 +232,21 @@ def set_cell(client, *, facility_id, roster_version_id, staff_id, date, shift_ty
         "segments": shift_def.segments, "paid_minutes": shift_def.paid_minutes,
     }).execute().data[0]["id"])
 
+    # SQL: insert into shift_assignments (facility_id, shift_id, staff_id, status, tasks)
+    #      values (:facility_id, :shift_id, :staff_id, 'assigned', :tasks)
+    #      returning id
     assignment_id = (client.table("shift_assignments").insert({
         "facility_id": facility_id, "shift_id": shift_id, "staff_id": staff_id,
         "status": AssignmentStatus.ASSIGNED, "tasks": tasks,
     }).execute().data[0]["id"])
 
+    # SQL: insert into manual_override_log
+    #        (facility_id, roster_version_id, shift_assignment_id, action,
+    #         before_json, after_json, changed_by)
+    #      values (:facility_id, :roster_version_id, :assignment_id,
+    #              case when :old is not null then 'update' else 'create' end,
+    #              :before_json::jsonb, :after_json::jsonb, :changed_by)
+    #      returning *
     client.table("manual_override_log").insert({
         "facility_id": facility_id, "roster_version_id": roster_version_id,
         "shift_assignment_id": assignment_id,
@@ -193,17 +259,27 @@ def set_cell(client, *, facility_id, roster_version_id, staff_id, date, shift_ty
 
 
 def clear_cell(client, *, facility_id, roster_version_id, staff_id, date, changed_by=None):
+    # SQL: select id from shifts
+    #      where roster_version_id = :roster_version_id and date = :date
     existing_shifts = (client.table("shifts").select("id")
                        .eq("roster_version_id", roster_version_id).eq("date", str(date))
                        .execute().data)
     ids = [s["id"] for s in existing_shifts]
     if not ids:
         return
+    # SQL: select * from shift_assignments
+    #      where shift_id = any(:shift_ids) and staff_id = :staff_id
     found = (client.table("shift_assignments").select("*")
              .in_("shift_id", ids).eq("staff_id", staff_id).execute().data)
     for a in found:
+        # SQL: delete from shift_assignments where id = :assignment_id
         client.table("shift_assignments").delete().eq("id", a["id"]).execute()
         _delete_shift_if_empty(client, a["shift_id"])
+        # SQL: insert into manual_override_log
+        #        (facility_id, roster_version_id, action, before_json, changed_by)
+        #      values (:facility_id, :roster_version_id, 'delete',
+        #              :before_json::jsonb, :changed_by)
+        #      returning *
         client.table("manual_override_log").insert({
             "facility_id": facility_id, "roster_version_id": roster_version_id,
             "action": OverrideAction.DELETE,
@@ -214,9 +290,17 @@ def clear_cell(client, *, facility_id, roster_version_id, staff_id, date, change
 
 # ── publish workflow ────────────────────────────────────────────────────────
 def publish_version(client, *, facility_id, roster_version_id, created_by=None):
+    # SQL: update roster_versions
+    #      set status = 'published', published_at = now()
+    #      where id = :roster_version_id
+    #      returning *
     (client.table("roster_versions")
      .update({"status": RosterStatus.PUBLISHED, "published_at": _now()})
      .eq("id", roster_version_id).execute())
+    # SQL: insert into roster_publish_events
+    #        (facility_id, roster_version_id, event_type, created_by)
+    #      values (:facility_id, :roster_version_id, 'publish', :created_by)
+    #      returning *
     client.table("roster_publish_events").insert({
         "facility_id": facility_id, "roster_version_id": roster_version_id,
         "event_type": PublishEvent.PUBLISH, "created_by": created_by,
@@ -224,6 +308,10 @@ def publish_version(client, *, facility_id, roster_version_id, created_by=None):
 
 
 def save_draft(client, *, facility_id, roster_version_id, created_by=None):
+    # SQL: insert into roster_publish_events
+    #        (facility_id, roster_version_id, event_type, created_by)
+    #      values (:facility_id, :roster_version_id, 'save_draft', :created_by)
+    #      returning *
     client.table("roster_publish_events").insert({
         "facility_id": facility_id, "roster_version_id": roster_version_id,
         "event_type": PublishEvent.SAVE_DRAFT, "created_by": created_by,

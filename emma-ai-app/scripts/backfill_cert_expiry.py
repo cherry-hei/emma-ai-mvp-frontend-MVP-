@@ -22,11 +22,16 @@ EXPIRY = {
 }
 
 sb = get_service_client()
+# SQL: select id, cert_type, expiry_date from staff_certificates
+# (no facility filter — this is the service-role client, so RLS does not apply and
+#  the backfill deliberately spans every home)
 rows = sb.table("staff_certificates").select("id,cert_type,expiry_date").execute().data
 n = 0
 for r in rows:
     exp = EXPIRY.get(r["cert_type"])
     if exp and not r.get("expiry_date"):
+        # SQL: update staff_certificates set expiry_date = :exp where id = :id
+        #      returning *
         sb.table("staff_certificates").update({"expiry_date": exp}).eq("id", r["id"]).execute()
         n += 1
 print(f"backfilled {n} cert expiry dates")

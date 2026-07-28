@@ -13,6 +13,7 @@ sb = get_service_client()
 
 
 def _facility(code: str) -> str:
+    # SQL: select id from facilities where code = :code
     return sb.table("facilities").select("id").eq("code", code).execute().data[0]["id"]
 
 
@@ -64,6 +65,7 @@ def test_set_and_clear_cell_write_path():
     cell = next((c for c in row.cells if c.date.isoformat() == day), None)
     assert cell and cell.shift_type == "P" and cell.tasks == ["Test task"]
 
+    # SQL: select id from manual_override_log where roster_version_id = :ver
     logs = (sb.table("manual_override_log").select("id")
             .eq("roster_version_id", ver).execute().data)
     assert len(logs) >= 1  # edit was audited

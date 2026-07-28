@@ -25,6 +25,9 @@ def sync_assignment_tasks(client, facility_id: str, assignment: dict,
                           shift: dict, task_defs: dict[str, dict] | None = None) -> list[dict]:
     """Reconcile task_assignments for one shift assignment against its `tasks` array."""
     labels = list(assignment.get("tasks") or [])
+    # SQL: select * from task_assignments
+    #      where facility_id = :facility_id
+    #        and shift_assignment_id = :assignment_id
     existing = (client.table("task_assignments").select("*")
                 .eq("facility_id", facility_id)
                 .eq("shift_assignment_id", assignment["id"]).execute().data)
@@ -32,6 +35,7 @@ def sync_assignment_tasks(client, facility_id: str, assignment: dict,
 
     stale = [r["id"] for label, r in by_label.items() if label not in labels]
     if stale:
+        # SQL: delete from task_assignments where id = any(:stale_ids)
         client.table("task_assignments").delete().in_("id", stale).execute()
 
     start = to_min(shift.get("start_time"))
@@ -52,8 +56,17 @@ def sync_assignment_tasks(client, facility_id: str, assignment: dict,
             "priority": _priority(label), "task_status": "pending",
         })
     if new_rows:
+        # SQL: insert into task_assignments
+        #        (facility_id, shift_assignment_id, staff_id, task_id, task_label,
+        #         scheduled_time, priority, task_status)
+        #      values (...), (...), ...      -- one tuple per missing label
+        #      returning *
         client.table("task_assignments").insert(new_rows).execute()
 
+    # SQL: select * from task_assignments
+    #      where facility_id = :facility_id
+    #        and shift_assignment_id = :assignment_id
+    #      order by scheduled_time
     return (client.table("task_assignments").select("*")
             .eq("facility_id", facility_id)
             .eq("shift_assignment_id", assignment["id"])
@@ -61,6 +74,9 @@ def sync_assignment_tasks(client, facility_id: str, assignment: dict,
 
 
 def task_definitions_by_label(client, facility_id: str) -> dict[str, dict]:
+    # SQL: select * from task_definitions
+    #      where (facility_id = :facility_id or facility_id is null)   -- null = global default
+    #        and active = true
     rows = (client.table("task_definitions").select("*")
             .or_(f"facility_id.eq.{facility_id},facility_id.is.null")
             .eq("active", True).execute().data)
@@ -77,6 +93,12 @@ def set_status(client, facility_id: str, task_assignment_id: str, *, status: str
     if status not in ("pending", "done", "skipped"):
         raise ValueError("status must be pending, done or skipped")
     done = status == "done"
+    # SQL: update task_assignments
+    #      set task_status  = :status,
+    #          completed_at = case when :done then now() end,
+    #          completed_by = case when :done then :staff_id end
+    #      where facility_id = :facility_id and id = :task_assignment_id
+    #      returning *
     rows = (client.table("task_assignments").update({
         "task_status": status,
         "completed_at": now_iso() if done else None,
@@ -97,11 +119,15 @@ def for_staff_date(client, facility_id: str, staff_id: str, on: Date) -> list[di
     version = operative_version(client, facility_id, period["id"])
     if not version:
         return []
+    # SQL: select * from shifts
+    #      where roster_version_id = :version_id and date = :on
     shifts = (client.table("shifts").select("*")
               .eq("roster_version_id", version["id"]).eq("date", str(on)).execute().data)
     if not shifts:
         return []
     by_id = {s["id"]: s for s in shifts}
+    # SQL: select * from shift_assignments
+    #      where shift_id = any(:shift_ids) and staff_id = :staff_id
     assigns = (client.table("shift_assignments").select("*")
                .in_("shift_id", list(by_id)).eq("staff_id", staff_id).execute().data)
 

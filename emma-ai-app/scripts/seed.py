@@ -29,6 +29,7 @@ sb = get_service_client()
 
 # ── helpers ──────────────────────────────────────────────────────────────────
 def ins(table: str, row: dict) -> str:
+    # SQL: insert into <table> (<keys of row>) values (<values>) returning id
     res = sb.table(table).insert(row).execute()
     return res.data[0]["id"]
 
@@ -36,6 +37,7 @@ def ins(table: str, row: dict) -> str:
 def ins_many(table: str, rows: list[dict]) -> list[str]:
     if not rows:
         return []
+    # SQL: insert into <table> (<keys>) values (...), (...), ... returning id
     res = sb.table(table).insert(rows).execute()
     return [r["id"] for r in res.data]
 
@@ -52,8 +54,12 @@ def dates_for(start: str, days: int) -> list[str]:
 
 def wipe() -> None:
     for code in ("A", "B"):
+        # SQL: delete from facilities where code = :code
+        # (every tenant table is ON DELETE CASCADE from facilities, so this one
+        #  statement per home clears the whole fixture)
         sb.table("facilities").delete().eq("code", code).execute()
     # global (facility-less) reference rows this script owns
+    # SQL: delete from regulatory_documents where facility_id is null
     sb.table("regulatory_documents").delete().is_("facility_id", "null").execute()
     try:
         users = sb.auth.admin.list_users()
@@ -208,6 +214,12 @@ def seed_roi_settings(facility_id: str, profile_id: str, *, total_budget: int,
                       salary_budget: int, vacancies: dict) -> None:
     # roi_settings is keyed by facility_id — it has no surrogate `id`, so this
     # can't go through ins().
+    # SQL: insert into roi_settings
+    #        (facility_id, manager_hourly_rate, roster_hours_before, roster_hours_after,
+    #         hours_saved_per_incident, agency_reduction_pct, total_budget,
+    #         salary_budget, ...)
+    #      values (:facility_id, 409, 26, 7, 0.75, 5, :total_budget, :salary_budget, ...)
+    #      returning *
     sb.table("roi_settings").insert({
         "facility_id": facility_id, "manager_hourly_rate": 409,
         "roster_hours_before": 26, "roster_hours_after": 7,
@@ -498,6 +510,7 @@ def main() -> None:
     ref = today if period_a_start <= today <= period_a_end else period_a_end
 
     # ---- calendar (global HK public holiday) ----
+    # SQL: delete from calendar_days where date = '2026-07-01' and facility_id is null
     sb.table("calendar_days").delete().eq("date", "2026-07-01").is_("facility_id", "null").execute()
     ins("calendar_days", {
         "facility_id": None, "date": "2026-07-01", "day_type": "public_holiday",
@@ -672,6 +685,7 @@ def main() -> None:
     make_user("staff_a@emma.local", "staff", fa, staff_id=a_ids[0])
     make_user("super_b@emma.local", "superintendent", fb)
 
+    # SQL: select id from users_profile where auth_user_id = :super_a
     prof_a = sb.table("users_profile").select("id").eq("auth_user_id", super_a).execute().data[0]["id"]
     # Resident counts are the ratio denominator, so they have to be plausible for
     # the seeded headcount: 7 staff cannot lawfully serve 80 residents under the

@@ -15,6 +15,7 @@ from .compliance import ratio_series
 
 def summary(client, facility_id: str) -> dict:
     today = Date.today()
+    # SQL: select id, code, name, capacity from facilities where id = :facility_id
     facility = (client.table("facilities").select("id,code,name,capacity")
                 .eq("id", facility_id).execute().data)
     facility = facility[0] if facility else {}
@@ -38,6 +39,10 @@ def summary(client, facility_id: str) -> dict:
 
     shift_mix = _today_shift_mix(client, version, today)
 
+    # SQL: select count(*) from staff
+    #      where facility_id = :facility_id and status = 'active'
+    # (count="exact" returns the count in the Content-Range header; the id rows
+    #  themselves are discarded)
     staff_count = (client.table("staff").select("id", count="exact")
                    .eq("facility_id", facility_id).eq("status", "active").execute().count or 0)
 
@@ -76,12 +81,17 @@ def _today_shift_mix(client, version: dict | None, today: Date) -> list[dict]:
     """How many people are on each shift code today, in the operative roster."""
     if not version:
         return []
+    # SQL: select id, shift_type, is_working from shifts
+    #      where roster_version_id = :version_id and date = :today
     shifts = (client.table("shifts").select("id,shift_type,is_working")
               .eq("roster_version_id", version["id"]).eq("date", today.isoformat())
               .execute().data)
     if not shifts:
         return []
     by_id = {s["id"]: s for s in shifts}
+    # SQL: select shift_id, staff_id, status from shift_assignments
+    #      where shift_id = any(:shift_ids)
+    # (in SQL the tally below would be `group by shift_type` with `count(*)`)
     assigns = (client.table("shift_assignments").select("shift_id,staff_id,status")
                .in_("shift_id", list(by_id)).execute().data)
 

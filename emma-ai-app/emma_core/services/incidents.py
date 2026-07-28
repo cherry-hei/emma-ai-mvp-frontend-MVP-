@@ -53,6 +53,7 @@ def _shifts_by_id(client, ids: list[str]) -> dict[str, dict]:
     ids = [i for i in ids if i]
     if not ids:
         return {}
+    # SQL: select * from shifts where id = any(:ids)
     rows = client.table("shifts").select("*").in_("id", ids).execute().data
     return {r["id"]: r for r in rows}
 
@@ -60,6 +61,13 @@ def _shifts_by_id(client, ids: list[str]) -> dict[str, dict]:
 def list_incidents(client, facility_id: str, *, status: str | None = None,
                    since: Date | None = None, staff_id: str | None = None,
                    limit: int = 50) -> list[dict]:
+    # SQL: select * from sl_incidents
+    #      where facility_id = :facility_id
+    #        [and replacement_status = :status]   -- when status is given
+    #        [and staff_id = :staff_id]           -- when staff_id is given
+    #        [and reported_at >= :since::date]    -- when since is given
+    #      order by reported_at desc
+    #      limit :limit
     q = client.table("sl_incidents").select("*").eq("facility_id", facility_id)
     if status:
         q = q.eq("replacement_status", status)
@@ -74,6 +82,8 @@ def list_incidents(client, facility_id: str, *, status: str | None = None,
 
 
 def get_incident(client, facility_id: str, incident_id: str) -> dict | None:
+    # SQL: select * from sl_incidents
+    #      where facility_id = :facility_id and id = :incident_id
     rows = (client.table("sl_incidents").select("*")
             .eq("facility_id", facility_id).eq("id", incident_id).execute().data)
     if not rows:
@@ -86,6 +96,12 @@ def get_incident(client, facility_id: str, incident_id: str) -> dict | None:
 def stats(client, facility_id: str, on: Date | None = None) -> dict:
     """Month-to-date incident KPIs — the four cards on Dashboard and Alert."""
     start, end = month_bounds(on)
+    # SQL: select * from sl_incidents
+    #      where facility_id = :facility_id
+    #        and reported_at >= :month_start::date
+    #        and reported_at <= (:month_end::date + time '23:59:59')
+    # Every counter below (open / resolved / auto / avg response / per-type
+    # distribution) is tallied in Python from this one fetch.
     rows = (client.table("sl_incidents").select("*")
             .eq("facility_id", facility_id)
             .gte("reported_at", f"{start}T00:00:00Z")
@@ -127,12 +143,18 @@ def _find_shift_for(client, facility_id: str, staff_id: str, on_date: Date) -> d
     version = operative_version(client, facility_id, period["id"])
     if not version:
         return None
+    # SQL: select * from shifts
+    #      where roster_version_id = :version_id
+    #        and date = :on_date
+    #        and is_working = true
     shifts = (client.table("shifts").select("*")
               .eq("roster_version_id", version["id"]).eq("date", str(on_date))
               .eq("is_working", True).execute().data)
     if not shifts:
         return None
     by_id = {s["id"]: s for s in shifts}
+    # SQL: select * from shift_assignments
+    #      where shift_id = any(:shift_ids) and staff_id = :staff_id
     assigns = (client.table("shift_assignments").select("*")
                .in_("shift_id", list(by_id)).eq("staff_id", staff_id).execute().data)
     for a in assigns:
@@ -150,6 +172,12 @@ def open_incident(client, facility_id: str, *, staff_id: str, incident_type: str
         shift = _find_shift_for(client, facility_id, staff_id, on_date)
         shift_id = shift["id"] if shift else None
 
+    # SQL: insert into sl_incidents
+    #        (facility_id, staff_id, shift_id, leave_request_id, incident_type,
+    #         reason, replacement_status)
+    #      values (:facility_id, :staff_id, :shift_id, :leave_request_id,
+    #              :incident_type, :reason, 'open')
+    #      returning *
     row = client.table("sl_incidents").insert({
         "facility_id": facility_id, "staff_id": staff_id, "shift_id": shift_id,
         "leave_request_id": leave_request_id, "incident_type": incident_type,
@@ -198,6 +226,7 @@ def build_candidates(client, facility_id: str, incident: dict) -> list[dict]:
     shift_id = incident.get("shift_id")
     vacancy = None
     if shift_id:
+        # SQL: select * from shifts where id = :shift_id
         rows = client.table("shifts").select("*").eq("id", shift_id).execute().data
         vacancy = rows[0] if rows else None
     if not vacancy:
@@ -210,8 +239,14 @@ def build_candidates(client, facility_id: str, incident: dict) -> list[dict]:
         version = operative_version(client, facility_id, period["id"])
         version_id = version["id"] if version else None
 
+    # SQL: select s.*, jsonb_build_object('name', u.name) as unit
+    #      from staff s
+    #      left join facility_units u on u.id = s.primary_unit_id
+    #      where s.facility_id = :facility_id and s.status = 'active'
     staff_rows = (client.table("staff").select("*, unit:facility_units(name)")
                   .eq("facility_id", facility_id).eq("status", "active").execute().data)
+    # SQL: select * from staff_contracts where facility_id = :facility_id
+    # (keyed by staff_id in Python — last row per staff wins, no effective-date filter)
     contracts = {c["staff_id"]: c for c in (
         client.table("staff_contracts").select("*").eq("facility_id", facility_id).execute().data)}
 
@@ -220,11 +255,14 @@ def build_candidates(client, facility_id: str, incident: dict) -> list[dict]:
     scheduled_min: dict[str, int] = {}
     worked_types: dict[str, set[str]] = {}
     if version_id:
+        # SQL: select * from shifts where roster_version_id = :version_id
         shifts = (client.table("shifts").select("*")
                   .eq("roster_version_id", version_id).execute().data)
         by_id = {s["id"]: s for s in shifts}
         assigns = []
         if by_id:
+            # SQL: select shift_id, staff_id, status from shift_assignments
+            #      where shift_id = any(:shift_ids)
             assigns = (client.table("shift_assignments").select("shift_id,staff_id,status")
                        .in_("shift_id", list(by_id)).execute().data)
         for a in assigns:
@@ -239,6 +277,10 @@ def build_candidates(client, facility_id: str, incident: dict) -> list[dict]:
     from .leave import approved_leave_dates
     on_leave = approved_leave_dates(client, facility_id, v_date, v_date)
 
+    # SQL: select staff_id from future_debt_ledger
+    #      where facility_id = :facility_id and status = 'open'
+    # (counted per staff in Python; in SQL this would be a
+    #  `group by staff_id` with `count(*)`)
     open_debt: dict[str, int] = {}
     for d in (client.table("future_debt_ledger").select("staff_id")
               .eq("facility_id", facility_id).eq("status", "open").execute().data):
@@ -323,15 +365,27 @@ def build_candidates(client, facility_id: str, incident: dict) -> list[dict]:
 
 def refresh_candidates(client, facility_id: str, incident_id: str) -> list[dict]:
     """Recompute and persist the candidate snapshot (spec: the ranking the manager saw)."""
+    # SQL: select * from sl_incidents
+    #      where facility_id = :facility_id and id = :incident_id
     rows = (client.table("sl_incidents").select("*")
             .eq("facility_id", facility_id).eq("id", incident_id).execute().data)
     if not rows:
         raise ValueError("incident not found")
     ranked = build_candidates(client, facility_id, rows[0])
 
+    # Delete-then-insert rather than upsert: the ranking is a whole snapshot, and a
+    # candidate who dropped out must not survive as a stale row.
+    #
+    # SQL: delete from replacement_candidates
+    #      where facility_id = :facility_id and incident_id = :incident_id
     (client.table("replacement_candidates").delete()
      .eq("facility_id", facility_id).eq("incident_id", incident_id).execute())
     if ranked:
+        # SQL: insert into replacement_candidates
+        #        (facility_id, incident_id, candidate_staff_id, score, rank_order,
+        #         compliance_ok, blocked_reasons, reasons, future_debt_json)
+        #      values (...), (...), ...      -- one tuple per ranked candidate
+        #      returning *
         client.table("replacement_candidates").insert([{
             "facility_id": facility_id, "incident_id": incident_id,
             "candidate_staff_id": c["candidate_staff_id"], "score": c["score"],
@@ -344,6 +398,11 @@ def refresh_candidates(client, facility_id: str, incident_id: str) -> list[dict]
 
 def list_candidates(client, facility_id: str, incident_id: str, *,
                     compliance_checked: bool = True, limit: int = 5) -> list[dict]:
+    # SQL: select * from replacement_candidates
+    #      where facility_id = :facility_id and incident_id = :incident_id
+    #      order by rank_order
+    # `compliance_checked` and `limit` are applied in Python below, after the staff
+    # names are joined on, so the caller always sees a contiguous ranking.
     rows = (client.table("replacement_candidates").select("*")
             .eq("facility_id", facility_id).eq("incident_id", incident_id)
             .order("rank_order").execute().data)
@@ -379,6 +438,8 @@ def resolve_incident(client, facility_id: str, incident_id: str, *,
                      auto: bool = True, note: str | None = None) -> dict:
     """Re-roster the vacant shift onto the replacement, record the debt it creates,
     and stamp the response time."""
+    # SQL: select * from sl_incidents
+    #      where facility_id = :facility_id and id = :incident_id
     rows = (client.table("sl_incidents").select("*")
             .eq("facility_id", facility_id).eq("id", incident_id).execute().data)
     if not rows:
@@ -398,17 +459,38 @@ def resolve_incident(client, facility_id: str, incident_id: str, *,
     shift_id = incident.get("shift_id")
     debt_hours = 0.0
     if shift_id:
+        # SQL: select * from shifts where id = :shift_id
         shift = client.table("shifts").select("*").eq("id", shift_id).execute().data[0]
         debt_hours = round(shift_minutes(shift) / 60, 2)
         # Keep the absent person's row for audit; add the cover as a new assignment.
+        #
+        # SQL: update shift_assignments set status = 'cancelled'
+        #      where facility_id = :facility_id and shift_id = :shift_id
+        #        and staff_id = :absent_staff_id
+        #      returning *
         (client.table("shift_assignments").update({"status": "cancelled"})
          .eq("facility_id", facility_id).eq("shift_id", shift_id)
          .eq("staff_id", incident["staff_id"]).execute())
+        # SQL: insert into shift_assignments
+        #        (facility_id, shift_id, staff_id, role, status, is_agency)
+        #      values (:facility_id, :shift_id, :replacement_staff_id,
+        #              :required_rank, 'assigned', false)
+        #      returning *
         new_assignment = client.table("shift_assignments").insert({
             "facility_id": facility_id, "shift_id": shift_id,
             "staff_id": replacement_staff_id, "role": shift.get("required_rank"),
             "status": "assigned", "is_agency": False,
         }).execute().data[0]
+        # These three writes are separate statements, not one transaction — PostgREST
+        # has no multi-statement transaction, so a failure between them leaves the
+        # cancel applied without its override-log entry.
+        #
+        # SQL: insert into manual_override_log
+        #        (facility_id, roster_version_id, shift_assignment_id, action,
+        #         before_json, after_json, changed_by, reason)
+        #      values (:facility_id, :roster_version_id, :new_assignment_id, 'assign',
+        #              :before_json::jsonb, :after_json::jsonb, :profile_id, :reason)
+        #      returning *
         client.table("manual_override_log").insert({
             "facility_id": facility_id,
             "roster_version_id": shift.get("roster_version_id"),
@@ -422,6 +504,12 @@ def resolve_incident(client, facility_id: str, incident_id: str, *,
     reported = datetime.fromisoformat(str(incident["reported_at"]).replace("Z", "+00:00"))
     minutes = max(0, round((datetime.now(timezone.utc) - reported).total_seconds() / 60))
 
+    # SQL: update sl_incidents
+    #      set replacement_status = 'resolved', replacement_staff_id = :replacement_staff_id,
+    #          resolved_at = now(), resolved_by = :profile_id,
+    #          resolution_minutes = :minutes, auto_resolved = :auto, notes = :note
+    #      where facility_id = :facility_id and id = :incident_id
+    #      returning *
     updated = (client.table("sl_incidents").update({
         "replacement_status": "resolved",
         "replacement_staff_id": replacement_staff_id,
@@ -432,6 +520,12 @@ def resolve_incident(client, facility_id: str, incident_id: str, *,
     debt = None
     if debt_hours:
         period = resolve_period(client, facility_id, None)
+        # SQL: insert into future_debt_ledger
+        #        (facility_id, staff_id, debt_type, quantity, unit, due_period_id,
+        #         source_incident_id, status, note)
+        #      values (:facility_id, :replacement_staff_id, 'TOIL', :debt_hours, 'hours',
+        #              :period_id, :incident_id, 'open', :note)
+        #      returning *
         debt = client.table("future_debt_ledger").insert({
             "facility_id": facility_id, "staff_id": replacement_staff_id,
             "debt_type": "TOIL", "quantity": debt_hours, "unit": "hours",
@@ -450,6 +544,11 @@ def resolve_incident(client, facility_id: str, incident_id: str, *,
 
 def list_future_debt(client, facility_id: str, *, staff_id: str | None = None,
                      status: str = "open") -> list[dict]:
+    # SQL: select * from future_debt_ledger
+    #      where facility_id = :facility_id
+    #        [and status = :status]        -- unless status is passed as ""
+    #        [and staff_id = :staff_id]    -- when staff_id is given
+    #      order by created_at desc
     q = client.table("future_debt_ledger").select("*").eq("facility_id", facility_id)
     if status:
         q = q.eq("status", status)
@@ -484,6 +583,12 @@ def active_alerts(client, facility_id: str) -> list[dict]:
             "incident_id": inc["id"],
         })
 
+    # SQL: select staff_id, cert_type, expiry_date from staff_certificates
+    #      where facility_id = :facility_id
+    #        and expiry_date is not null
+    #      order by expiry_date
+    # The CERT_WARN_DAYS cutoff is applied in the Python loop, not as
+    # `and expiry_date <= current_date + 90`.
     certs = (client.table("staff_certificates").select("staff_id,cert_type,expiry_date")
              .eq("facility_id", facility_id).not_.is_("expiry_date", "null")
              .order("expiry_date").execute().data)
@@ -533,11 +638,15 @@ def _hour_overruns(client, facility_id: str, period: dict | None) -> list[dict]:
     version = operative_version(client, facility_id, period["id"])
     if not version:
         return []
+    # SQL: select * from shifts
+    #      where roster_version_id = :version_id and is_working = true
     shifts = (client.table("shifts").select("*")
               .eq("roster_version_id", version["id"]).eq("is_working", True).execute().data)
     if not shifts:
         return []
     by_id = {s["id"]: s for s in shifts}
+    # SQL: select shift_id, staff_id, status from shift_assignments
+    #      where shift_id = any(:shift_ids)
     assigns = (client.table("shift_assignments").select("shift_id,staff_id,status")
                .in_("shift_id", list(by_id)).execute().data)
     booked: dict[str, int] = {}
@@ -546,6 +655,7 @@ def _hour_overruns(client, facility_id: str, period: dict | None) -> list[dict]:
             continue
         booked[a["staff_id"]] = booked.get(a["staff_id"], 0) + shift_minutes(by_id[a["shift_id"]])
 
+    # SQL: select * from staff_contracts where facility_id = :facility_id
     contracts = {c["staff_id"]: c for c in (
         client.table("staff_contracts").select("*").eq("facility_id", facility_id).execute().data)}
     staff = staff_by_id(client, facility_id)

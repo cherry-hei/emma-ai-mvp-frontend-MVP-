@@ -19,6 +19,10 @@ def _dt(v) -> datetime:
 
 
 def _events(client, facility_id: str, staff_id: str, start: str, end: str) -> list[dict]:
+    # SQL: select * from attendance_events
+    #      where facility_id = :facility_id and staff_id = :staff_id
+    #        and event_at >= :start::date and event_at <= (:end::date + time '23:59:59')
+    #      order by event_at
     return (client.table("attendance_events").select("*")
             .eq("facility_id", facility_id).eq("staff_id", staff_id)
             .gte("event_at", f"{start}T00:00:00Z").lte("event_at", f"{end}T23:59:59Z")
@@ -48,6 +52,10 @@ def clock(client, facility_id: str, staff_id: str, *, event_type: str,
     if event_type == CLOCK_OUT and last is None:
         raise ValueError("cannot clock out before clocking in")
 
+    # SQL: insert into attendance_events
+    #        (facility_id, staff_id, shift_id, event_type, event_at, source, note)
+    #      values (:facility_id, :staff_id, :shift_id, :event_type, now(), 'staff_app', :note)
+    #      returning *
     return client.table("attendance_events").insert({
         "facility_id": facility_id, "staff_id": staff_id, "shift_id": shift_id,
         "event_type": event_type, "event_at": now_iso(), "source": "staff_app",
@@ -86,6 +94,10 @@ def month_summary(client, facility_id: str, staff_id: str,
 
 
 def recent(client, facility_id: str, staff_id: str, limit: int = 20) -> list[dict]:
+    # SQL: select * from attendance_events
+    #      where facility_id = :facility_id and staff_id = :staff_id
+    #      order by event_at desc
+    #      limit :limit
     return (client.table("attendance_events").select("*")
             .eq("facility_id", facility_id).eq("staff_id", staff_id)
             .order("event_at", desc=True).limit(limit).execute().data)

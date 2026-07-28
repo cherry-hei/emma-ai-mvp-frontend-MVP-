@@ -57,8 +57,13 @@ def _authorize_optimize(req: OptimizeRequest, ctx: AuthCtx) -> None:
     req.facility_id = ctx.facility_id
     if req.created_by is None:
         req.created_by = ctx.profile_id
+    # Both probes run on ctx.client (RLS), so a foreign id comes back as zero rows —
+    # that empty result IS the authorization check, not just a existence check.
+    #
+    # SQL: select id from roster_periods where id = :period_id
     if not ctx.client.table("roster_periods").select("id").eq("id", req.period_id).execute().data:
         raise api_error(404, "not_found", "roster period not found")
+    # SQL: select id from roster_versions where id = :source_version_id
     if req.source_version_id and not (
             ctx.client.table("roster_versions").select("id")
             .eq("id", req.source_version_id).execute().data):

@@ -71,6 +71,10 @@ def month_bounds(on: Date | None = None) -> tuple[str, str]:
 # ── roster period / version resolution ───────────────────────────────────────
 def current_period(client, facility_id: str) -> dict | None:
     """The period covering today, else the most recent by start date."""
+    # SQL: select * from roster_periods
+    #      where facility_id = :facility_id
+    #      order by period_start desc
+    # (the "covers today" test is done in Python below, over the newest-first list)
     rows = (client.table("roster_periods").select("*")
             .eq("facility_id", facility_id)
             .order("period_start", desc=True).execute().data)
@@ -86,6 +90,8 @@ def current_period(client, facility_id: str) -> dict | None:
 def resolve_period(client, facility_id: str, period_id: str | None) -> dict | None:
     if not period_id:
         return current_period(client, facility_id)
+    # SQL: select * from roster_periods
+    #      where facility_id = :facility_id and id = :period_id
     rows = (client.table("roster_periods").select("*")
             .eq("facility_id", facility_id).eq("id", period_id).execute().data)
     return rows[0] if rows else None
@@ -94,6 +100,10 @@ def resolve_period(client, facility_id: str, period_id: str | None) -> dict | No
 def operative_version(client, facility_id: str, period_id: str) -> dict | None:
     """The version that represents reality for a period: the published one if there
     is one, else the manual draft. Never an A/B/C candidate — those are proposals."""
+    # SQL: select * from roster_versions
+    #      where facility_id = :facility_id and period_id = :period_id
+    #      order by created_at desc
+    # (published-then-manual preference is applied in Python, not in the query)
     rows = (client.table("roster_versions").select("*")
             .eq("facility_id", facility_id).eq("period_id", period_id)
             .order("created_at", desc=True).execute().data)
@@ -106,16 +116,25 @@ def operative_version(client, facility_id: str, period_id: str) -> dict | None:
 
 def load_roster(client, facility_id: str, version_id: str) -> tuple[list[dict], list[dict]]:
     """(shifts, assignments) for one roster version, in two queries."""
+    # Two round trips instead of one join — PostgREST cannot return the parent and
+    # child sets as separate arrays, and the callers want them separately anyway.
+    #
+    # SQL (1): select * from shifts where roster_version_id = :version_id
     shifts = (client.table("shifts").select("*")
               .eq("roster_version_id", version_id).execute().data)
     if not shifts:
         return [], []
+    # SQL (2): select * from shift_assignments where shift_id = any(:shift_ids)
     assigns = (client.table("shift_assignments").select("*")
                .in_("shift_id", [s["id"] for s in shifts]).execute().data)
     return shifts, assigns
 
 
 def staff_by_id(client, facility_id: str) -> dict[str, dict]:
+    # SQL: select s.*, jsonb_build_object('name', u.name) as unit
+    #      from staff s
+    #      left join facility_units u on u.id = s.primary_unit_id
+    #      where s.facility_id = :facility_id
     rows = (client.table("staff").select("*, unit:facility_units(name)")
             .eq("facility_id", facility_id).execute().data)
     return {r["id"]: r for r in rows}

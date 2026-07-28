@@ -36,10 +36,14 @@ EDITABLE = tuple(DEFAULTS)
 
 
 def get_settings(client, facility_id: str) -> dict:
+    # SQL: select * from roi_settings where facility_id = :facility_id
     rows = (client.table("roi_settings").select("*")
             .eq("facility_id", facility_id).execute().data)
     if rows:
         return rows[0]
+    # SQL: insert into roi_settings (facility_id, <every key of DEFAULTS>)
+    #      values (:facility_id, ...)
+    #      returning *
     return (client.table("roi_settings")
             .insert({"facility_id": facility_id, **DEFAULTS}).execute().data[0])
 
@@ -51,11 +55,19 @@ def update_settings(client, facility_id: str, patch: dict,
     if not clean:
         return get_settings(client, facility_id)
     clean.update({"updated_by": profile_id, "updated_at": now_iso()})
+    # SQL: update roi_settings
+    #      set <the whitelisted keys of `clean`>, updated_by = :profile_id,
+    #          updated_at = now()
+    #      where facility_id = :facility_id
+    #      returning *
     return (client.table("roi_settings").update(clean)
             .eq("facility_id", facility_id).execute().data[0])
 
 
 def _staff_breakdown(client, facility_id: str, vacancies: dict) -> dict:
+    # SQL: select rank, employment_type, status from staff
+    #      where facility_id = :facility_id and status = 'active'
+    # (in SQL the per-rank headcount would be `group by rank` with `count(*)`)
     rows = (client.table("staff").select("rank,employment_type,status")
             .eq("facility_id", facility_id).eq("status", "active").execute().data)
     by_rank: dict[str, int] = {}
@@ -78,6 +90,10 @@ def _staff_breakdown(client, facility_id: str, vacancies: dict) -> dict:
 
 
 def _agency_spend(client, facility_id: str, start: str, end: str) -> dict:
+    # SQL: select role, cost, hours, vendor, date from agency_assignments
+    #      where facility_id = :facility_id and date >= :start and date <= :end
+    # (per-role cost rollup is done in Python; in SQL it would be
+    #  `group by role` with `count(*)` and `sum(cost)`)
     rows = (client.table("agency_assignments").select("role,cost,hours,vendor,date")
             .eq("facility_id", facility_id)
             .gte("date", start).lte("date", end).execute().data)
@@ -104,6 +120,10 @@ def summary(client, facility_id: str, on: Date | None = None) -> dict:
     staff = _staff_breakdown(client, facility_id, s.get("vacancies_json") or {})
     agency = _agency_spend(client, facility_id, start, end)
 
+    # SQL: select count(*) from sl_incidents
+    #      where facility_id = :facility_id
+    #        and reported_at >= :month_start::date
+    #        and reported_at <= (:month_end::date + time '23:59:59')
     incidents = (client.table("sl_incidents").select("id", count="exact")
                  .eq("facility_id", facility_id)
                  .gte("reported_at", f"{start}T00:00:00Z")

@@ -47,6 +47,9 @@ def _requirement(rule: dict, residents: int) -> tuple[int, str]:
 
 
 def _load_rules(client, facility_id: str) -> list[dict]:
+    # SQL: select * from staffing_ratio_rules
+    #      where (facility_id = :facility_id or facility_id is null)  -- null = statutory
+    #        and active = true
     return (client.table("staffing_ratio_rules").select("*")
             .or_(f"facility_id.eq.{facility_id},facility_id.is.null")
             .eq("active", True).execute().data)
@@ -81,12 +84,19 @@ def compute_ratios(client, facility_id: str, on_date, *,
     """Ratio check for a single day. Pass ``roster_version_id`` to scope the count to one version — otherwise A/B/C drafts sharing the same dates double-count staff and falsely pass."""
     d = str(on_date)
 
+    # SQL: select resident_count from daily_resident_counts
+    #      where facility_id = :facility_id and date = :d
+    # (summed in Python — one row per unit/care_level; `sum(resident_count)` in SQL
+    #  would do the same)
     residents = sum(r["resident_count"] for r in (
         client.table("daily_resident_counts").select("resident_count")
         .eq("facility_id", facility_id).eq("date", d).execute().data))
 
     rules = _load_rules(client, facility_id)
 
+    # SQL: select * from shifts
+    #      where facility_id = :facility_id and date = :d and is_working = true
+    #        [and roster_version_id = :roster_version_id]   -- when scoped to a version
     shifts_q = (client.table("shifts").select("*")
                 .eq("facility_id", facility_id).eq("date", d).eq("is_working", True))
     if roster_version_id:
@@ -95,6 +105,9 @@ def compute_ratios(client, facility_id: str, on_date, *,
     shift_by = {s["id"]: s for s in shifts}
     assigns = []
     if shift_by:
+        # SQL: select shift_id, role, staff_id, status from shift_assignments
+        #      where shift_id = any(:shift_ids)
+        # (cancelled rows are dropped by the comprehension, not by the query)
         assigns = [a for a in (client.table("shift_assignments").select("shift_id,role,staff_id,status")
                                .in_("shift_id", list(shift_by)).execute().data)
                    if a.get("status") != "cancelled"]
@@ -168,11 +181,19 @@ def minute_ratio(client, facility_id: str, on_date, *,
                  roster_version_id: str | None = None) -> list[dict]:
     """Minute-level coverage for a single day."""
     d = str(on_date)
+    # Same three reads as compute_ratios — only the evaluation differs (minute-level
+    # rather than per-shift), so the SQL is identical.
+    #
+    # SQL: select resident_count from daily_resident_counts
+    #      where facility_id = :facility_id and date = :d
     residents = sum(r["resident_count"] for r in (
         client.table("daily_resident_counts").select("resident_count")
         .eq("facility_id", facility_id).eq("date", d).execute().data))
     rules = _load_rules(client, facility_id)
 
+    # SQL: select * from shifts
+    #      where facility_id = :facility_id and date = :d and is_working = true
+    #        [and roster_version_id = :roster_version_id]   -- when scoped to a version
     shifts_q = (client.table("shifts").select("*")
                 .eq("facility_id", facility_id).eq("date", d).eq("is_working", True))
     if roster_version_id:
@@ -180,6 +201,8 @@ def minute_ratio(client, facility_id: str, on_date, *,
     shift_by = {s["id"]: s for s in shifts_q.execute().data}
     assigns = []
     if shift_by:
+        # SQL: select shift_id, role, staff_id, status from shift_assignments
+        #      where shift_id = any(:shift_ids)
         assigns = [a for a in (client.table("shift_assignments")
                                .select("shift_id,role,staff_id,status")
                                .in_("shift_id", list(shift_by)).execute().data)
@@ -213,6 +236,12 @@ def minute_ratio_series(client, facility_id: str, start: Date, end: Date, *,
 def _load_range(client, facility_id: str, start: Date, end: Date,
                 roster_version_id: str | None):
     """(residents_by_date, shift_by_id, assignments_by_date) for a date range."""
+    # Three queries for the whole range, then bucketed by date in Python — this is
+    # what keeps ratio_series / minute_ratio_series off a per-day query loop.
+    #
+    # SQL: select date, resident_count from daily_resident_counts
+    #      where facility_id = :facility_id and date >= :start and date <= :end
+    # (in SQL the per-date rollup would be `group by date` with `sum(resident_count)`)
     residents_by_date: dict[str, int] = {}
     for r in (client.table("daily_resident_counts").select("date,resident_count")
               .eq("facility_id", facility_id)
@@ -220,6 +249,10 @@ def _load_range(client, facility_id: str, start: Date, end: Date,
         key = str(r["date"])[:10]
         residents_by_date[key] = residents_by_date.get(key, 0) + r["resident_count"]
 
+    # SQL: select * from shifts
+    #      where facility_id = :facility_id and is_working = true
+    #        and date >= :start and date <= :end
+    #        [and roster_version_id = :roster_version_id]   -- when scoped to a version
     shifts_q = (client.table("shifts").select("*")
                 .eq("facility_id", facility_id).eq("is_working", True)
                 .gte("date", str(start)).lte("date", str(end)))
@@ -229,6 +262,8 @@ def _load_range(client, facility_id: str, start: Date, end: Date,
 
     assigns = []
     if shift_by:
+        # SQL: select shift_id, role, staff_id, status from shift_assignments
+        #      where shift_id = any(:shift_ids)
         assigns = [a for a in (client.table("shift_assignments")
                                .select("shift_id,role,staff_id,status")
                                .in_("shift_id", list(shift_by)).execute().data)
@@ -282,6 +317,12 @@ def threshold_monitors(client, facility_id: str) -> list[dict]:
     monitors: list[dict] = []
 
     # 1 · certificate / licence expiry ---------------------------------------
+    # SQL: select c.staff_id, c.cert_type, c.expiry_date,
+    #             jsonb_build_object('name', s.name, 'name_en', s.name_en) as staff
+    #      from staff_certificates c
+    #      left join staff s on s.id = c.staff_id
+    #      where c.facility_id = :facility_id and c.expiry_date is not null
+    #      order by c.expiry_date
     certs = (client.table("staff_certificates")
              .select("staff_id,cert_type,expiry_date, staff:staff(name,name_en)")
              .eq("facility_id", facility_id).not_.is_("expiry_date", "null")
@@ -319,14 +360,22 @@ def threshold_monitors(client, facility_id: str) -> list[dict]:
     # roster-derived monitors need the operative version -----------------------
     day_rows: list[dict] = []
     if version:
+        # SQL: select * from shifts
+        #      where roster_version_id = :version_id and is_working = true
+        #        and date >= :month_start and date <= :month_end
         shifts = (client.table("shifts").select("*")
                   .eq("roster_version_id", version["id"]).eq("is_working", True)
                   .gte("date", month_start).lte("date", month_end).execute().data)
         by_id = {s["id"]: s for s in shifts}
         if by_id:
+            # SQL: select shift_id, staff_id, role, is_agency, status
+            #      from shift_assignments
+            #      where shift_id = any(:shift_ids)
             assigns = (client.table("shift_assignments")
                        .select("shift_id,staff_id,role,is_agency,status")
                        .in_("shift_id", list(by_id)).execute().data)
+            # SQL: select id, employment_type, gender, name, name_en from staff
+            #      where facility_id = :facility_id
             staff_rows = {s["id"]: s for s in (
                 client.table("staff").select("id,employment_type,gender,name,name_en")
                 .eq("facility_id", facility_id).execute().data)}
@@ -418,6 +467,9 @@ def threshold_monitors(client, facility_id: str) -> list[dict]:
     })
 
     # 5 · CL / TOIL accrual ----------------------------------------------------
+    # SQL: select staff_id, debt_type, quantity from future_debt_ledger
+    #      where facility_id = :facility_id and status = 'open'
+    # (the CL/CO/TOIL/OT filter and per-staff sum happen in Python below)
     debts = (client.table("future_debt_ledger").select("staff_id,debt_type,quantity")
              .eq("facility_id", facility_id).eq("status", "open").execute().data)
     per_staff: dict[str, float] = {}
@@ -442,9 +494,16 @@ def threshold_monitors(client, facility_id: str) -> list[dict]:
     })
 
     # 6 · occupancy ------------------------------------------------------------
+    # SQL: select capacity from facilities where id = :facility_id
     facility = (client.table("facilities").select("capacity")
                 .eq("id", facility_id).execute().data)
     capacity = (facility[0].get("capacity") if facility else None) or 0
+    # SQL: select date, resident_count from daily_resident_counts
+    #      where facility_id = :facility_id and date <= :today
+    #      order by date desc
+    #      limit 50
+    # 50 rows, not 1: the newest date can have several unit/care_level rows and they
+    # all have to be summed. The limit assumes < 50 rows per day.
     latest = (client.table("daily_resident_counts").select("date,resident_count")
               .eq("facility_id", facility_id).lte("date", today.isoformat())
               .order("date", desc=True).limit(50).execute().data)

@@ -33,6 +33,18 @@ def _cert_status(expiry: str | None, today: Date) -> tuple[str, int | None]:
 
 def _shift_history(client, facility_id: str, staff_id: str) -> list[dict]:
     """Working cells from the manual/published rosters only — never A/B/C proposals."""
+    # SQL: select a.id, a.tasks, a.status,
+    #             jsonb_build_object(
+    #               'date', sh.date, 'shift_type', sh.shift_type,
+    #               'start_time', sh.start_time, 'end_time', sh.end_time,
+    #               'is_working', sh.is_working, 'unit_id', sh.unit_id,
+    #               'version', jsonb_build_object('version_type', v.version_type,
+    #                                             'status', v.status)) as shift
+    #      from shift_assignments a
+    #      left join shifts sh on sh.id = a.shift_id
+    #      left join roster_versions v on v.id = sh.roster_version_id
+    #      where a.facility_id = :facility_id and a.staff_id = :staff_id
+    # The cancelled / non-working / non-operative-version filters run in Python below.
     rows = (client.table("shift_assignments")
             .select("id,tasks,status, shift:shifts(date,shift_type,start_time,end_time,"
                     "is_working,unit_id, version:roster_versions(version_type,status))")
@@ -56,12 +68,19 @@ def _shift_history(client, facility_id: str, staff_id: str) -> list[dict]:
 
 def staff_analysis(client, facility_id: str, staff_id: str) -> dict:
     today = Date.today()
+    # SQL: select s.*, jsonb_build_object('name', u.name) as unit
+    #      from staff s
+    #      left join facility_units u on u.id = s.primary_unit_id
+    #      where s.facility_id = :facility_id and s.id = :staff_id
     staff_rows = (client.table("staff").select("*, unit:facility_units(name)")
                   .eq("facility_id", facility_id).eq("id", staff_id).execute().data)
     if not staff_rows:
         raise ValueError("staff member not found")
     st = staff_rows[0]
 
+    # SQL: select cert_type, expiry_date from staff_certificates
+    #      where facility_id = :facility_id and staff_id = :staff_id
+    #      order by expiry_date
     certs = (client.table("staff_certificates").select("cert_type,expiry_date")
              .eq("facility_id", facility_id).eq("staff_id", staff_id)
              .order("expiry_date").execute().data)
@@ -105,6 +124,11 @@ def staff_analysis(client, facility_id: str, staff_id: str) -> dict:
     bars.sort(key=lambda b: -(b["explicit"] + b["implicit"]))
 
     # ── gaps: rank-expected task codes never performed + certificate decay ──
+    # SQL: select task_code, task_name, required_rank, requires_audit
+    #      from task_definitions
+    #      where (facility_id = :facility_id or facility_id is null)  -- null = template
+    #        and active = true
+    # (the rank match runs in Python so `required_rank is null` rows stay in scope)
     expected = (client.table("task_definitions").select("task_code,task_name,required_rank,requires_audit")
                 .or_(f"facility_id.eq.{facility_id},facility_id.is.null")
                 .eq("active", True).execute().data)
@@ -138,6 +162,15 @@ def staff_analysis(client, facility_id: str, staff_id: str) -> dict:
     ]
 
     # ── notable events, all from committed rows ──
+    # SQL: select i.id, i.incident_type, i.resolved_at, i.resolution_minutes,
+    #             jsonb_build_object('date', sh.date, 'shift_type', sh.shift_type) as shift
+    #      from sl_incidents i
+    #      left join shifts sh on sh.id = i.shift_id
+    #      where i.facility_id = :facility_id
+    #        and i.replacement_staff_id = :staff_id
+    #        and i.replacement_status = 'resolved'
+    #      order by i.resolved_at desc
+    #      limit 5
     covers = (client.table("sl_incidents")
               .select("id,incident_type,resolved_at,resolution_minutes, shift:shifts(date,shift_type)")
               .eq("facility_id", facility_id).eq("replacement_staff_id", staff_id)

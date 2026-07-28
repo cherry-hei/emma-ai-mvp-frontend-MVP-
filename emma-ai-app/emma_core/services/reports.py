@@ -20,6 +20,9 @@ OFF_CODES = {"OFF", "DO"}
 
 # ── registry reads ───────────────────────────────────────────────────────────
 def list_schedules(client, facility_id: str) -> list[dict]:
+    # SQL: select * from report_schedules
+    #      where facility_id = :facility_id and active = true
+    #      order by sort_order
     return (client.table("report_schedules").select("*")
             .eq("facility_id", facility_id).eq("active", True)
             .order("sort_order").execute().data)
@@ -28,9 +31,16 @@ def list_schedules(client, facility_id: str) -> list[dict]:
 def list_event_triggers(client, facility_id: str, on: Date | None = None) -> list[dict]:
     """Configured triggers, each carrying its real occurrence count this month."""
     start, end = month_bounds(on)
+    # SQL: select * from event_trigger_rules
+    #      where facility_id = :facility_id and active = true
+    #      order by sort_order
     rules = (client.table("event_trigger_rules").select("*")
              .eq("facility_id", facility_id).eq("active", True)
              .order("sort_order").execute().data)
+    # SQL: select event_type, date, title from facility_events
+    #      where facility_id = :facility_id and date >= :start and date <= :end
+    # (counted per event_type in Python and stitched onto the rules — in SQL this
+    #  would be a `left join lateral (... group by event_type)` on the rule code)
     events = (client.table("facility_events").select("event_type,date,title")
               .eq("facility_id", facility_id)
               .gte("date", start).lte("date", end).execute().data)
@@ -42,12 +52,22 @@ def list_event_triggers(client, facility_id: str, on: Date | None = None) -> lis
 
 
 def list_regulatory_docs(client, facility_id: str) -> list[dict]:
+    # SQL: select * from regulatory_documents
+    #      where (facility_id = :facility_id or facility_id is null)  -- null = shared
+    #      order by sort_order
     return (client.table("regulatory_documents").select("*")
             .or_(f"facility_id.eq.{facility_id},facility_id.is.null")
             .order("sort_order").execute().data)
 
 
 def list_reports(client, facility_id: str, *, limit: int = 20) -> list[dict]:
+    # SQL: select id, report_type, title, period_start, period_end, format,
+    #             row_count, created_at
+    #      from reports
+    #      where facility_id = :facility_id
+    #      order by created_at desc
+    #      limit :limit
+    # (payload_json is deliberately not selected — the list view never renders it)
     return (client.table("reports")
             .select("id,report_type,title,period_start,period_end,format,row_count,created_at")
             .eq("facility_id", facility_id)
@@ -55,6 +75,8 @@ def list_reports(client, facility_id: str, *, limit: int = 20) -> list[dict]:
 
 
 def get_report(client, facility_id: str, report_id: str) -> dict | None:
+    # SQL: select * from reports
+    #      where facility_id = :facility_id and id = :report_id
     rows = (client.table("reports").select("*")
             .eq("facility_id", facility_id).eq("id", report_id).execute().data)
     return rows[0] if rows else None
@@ -66,14 +88,21 @@ def _roster_context(client, facility_id: str, period_id: str | None):
     if not period:
         raise ValueError("no roster period to report on")
     version = operative_version(client, facility_id, period["id"])
+    # The three reads every roster-derived report shares; each generator then pivots
+    # them differently in Python.
+    #
+    # SQL: select * from shifts where roster_version_id = :version_id
     shifts = ({} if not version else
               {s["id"]: s for s in (client.table("shifts").select("*")
                                     .eq("roster_version_id", version["id"]).execute().data)})
     assigns = []
     if shifts:
+        # SQL: select * from shift_assignments where shift_id = any(:shift_ids)
         assigns = [a for a in (client.table("shift_assignments").select("*")
                                .in_("shift_id", list(shifts)).execute().data)
                    if a.get("status") != "cancelled" and a.get("staff_id")]
+    # SQL: select id, name, name_en, rank, gender, employment_type from staff
+    #      where facility_id = :facility_id
     staff = {s["id"]: s for s in (
         client.table("staff").select("id,name,name_en,rank,gender,employment_type")
         .eq("facility_id", facility_id).execute().data)}
@@ -128,6 +157,10 @@ def _roster_hours(client, facility_id: str, params: dict) -> dict:
 def _ph_dayoff(client, facility_id: str, params: dict) -> dict:
     period, version, shifts, assigns, staff = _roster_context(
         client, facility_id, params.get("period_id"))
+    # SQL: select date, day_type from calendar_days
+    #      where (facility_id = :facility_id or facility_id is null)
+    #        and date >= :period_start and date <= :period_end
+    # (the day_type filter is the comprehension's `if`, not a where clause)
     holidays = {iso(c["date"]) for c in (
         client.table("calendar_days").select("date,day_type")
         .or_(f"facility_id.eq.{facility_id},facility_id.is.null")
@@ -266,11 +299,21 @@ def _staff_register(client, facility_id: str, params: dict) -> dict:
     """SWD staff register (Annex 3.2 shape): who is employed, at what rank, with
     which certificates and medication-audit status."""
     period, version, *_ = _roster_context(client, facility_id, params.get("period_id"))
+    # SQL: select s.id, s.name, s.name_en, s.rank, s.employment_type, s.status,
+    #             s.gender, s.is_audited_for_medication, s.is_mentor,
+    #             jsonb_build_object('name', u.name) as unit
+    #      from staff s
+    #      left join facility_units u on u.id = s.primary_unit_id
+    #      where s.facility_id = :facility_id
+    #      order by s.rank
     staff = (client.table("staff")
              .select("id,name,name_en,rank,employment_type,status,gender,"
                      "is_audited_for_medication,is_mentor, unit:facility_units(name)")
              .eq("facility_id", facility_id).order("rank").execute().data)
     certs: dict[str, list[str]] = {}
+    # SQL: select staff_id, cert_type, expiry_date from staff_certificates
+    #      where facility_id = :facility_id
+    #      order by expiry_date
     for c in (client.table("staff_certificates").select("staff_id,cert_type,expiry_date")
               .eq("facility_id", facility_id).order("expiry_date").execute().data):
         certs.setdefault(c["staff_id"], []).append(
@@ -458,6 +501,12 @@ def generate(client, facility_id: str, report_type: str, *, params: dict | None 
         "generated_by": profile_id,
     }
     if persist:
+        # SQL: insert into reports
+        #        (facility_id, report_type, title, period_start, period_end, format,
+        #         params_json, payload_json, row_count, generated_by)
+        #      values (:facility_id, :report_type, :title, :period_start, :period_end,
+        #              'json', :params::jsonb, :payload::jsonb, :row_count, :profile_id)
+        #      returning *
         row = client.table("reports").insert(row).execute().data[0]
     return {**row, "payload": result}
 
@@ -475,12 +524,17 @@ def to_csv(payload: dict) -> str:
 def run_schedule(client, facility_id: str, schedule_id: str,
                  profile_id: str | None = None) -> dict:
     """Manual 'Generate Now' on a scheduled report — same code path the cron uses."""
+    # SQL: select * from report_schedules
+    #      where facility_id = :facility_id and id = :schedule_id
     rows = (client.table("report_schedules").select("*")
             .eq("facility_id", facility_id).eq("id", schedule_id).execute().data)
     if not rows:
         raise ValueError("report schedule not found")
     schedule = rows[0]
     report = generate(client, facility_id, schedule["report_type"], profile_id=profile_id)
+    # SQL: update report_schedules set last_run_at = :today
+    #      where id = :schedule_id
+    #      returning *
     (client.table("report_schedules").update({"last_run_at": Date.today().isoformat()})
      .eq("id", schedule_id).execute())
     return report
