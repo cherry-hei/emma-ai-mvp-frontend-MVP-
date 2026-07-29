@@ -453,6 +453,81 @@ class FacilityEventPatch(BaseModel):
     staffing_requirements: list[StaffingRequirementIn] | None = None
 
 
+# ── 4.1 staff qualifications ────────────────────────────────────────────────
+class StaffQualificationCreate(BaseModel):
+    staff_id: str
+    # Free text on purpose: a facility invents its own capability names and the
+    # eligibility rules match them by string, so a closed enum would need a
+    # migration every time a home adds one.
+    qualification_type: str
+    is_active: bool = True
+    effective_from: Date | None = None
+    expiry_date: Date | None = None
+    notes: str | None = None
+
+
+class StaffQualificationPatch(BaseModel):
+    qualification_type: str | None = None
+    is_active: bool | None = None
+    effective_from: Date | None = None
+    expiry_date: Date | None = None
+    notes: str | None = None
+
+
+class StaffQualificationOut(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    id: str
+    staff_id: str
+    qualification_type: str
+    is_active: bool = True
+    effective_from: Date | None = None
+    expiry_date: Date | None = None
+    notes: str | None = None
+
+
+# ── 4.3 floor / unit minimum staffing ───────────────────────────────────────
+class FloorRuleCreate(BaseModel):
+    unit_id: str | None = None
+    floor: str | None = None
+    time_window_start: str
+    time_window_end: str
+    # "HCA" or an alternatives expression such as "CW|HCA".
+    rank: str
+    min_count: int = Field(ge=0)
+    condition_json: dict = Field(default_factory=dict)
+    active: bool = True
+    effective_from: Date | None = None
+    effective_to: Date | None = None
+
+
+class FloorRulePatch(BaseModel):
+    unit_id: str | None = None
+    floor: str | None = None
+    time_window_start: str | None = None
+    time_window_end: str | None = None
+    rank: str | None = None
+    min_count: int | None = Field(default=None, ge=0)
+    condition_json: dict | None = None
+    active: bool | None = None
+    effective_from: Date | None = None
+    effective_to: Date | None = None
+
+
+class FloorRuleOut(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    id: str
+    unit_id: str | None = None
+    floor: str | None = None
+    time_window_start: str
+    time_window_end: str
+    rank: str
+    min_count: int
+    condition_json: dict = Field(default_factory=dict)
+    active: bool = True
+    effective_from: Date | None = None
+    effective_to: Date | None = None
+
+
 class RoiSettingsPatch(BaseModel):
     model_config = ConfigDict(extra="ignore")
     manager_hourly_rate: float | None = None

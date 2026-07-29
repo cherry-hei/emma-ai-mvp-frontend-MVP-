@@ -37,7 +37,7 @@ def summary(client, facility_id: str) -> dict:
         passed = sum(d["passed"] for d in ratio_days)
         compliance_rate = round(passed / checks * 100, 1) if checks else 0.0
 
-    shift_mix = _today_shift_mix(client, version, today)
+    shift_mix, shift_mix_date = _shift_mix(client, version, today)
 
     # SQL: select count(*) from staff
     #      where facility_id = :facility_id and status = 'active'
@@ -70,6 +70,9 @@ def summary(client, facility_id: str) -> dict:
         },
         "incident_distribution": stats["distribution"],
         "shift_distribution": shift_mix,
+        # The mix is not always today's — see _shift_mix. The UI labels the card
+        # with this date so a fallback is never mistaken for live staffing.
+        "shift_distribution_date": shift_mix_date,
         "recent_incidents": recent,
         "alerts": open_alerts[:6],
         "total_staff": staff_count,
@@ -77,17 +80,49 @@ def summary(client, facility_id: str) -> dict:
     }
 
 
-def _today_shift_mix(client, version: dict | None, today: Date) -> list[dict]:
-    """How many people are on each shift code today, in the operative roster."""
+def _mix_date(client, version_id: str, today: Date) -> str | None:
+    """The date the shift mix should describe.
+
+    Rosters are planned in closed cycles, so on the day after a period ends —
+    and on any day before the next one is drafted — no shift exists for `today`
+    and the card would blank out. Fall back to the nearest rostered day: the
+    most recent one on or before today, or, if the whole roster is still ahead,
+    its first day.
+    """
+    # SQL: select date from shifts
+    #      where roster_version_id = :version_id and date <= :today
+    #      order by date desc limit 1
+    past = (client.table("shifts").select("date")
+            .eq("roster_version_id", version_id).lte("date", today.isoformat())
+            .order("date", desc=True).limit(1).execute().data)
+    if past:
+        return str(past[0]["date"])[:10]
+    # SQL: same, for date > :today, ascending
+    ahead = (client.table("shifts").select("date")
+             .eq("roster_version_id", version_id).gt("date", today.isoformat())
+             .order("date").limit(1).execute().data)
+    return str(ahead[0]["date"])[:10] if ahead else None
+
+
+def _shift_mix(client, version: dict | None,
+               today: Date) -> tuple[list[dict], str | None]:
+    """How many people are on each shift code, in the operative roster.
+
+    Returns the mix and the date it describes, which is today whenever today is
+    rostered and the nearest rostered day otherwise.
+    """
     if not version:
-        return []
+        return [], None
+    on = _mix_date(client, version["id"], today)
+    if not on:
+        return [], None
     # SQL: select id, shift_type, is_working from shifts
-    #      where roster_version_id = :version_id and date = :today
+    #      where roster_version_id = :version_id and date = :on
     shifts = (client.table("shifts").select("id,shift_type,is_working")
-              .eq("roster_version_id", version["id"]).eq("date", today.isoformat())
+              .eq("roster_version_id", version["id"]).eq("date", on)
               .execute().data)
     if not shifts:
-        return []
+        return [], on
     by_id = {s["id"]: s for s in shifts}
     # SQL: select shift_id, staff_id, status from shift_assignments
     #      where shift_id = any(:shift_ids)
@@ -107,4 +142,4 @@ def _today_shift_mix(client, version: dict | None, today: Date) -> list[dict]:
         [{"shift_type": k, "count": v, "is_working": working.get(k, True),
           "pct": round(v / total * 100) if total else 0} for k, v in counts.items()],
         key=lambda r: (-r["count"], r["shift_type"]),
-    )
+    ), on

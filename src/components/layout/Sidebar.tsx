@@ -10,6 +10,7 @@ const PINK_HOVER = '#c9156a'
 const NAV = [
   { key: 'nav_dashboard',   icon: '🏠',  path: ROUTES.dashboard  },
   { key: 'nav_roster',      icon: '📅',  path: ROUTES.roster     },
+  { key: 'nav_scheduling',  icon: '🧩',  path: ROUTES.scheduling },
   { key: 'nav_compliance',  icon: '✅',  path: ROUTES.compliance },
   { key: 'nav_approval',    icon: '👥✓', path: ROUTES.approval   },
   { key: 'nav_personnel',   icon: '👤',  path: ROUTES.staff      },
@@ -27,6 +28,7 @@ export function Sidebar() {
   const FALLBACK: Record<string, { zh: string; en: string }> = {
     nav_dashboard:  { zh: '主頁',       en: 'Dashboard'     },
     nav_roster:     { zh: '更表',       en: 'Roster'        },
+    nav_scheduling: { zh: '任務排程',   en: 'Task Scheduling'},
     nav_compliance: { zh: '合規',       en: 'Compliance'    },
     nav_approval:   { zh: '審批',       en: 'Approval'      },
     nav_personnel:  { zh: '員工檔案',   en: 'Staff Portfolio'},

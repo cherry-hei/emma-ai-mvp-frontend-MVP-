@@ -13,9 +13,10 @@ import type {
   DashboardSummary, EventTrigger, FacilityEvent, FutureDebtRow, GeneratedReport, Incident,
   IncidentStats, JobView, LeaveCategory, LeaveGroup, LeaveRequest, LeaveStats,
   MyAttendance, MyProfile, MyRoster, MySummary, MyTask, OptimizeResponse, PeriodOut,
-  Profile, RatioResult, RegulatoryDoc, ReplacementCandidate, ReportRow,
+  FloorRule, Profile, RatioResult, RegulatoryDoc, ReplacementCandidate, ReportRow,
   ReportSchedule, ReportType, ResidentCountOut, RoiSettings, RoiSummary, RosterGrid,
-  RosterOption, SessionOut, ShiftDef, StaffAiAnalysis, StaffDetail, TaskAssignment, TaskDefOut,
+  RosterOption, RuleIssue, SessionOut, ShiftDef, StaffAiAnalysis, StaffDetail,
+  StaffQualification, TaskAssignment, TaskDefOut,
   ThresholdMonitor, Unit, ValidationOut, VersionOut,
 } from './apiTypes'
 
@@ -94,12 +95,33 @@ export function logout(): void {
   writeRefresh(null)
 }
 
+/**
+ * A rule refusal that kept its reasons.
+ *
+ * The backend answers a blocked write with a list — wrong rank *and* not
+ * medication-audited are two separate things to fix — so the UI needs them as
+ * data, not one concatenated sentence. Plain failures stay plain `Error`s.
+ */
+export class ApiRuleError extends Error {
+  readonly code: string
+  readonly issues: RuleIssue[]
+
+  constructor(message: string, code: string, issues: RuleIssue[]) {
+    super(message)
+    this.name = 'ApiRuleError'
+    this.code = code
+    this.issues = issues
+  }
+}
+
 async function toError(res: Response): Promise<Error> {
   let msg = `${res.status} ${res.statusText}`
   try {
     const body = (await res.json()) as ApiError
     const d = body.detail
-    msg = typeof d === 'string' ? d : d?.message || msg
+    if (typeof d === 'string') return new Error(d)
+    msg = d?.message || msg
+    if (d?.issues?.length) return new ApiRuleError(msg, d.code, d.issues)
   } catch {
     /* non-JSON body */
   }
@@ -267,6 +289,59 @@ export const api = {
 
   deleteFacilityEvent: (id: string) =>
     apiFetch<void>(`/facility-events/${id}`, { method: 'DELETE' }),
+
+  // ── 4.1 qualifications · 4.3 floor coverage ────────────────────────────────
+  staffQualifications: (params?: { staffId?: string; activeOnly?: boolean }) => {
+    const q = new URLSearchParams()
+    if (params?.staffId) q.set('staff_id', params.staffId)
+    if (params?.activeOnly) q.set('active_only', 'true')
+    return apiFetch<StaffQualification[]>(`/staff-qualifications${q.size ? `?${q}` : ''}`)
+  },
+
+  createStaffQualification: (body: {
+    staff_id: string; qualification_type: string; is_active?: boolean
+    effective_from?: string | null; expiry_date?: string | null; notes?: string | null
+  }) => apiFetch<StaffQualification>('/staff-qualifications', {
+    method: 'POST', body: JSON.stringify(body),
+  }),
+
+  updateStaffQualification: (id: string, body: Partial<{
+    qualification_type: string; is_active: boolean
+    effective_from: string | null; expiry_date: string | null; notes: string | null
+  }>) => apiFetch<StaffQualification>(`/staff-qualifications/${id}`, {
+    method: 'PATCH', body: JSON.stringify(body),
+  }),
+
+  deleteStaffQualification: (id: string) =>
+    apiFetch<void>(`/staff-qualifications/${id}`, { method: 'DELETE' }),
+
+  floorRules: (params?: { unitId?: string; activeOnly?: boolean }) => {
+    const q = new URLSearchParams()
+    if (params?.unitId) q.set('unit_id', params.unitId)
+    if (params?.activeOnly) q.set('active_only', 'true')
+    return apiFetch<FloorRule[]>(`/floor-rules${q.size ? `?${q}` : ''}`)
+  },
+
+  createFloorRule: (body: {
+    unit_id?: string | null; floor?: string | null
+    time_window_start: string; time_window_end: string
+    rank: string; min_count: number
+    condition_json?: FloorRule['condition_json']; active?: boolean
+    effective_from?: string | null; effective_to?: string | null
+  }) => apiFetch<FloorRule>('/floor-rules', { method: 'POST', body: JSON.stringify(body) }),
+
+  updateFloorRule: (id: string, body: Partial<{
+    unit_id: string | null; floor: string | null
+    time_window_start: string; time_window_end: string
+    rank: string; min_count: number
+    condition_json: FloorRule['condition_json']; active: boolean
+    effective_from: string | null; effective_to: string | null
+  }>) => apiFetch<FloorRule>(`/floor-rules/${id}`, {
+    method: 'PATCH', body: JSON.stringify(body),
+  }),
+
+  deleteFloorRule: (id: string) =>
+    apiFetch<void>(`/floor-rules/${id}`, { method: 'DELETE' }),
 
   // POST and PATCH /shifts share the same upsert-cell behavior on the backend.
   upsertCell: (body: {

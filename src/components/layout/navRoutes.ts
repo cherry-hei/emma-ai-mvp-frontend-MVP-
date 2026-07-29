@@ -7,6 +7,7 @@
 export const ROUTES = {
   dashboard:  '/dashboard',
   roster:     '/roster',
+  scheduling: '/scheduling',
   compliance: '/compliance',
   approval:   '/approval',
   staff:      '/staff',

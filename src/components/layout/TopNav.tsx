@@ -9,6 +9,7 @@ const PINK = '#f28f9e'
 
 const TABS = [
   { key: 'topnav_roster',     path: ROUTES.roster     },
+  { key: 'topnav_scheduling', path: ROUTES.scheduling },
   { key: 'topnav_staffing',   path: ROUTES.staff      },
   { key: 'topnav_compliance', path: ROUTES.compliance },
   { key: 'topnav_reports',    path: ROUTES.reports    },

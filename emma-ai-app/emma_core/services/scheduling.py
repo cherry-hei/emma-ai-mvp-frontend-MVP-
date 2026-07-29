@@ -17,6 +17,7 @@ from datetime import date as Date, datetime as DateTime
 from typing import Iterable
 
 from ..constants import can_cover_rank
+from ..errors import TaskEligibilityError
 from ..shifttime import day_spans, duty_spans, to_minutes
 
 PHASE4_RULE_CODES = ("task_eligibility", "event_staffing", "floor_coverage")
@@ -491,6 +492,17 @@ def _qualification_map_for_date(
     return out
 
 
+def _shift_defs_by_type(client, facility_id: str) -> dict[str, dict]:
+    """The facility's shift dictionary, keyed by code.
+
+    Needed wherever a task code's shift scope is checked, because a split shift
+    only matches an ordinary code by way of the code's own duty window.
+    """
+    rows = (client.table("shift_definitions").select("*")
+            .eq("facility_id", facility_id).execute().data)
+    return {row["shift_type"]: row for row in rows}
+
+
 def _task_definition(client, facility_id: str, task_id: str) -> dict:
     rows = (client.table("task_definitions").select("*")
             .eq("id", task_id).eq("active", True).execute().data)
@@ -572,7 +584,52 @@ def _raise_task_issues(
     _persist_violations(
         client, facility_id, shift.get("roster_version_id"), [violation])
     reasons = ", ".join(issue["reason"] for issue in issues)
-    raise ValueError(f"task assignment is not eligible: {reasons}")
+    raise TaskEligibilityError(
+        f"{label} cannot be assigned to this staff member: {reasons}",
+        issues,
+        task_id=task["id"],
+        task_code=task.get("task_code"),
+        shift_assignment_id=assignment["id"],
+    )
+
+
+def shift_type_matches(
+    required: str | None,
+    shift: dict,
+    shift_defs_by_type: dict[str, dict] | None = None,
+) -> bool:
+    """Does this rostered shift carry the duty the task code is scoped to?
+
+    Ordinary shifts match by code. A split shift is the exception the Code of
+    Practice forces: Home A's A/N is 07:00-13:30 *and* 21:30-07:00, so the
+    person really does work the morning duty and a morning task code belongs on
+    that cell. Matching on the code alone would reject it.
+
+    A split shift therefore also matches when one of its duty segments begins
+    inside the required code's own duty window. That stays narrow on purpose —
+    it does not make an A code valid on a B or E shift, only on a split shift
+    that genuinely contains the A duty.
+    """
+    actual = shift.get("shift_type")
+    if not required or required == actual:
+        return True
+    if not shift.get("segments"):
+        return False
+    definition = (shift_defs_by_type or {}).get(required)
+    if not definition:
+        return False
+    win_start = to_minutes(str(definition.get("start_time") or "")[:5])
+    win_end = to_minutes(str(definition.get("end_time") or "")[:5])
+    if win_start is None or win_end is None:
+        return False
+    windows = day_spans(win_start, win_end, win_end <= win_start)
+    for segment in shift["segments"]:
+        seg_start = to_minutes(str(segment.get("start") or "")[:5])
+        if seg_start is None:
+            continue
+        if any(start <= seg_start < end for start, end in windows):
+            return True
+    return False
 
 
 def task_assignment_issues(
@@ -580,11 +637,12 @@ def task_assignment_issues(
     staff: dict,
     qualifications: Iterable[str],
     shift: dict,
+    shift_defs_by_type: dict[str, dict] | None = None,
 ) -> list[dict]:
     issues = task_eligibility_issues(task, staff, qualifications)
     required_shift = task.get("shift_type")
     actual_shift = shift.get("shift_type")
-    if required_shift and required_shift != actual_shift:
+    if not shift_type_matches(required_shift, shift, shift_defs_by_type):
         issues.append({
             "reason": "shift_type",
             "required": required_shift,
@@ -624,6 +682,11 @@ def validate_task_labels(
                    .eq("active", True).execute().data)
     qualifications = _active_qualification_map(
         client, facility_id, [staff_id], on_date=on_date).get(staff_id, set())
+    shift_defs = _shift_defs_by_type(client, facility_id)
+    # The cell being written is not a shift row yet, so stand in for it with the
+    # dictionary entry — that is what carries the split-shift segments.
+    cell = {"shift_type": shift_type, "unit_id": staff.get("primary_unit_id"),
+            "segments": (shift_defs.get(shift_type) or {}).get("segments")}
 
     violations: list[dict] = []
     for label in labels:
@@ -641,24 +704,37 @@ def validate_task_labels(
             continue
         compatible = [
             task for task in candidates
-            if (not task.get("shift_type") or task["shift_type"] == shift_type)
+            if shift_type_matches(task.get("shift_type"), cell, shift_defs)
             and task_rank_matches(staff.get("rank"), task.get("required_rank"))
         ]
         task = (compatible or candidates)[0]
         issues = task_assignment_issues(
-            task, staff, qualifications,
-            {"shift_type": shift_type, "unit_id": staff.get("primary_unit_id")},
-        )
+            task, staff, qualifications, cell, shift_defs)
         if issues:
             violations.append({
                 "rule_code": "task_eligibility",
                 "severity": "hard",
                 "message": f"{label} is not eligible for this staff/shift.",
-                "details": {"task_id": task["id"], "issues": issues},
+                "details": {"task_id": task["id"], "task_label": label,
+                            "issues": issues},
             })
     if violations:
         _persist_violations(client, facility_id, roster_version_id, violations)
-        raise ValueError(violations[0]["message"])
+        # One cell edit can carry several bad labels. Report every rejected
+        # label with its own reasons so the editor can mark them individually
+        # instead of the manager fixing one, re-saving, and finding the next.
+        issues = [
+            {"task_label": row["details"].get("task_label"),
+             "task_id": row["details"].get("task_id"),
+             "message": row["message"],
+             "issues": row["details"].get("issues")
+             or [{"reason": row["details"].get("reason")}]}
+            for row in violations
+        ]
+        raise TaskEligibilityError(
+            f"{len(violations)} task label(s) rejected for this shift.",
+            issues, staff_id=staff_id, shift_type=shift_type,
+        )
 
 
 def list_task_assignments(
@@ -704,7 +780,8 @@ def create_task_assignment(client, facility_id: str, payload: dict) -> dict:
             staff["id"], set())
     _raise_task_issues(
         client, facility_id, assignment, shift, task,
-        task_assignment_issues(task, staff, qualifications, shift),
+        task_assignment_issues(task, staff, qualifications, shift,
+                               _shift_defs_by_type(client, facility_id)),
     )
     label = task.get("task_name") or task["task_code"]
     row = {
@@ -761,7 +838,8 @@ def update_task_assignment(
             staff["id"], set())
     _raise_task_issues(
         client, facility_id, assignment, shift, task,
-        task_assignment_issues(task, staff, qualifications, shift),
+        task_assignment_issues(task, staff, qualifications, shift,
+                               _shift_defs_by_type(client, facility_id)),
     )
 
     new_label = task.get("task_name") or task["task_code"]
@@ -959,6 +1037,223 @@ def delete_facility_event(client, facility_id: str, event_id: str) -> None:
      .eq("facility_id", facility_id).eq("id", event_id).execute())
 
 
+# ── 4.1 staff qualifications ────────────────────────────────────────────────
+def _own_staff(client, facility_id: str, staff_id: str) -> dict:
+    rows = (client.table("staff").select("id,name,rank")
+            .eq("facility_id", facility_id).eq("id", staff_id).execute().data)
+    if not rows:
+        raise ValueError("staff member not found")
+    return rows[0]
+
+
+def list_staff_qualifications(
+    client,
+    facility_id: str,
+    *,
+    staff_id: str | None = None,
+    active_only: bool = False,
+) -> list[dict]:
+    query = (client.table("staff_qualifications").select("*")
+             .eq("facility_id", facility_id))
+    if staff_id:
+        query = query.eq("staff_id", staff_id)
+    if active_only:
+        query = query.eq("is_active", True)
+    return query.order("qualification_type").execute().data
+
+
+def create_staff_qualification(client, facility_id: str, payload: dict) -> dict:
+    _own_staff(client, facility_id, payload["staff_id"])
+    qualification = _normalise_code(str(payload.get("qualification_type") or ""))
+    if not qualification:
+        raise ValueError("qualification_type is required")
+    row = {
+        "facility_id": facility_id,
+        "staff_id": payload["staff_id"],
+        # Stored normalised so the eligibility engine's set membership is exact
+        # regardless of how a manager typed it.
+        "qualification_type": qualification,
+        "is_active": payload.get("is_active", True),
+        "effective_from": payload.get("effective_from"),
+        "expiry_date": payload.get("expiry_date"),
+        "notes": payload.get("notes"),
+    }
+    if (row["effective_from"] and row["expiry_date"]
+            and _date_value(row["expiry_date"]) < _date_value(row["effective_from"])):
+        raise ValueError("expiry_date cannot precede effective_from")
+    # One grant per capability per person: re-granting updates the existing row
+    # (new dates, re-activated) instead of stacking a second one. The table
+    # would allow two rows differing only by effective_from, but two live
+    # "medication_audited" rows for the same nurse is a data-entry slip, not a
+    # history the eligibility check has any use for.
+    existing = (client.table("staff_qualifications").select("id")
+                .eq("facility_id", facility_id).eq("staff_id", row["staff_id"])
+                .eq("qualification_type", qualification)
+                .execute().data)
+    if existing:
+        return (client.table("staff_qualifications").update(row)
+                .eq("id", existing[0]["id"]).execute().data[0])
+    return client.table("staff_qualifications").insert(row).execute().data[0]
+
+
+def update_staff_qualification(
+    client,
+    facility_id: str,
+    qualification_id: str,
+    patch: dict,
+) -> dict:
+    rows = (client.table("staff_qualifications").select("*")
+            .eq("facility_id", facility_id).eq("id", qualification_id)
+            .execute().data)
+    if not rows:
+        raise ValueError("qualification not found")
+    update = {k: v for k, v in patch.items() if k in {
+        "qualification_type", "is_active", "effective_from", "expiry_date", "notes"}}
+    if "qualification_type" in update:
+        update["qualification_type"] = _normalise_code(str(update["qualification_type"]))
+        if not update["qualification_type"]:
+            raise ValueError("qualification_type is required")
+        # Renaming onto a capability the person already holds would trip the
+        # unique index as a 500; say what happened instead.
+        clash = (client.table("staff_qualifications").select("id")
+                 .eq("facility_id", facility_id).eq("staff_id", rows[0]["staff_id"])
+                 .eq("qualification_type", update["qualification_type"])
+                 .neq("id", qualification_id).execute().data)
+        if clash:
+            raise ValueError(
+                f"this staff member already holds '{update['qualification_type']}'")
+    merged = {**rows[0], **update}
+    if (merged.get("effective_from") and merged.get("expiry_date")
+            and _date_value(merged["expiry_date"]) < _date_value(merged["effective_from"])):
+        raise ValueError("expiry_date cannot precede effective_from")
+    if not update:
+        return rows[0]
+    return (client.table("staff_qualifications").update(update)
+            .eq("id", qualification_id).execute().data[0])
+
+
+def delete_staff_qualification(client, facility_id: str, qualification_id: str) -> None:
+    (client.table("staff_qualifications").delete()
+     .eq("facility_id", facility_id).eq("id", qualification_id).execute())
+
+
+# ── 4.3 floor / unit minimum staffing ───────────────────────────────────────
+# Only the keys evaluate_floor_coverage actually reads. A typo in a rule that is
+# silently ignored is worse than a rejected save: the floor looks protected and
+# is not.
+FLOOR_CONDITION_KEYS = {
+    "weekdays", "required_shift_types", "employment_types", "when_7a_composition",
+}
+
+
+def _validate_floor_condition(condition: dict) -> dict:
+    if not condition:
+        return {}
+    if not isinstance(condition, dict):
+        raise ValueError("condition_json must be an object")
+    unknown = sorted(set(condition) - FLOOR_CONDITION_KEYS)
+    if unknown:
+        raise ValueError(
+            f"unknown condition key(s) {unknown}; "
+            f"supported: {sorted(FLOOR_CONDITION_KEYS)}")
+    weekdays = condition.get("weekdays")
+    if weekdays is not None:
+        if (not isinstance(weekdays, list)
+                or any(not isinstance(d, int) or not 0 <= d <= 6 for d in weekdays)):
+            raise ValueError("weekdays must be a list of integers 0 (Mon) to 6 (Sun)")
+    composition = condition.get("when_7a_composition")
+    if composition is not None and (
+            not isinstance(composition, dict)
+            or any(not isinstance(v, int) or v < 0 for v in composition.values())):
+        raise ValueError("when_7a_composition must map employment type to a count")
+    for key in ("required_shift_types", "employment_types"):
+        value = condition.get(key)
+        if value is not None and (not isinstance(value, list)
+                                  or any(not isinstance(v, str) for v in value)):
+            raise ValueError(f"{key} must be a list of strings")
+    return condition
+
+
+def _validate_floor_window(start: str, end: str) -> None:
+    # to_minutes happily turns "25:00" into 1500 — fine for arithmetic on a
+    # roster row, wrong as input validation, so check the clock itself here
+    # rather than letting Postgres reject it as a 500.
+    for value in (start, end):
+        text = str(value)[:5]
+        hours, _, minutes = text.partition(":")
+        if (not hours.isdigit() or not minutes.isdigit()
+                or not 0 <= int(hours) <= 23 or not 0 <= int(minutes) <= 59):
+            raise ValueError(
+                f"'{value}' is not a valid time; use HH:MM between 00:00 and 23:59")
+
+
+def list_floor_rules(
+    client,
+    facility_id: str,
+    *,
+    unit_id: str | None = None,
+    active_only: bool = False,
+) -> list[dict]:
+    query = (client.table("floor_min_staffing_rules").select("*")
+             .eq("facility_id", facility_id))
+    if unit_id:
+        query = query.eq("unit_id", unit_id)
+    if active_only:
+        query = query.eq("active", True)
+    return query.order("time_window_start").execute().data
+
+
+def create_floor_rule(client, facility_id: str, payload: dict) -> dict:
+    if not payload.get("unit_id") and not payload.get("floor"):
+        raise ValueError("a floor rule needs either unit_id or floor")
+    _validate_unit(client, facility_id, payload.get("unit_id"))
+    _validate_floor_window(payload["time_window_start"], payload["time_window_end"])
+    row = {
+        "facility_id": facility_id,
+        "unit_id": payload.get("unit_id"),
+        "floor": payload.get("floor"),
+        "time_window_start": str(payload["time_window_start"])[:5],
+        "time_window_end": str(payload["time_window_end"])[:5],
+        "rank": payload["rank"],
+        "min_count": int(payload["min_count"]),
+        "condition_json": _validate_floor_condition(payload.get("condition_json") or {}),
+        "active": payload.get("active", True),
+        "effective_from": payload.get("effective_from"),
+        "effective_to": payload.get("effective_to"),
+    }
+    return client.table("floor_min_staffing_rules").insert(row).execute().data[0]
+
+
+def update_floor_rule(client, facility_id: str, rule_id: str, patch: dict) -> dict:
+    rows = (client.table("floor_min_staffing_rules").select("*")
+            .eq("facility_id", facility_id).eq("id", rule_id).execute().data)
+    if not rows:
+        raise ValueError("floor rule not found")
+    update = {k: v for k, v in patch.items() if k in {
+        "unit_id", "floor", "time_window_start", "time_window_end", "rank",
+        "min_count", "condition_json", "active", "effective_from", "effective_to"}}
+    if "unit_id" in update:
+        _validate_unit(client, facility_id, update["unit_id"])
+    if "condition_json" in update:
+        update["condition_json"] = _validate_floor_condition(update["condition_json"] or {})
+    merged = {**rows[0], **update}
+    if not merged.get("unit_id") and not merged.get("floor"):
+        raise ValueError("a floor rule needs either unit_id or floor")
+    _validate_floor_window(merged["time_window_start"], merged["time_window_end"])
+    for key in ("time_window_start", "time_window_end"):
+        if key in update:
+            update[key] = str(update[key])[:5]
+    if not update:
+        return rows[0]
+    return (client.table("floor_min_staffing_rules").update(update)
+            .eq("id", rule_id).execute().data[0])
+
+
+def delete_floor_rule(client, facility_id: str, rule_id: str) -> None:
+    (client.table("floor_min_staffing_rules").delete()
+     .eq("facility_id", facility_id).eq("id", rule_id).execute())
+
+
 def _task_roster_violations(
     *,
     task_rows: list[dict],
@@ -967,6 +1262,7 @@ def _task_roster_violations(
     staff_by_id: dict[str, dict],
     task_by_id: dict[str, dict],
     qualification_rows: list[dict],
+    shift_defs_by_type: dict[str, dict] | None = None,
 ) -> list[dict]:
     violations: list[dict] = []
     qualification_cache: dict[str, dict[str, set[str]]] = {}
@@ -998,7 +1294,8 @@ def _task_roster_violations(
                 qualification_rows, date_text)
         issues = task_assignment_issues(
             task, staff,
-            qualification_cache[date_text].get(staff["id"], set()), shift)
+            qualification_cache[date_text].get(staff["id"], set()), shift,
+            shift_defs_by_type)
         if not issues:
             continue
         violations.append({
@@ -1057,6 +1354,7 @@ def validate_roster_rules(
     # Phase 4 task-assignment endpoints.
     from .tasks import sync_assignment_tasks
 
+    shift_defs = _shift_defs_by_type(client, facility_id)
     for assignment in assignments:
         if assignment.get("tasks"):
             shift = shifts_by_id[assignment["shift_id"]]
@@ -1065,8 +1363,8 @@ def validate_roster_rules(
             for task in task_defs:
                 matches_context = (
                     task_rank_matches(staff_row.get("rank"), task.get("required_rank"))
-                    and (not task.get("shift_type")
-                         or task["shift_type"] == shift.get("shift_type"))
+                    and shift_type_matches(
+                        task.get("shift_type"), shift, shift_defs)
                 )
                 for label in (task.get("task_name"), task.get("task_code")):
                     if label and (label not in task_by_label or matches_context):
@@ -1089,6 +1387,7 @@ def validate_roster_rules(
         staff_by_id=staff_by_id,
         task_by_id=task_by_id,
         qualification_rows=qualification_rows,
+        shift_defs_by_type=shift_defs,
     )
 
     if shifts:

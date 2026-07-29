@@ -89,6 +89,13 @@ export interface VersionOut {
   created_at?: string | null
 }
 
+/** One duty window of a split shift, e.g. A/N's 07:00–13:30 and 21:30–07:00. */
+export interface ShiftSegment {
+  start: string
+  end: string
+  cross_midnight?: boolean
+}
+
 export interface ShiftDef {
   id: string
   shift_type: string
@@ -97,6 +104,9 @@ export interface ShiftDef {
   end_time?: string | null
   cross_midnight: boolean
   is_working: boolean
+  /** Present only on split shifts; null means one contiguous window. */
+  segments?: ShiftSegment[] | null
+  paid_minutes?: number | null
 }
 
 export interface RosterCell {
@@ -230,6 +240,37 @@ export interface FacilityEvent {
   staffing_requirements: StaffingRequirement[]
 }
 
+/** 4.1 — a capability a staff member holds, matched by the eligibility rules. */
+export interface StaffQualification {
+  id: string
+  staff_id: string
+  qualification_type: string
+  is_active: boolean
+  effective_from?: string | null
+  expiry_date?: string | null
+  notes?: string | null
+}
+
+/** 4.3 — a minute-level minimum for one floor/unit over one time window. */
+export interface FloorRule {
+  id: string
+  unit_id?: string | null
+  floor?: string | null
+  time_window_start: string
+  time_window_end: string
+  rank: string
+  min_count: number
+  condition_json: {
+    weekdays?: number[]
+    required_shift_types?: string[]
+    employment_types?: string[]
+    when_7a_composition?: Record<string, number>
+  }
+  active: boolean
+  effective_from?: string | null
+  effective_to?: string | null
+}
+
 export interface TaskAssignment {
   id: string
   roster_version_id?: string | null
@@ -278,8 +319,25 @@ export interface CreatePeriodResponse {
   manual_version_id: string | null
 }
 
+/** One machine-readable reason a rule refused a write. */
+export interface RuleIssue {
+  reason?: string
+  required?: string | null
+  actual?: string | null
+  missing?: string[]
+  blocked?: string[]
+  allowed_task_codes?: string[]
+  actual_task_code?: string
+  /** Set when one request carried several rejected items (e.g. task labels). */
+  task_label?: string | null
+  message?: string
+  issues?: RuleIssue[]
+}
+
 export interface ApiError {
-  detail: { code: string; message: string } | string
+  detail:
+    | { code: string; message: string; issues?: RuleIssue[]; [k: string]: unknown }
+    | string
 }
 
 // ── Phase 3 ───────────────────────────────────────────────────────────────────
@@ -407,6 +465,11 @@ export interface DashboardSummary {
   }
   incident_distribution: { incident_type: string; count: number; pct: number }[]
   shift_distribution: { shift_type: string; count: number; pct: number; is_working: boolean }[]
+  /**
+   * The day `shift_distribution` describes — today when today is rostered, the
+   * nearest rostered day otherwise (between cycles there are no shifts at all).
+   */
+  shift_distribution_date?: string | null
   recent_incidents: Incident[]
   alerts: AlertItem[]
   total_staff: number

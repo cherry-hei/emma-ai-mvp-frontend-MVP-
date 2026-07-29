@@ -255,9 +255,19 @@ def token():
 
 @pytest.fixture(scope="module")
 def staff_token():
+    return _staff_login("staff_a@emma.local")
+
+
+@pytest.fixture(scope="module")
+def care_staff_token():
+    """The health worker's staff-app login — the one with daily task codes."""
+    return _staff_login("staff_hw_a@emma.local")
+
+
+def _staff_login(email: str) -> str:
     from emma_core.services.auth import sign_in
     try:
-        _, session = sign_in("staff_a@emma.local", "EmmaDev123!")
+        _, session = sign_in(email, "EmmaDev123!")
     except Exception as exc:  # noqa: BLE001
         pytest.skip(f"local Supabase not reachable/seeded: {exc}")
     return session.access_token
@@ -453,14 +463,17 @@ def test_report_registry_reads(token):
 
 
 def test_staff_ai_analysis_is_evidence_backed(token):
+    # Implicit skills are inferred from rostered task labels, and the Phase 4
+    # dictionary is profession-specific — daily codes belong to the care ranks,
+    # not to RN/EN — so the evidence has to be read off a health worker.
     staff = client.get("/staff", headers=_auth(token)).json()
-    rn = next(s for s in staff if s["rank"] == "RN")
-    body = client.get(f'/staff/{rn["id"]}/ai-analysis', headers=_auth(token)).json()
+    hw = next(s for s in staff if s["rank"] == "HW")
+    body = client.get(f'/staff/{hw["id"]}/ai-analysis', headers=_auth(token)).json()
 
-    assert body["staff"]["rank"] == "RN"
+    assert body["staff"]["rank"] == "HW"
     assert body["activity"]["working_shifts"] > 0
-    assert body["explicit_skills"], "seeded RN has certificates"
-    assert body["implicit_skills"], "seeded RN has rostered task labels"
+    assert body["explicit_skills"], "seeded HW has certificates"
+    assert body["implicit_skills"], "seeded HW has rostered task labels"
     for bar in body["skill_bars"]:
         assert 0 <= bar["explicit"] <= 100 and 0 <= bar["implicit"] <= 100
 
@@ -503,25 +516,28 @@ def test_staff_only_sees_own_leave_requests(staff_token, token):
     assert len(staff_ids) <= 1
 
 
-def test_task_completion_round_trip(staff_token):
-    # The staff member may be off duty today, so drive the round trip from a day
-    # they are actually rostered with tasks rather than skipping.
+def test_task_completion_round_trip(care_staff_token):
+    # Daily task codes belong to the care ranks under Phase 4, so the round trip
+    # runs on the health worker's account — the RN account genuinely has none.
+    # The staff member may be off duty today, so drive it from a day they are
+    # actually rostered with tasks rather than skipping.
     roster = client.get("/me/roster", params={"days": 28},
-                        headers=_auth(staff_token)).json()
+                        headers=_auth(care_staff_token)).json()
     day = next((d["date"] for d in roster["days"] if d["is_working"] and d["tasks"]), None)
-    assert day, "the seeded staff member should have rostered tasks in the period"
+    assert day, "the seeded care worker should have rostered tasks in the period"
 
-    tasks = client.get("/me/tasks", params={"date": day}, headers=_auth(staff_token)).json()
+    tasks = client.get("/me/tasks", params={"date": day},
+                       headers=_auth(care_staff_token)).json()
     assert tasks, f"expected materialised task rows for {day}"
     task = tasks[0]
     original = task["status"]
 
     r = client.patch(f'/me/tasks/{task["id"]}', json={"status": "done"},
-                     headers=_auth(staff_token))
+                     headers=_auth(care_staff_token))
     assert r.status_code == 200 and r.json()["task_status"] == "done"
 
     client.patch(f'/me/tasks/{task["id"]}', json={"status": original},
-                 headers=_auth(staff_token))
+                 headers=_auth(care_staff_token))
 
 
 def test_seeded_an_shift_is_sixteen_hours(token):
@@ -569,7 +585,23 @@ def test_attendance_reports_paired_hours(staff_token):
     body = client.get("/me/attendance", headers=_auth(staff_token)).json()
     assert body["month"]["worked_hours"] > 0
     assert body["month"]["days_worked"] > 0
-    # the seed leaves the staff member clocked in with no matching clock-out today,
-    # so today's paired total must stay at zero rather than guessing an end time
-    assert body["today"]["clocked_in"] is True
-    assert body["today"]["worked_minutes_today"] == 0
+
+    # An unpaired clock-in must contribute nothing until it is closed, or the
+    # month total silently invents hours nobody worked. Drive the real endpoint
+    # rather than leaning on whichever day the seed happened to run: "today"
+    # moves, the invariant does not.
+    if body["today"]["clocked_in"]:
+        pytest.skip("staff member is already clocked in today")
+    before = body["today"]["worked_minutes_today"]
+    opened = client.post("/me/attendance/clock", json={"event_type": "clock_in"},
+                         headers=_auth(staff_token))
+    assert opened.status_code == 200, opened.text
+    try:
+        today = client.get("/me/attendance", headers=_auth(staff_token)).json()["today"]
+        assert today["clocked_in"] is True
+        assert today["worked_minutes_today"] == before
+    finally:
+        from emma_core.db import get_service_client
+
+        get_service_client().table("attendance_events").delete() \
+            .eq("id", opened.json()["id"]).execute()

@@ -23,7 +23,8 @@ fixture-backed `/api/*` route handlers were deleted.
 | **Login / account switch** | 1 | `/auth/login` · `/auth/refresh` · `/auth/me` |
 | **Roster** — grid, manual edit, publish | 1 | `/rosters`, `/shifts`, `/roster-versions` |
 | **Roster → AI Suggest** — A/B/C solver | 2 | `/optimize-roster`, `/optimization-jobs`, `/validate-roster` |
-| **Task scheduling** — eligibility, events, floor coverage | 4 | `/task-assignments`, `/facility-events`, `/validate-roster` |
+| **Task Scheduling** — events, qualifications, floor rules | 4 | `/facility-events`, `/staff-qualifications`, `/floor-rules` |
+| **Roster → task eligibility** | 4 | `/task-assignments`, `/validate-roster` |
 | **Compliance** — ratio, residents, certs | 1 | `/compliance/ratio`, `/resident-counts`, `/units`, `/staff` |
 | **Staff Portfolio** — directory + profile | 1 | `/staff`, `/staff/{id}` |
 | **Dashboard** — KPIs, incident mix, shift mix, alerts | 3 | `/dashboard/summary` |
@@ -42,7 +43,9 @@ compliance and explanation work remains intentionally outside this phase.
 - **Task codes and eligibility (4.1):** rank/shift/unit rules, qualifications,
   medication-audit restrictions, mentor/new-staff controls, and the A3/P3-only
   rule for unaudited agency staff are enforced before an edit is saved.
-  Rejected attempts are recorded in `violation_log`.
+  Rejected attempts are recorded in `violation_log`, and the API returns the
+  reasons as a list (`detail.issues`) so the roster editor can show *wrong rank*
+  and *not medication-audited* as two separate, fixable things.
 - **Event overlays (4.2):** events carry normalized staffing requirements. Hair
   cutting, CGAT, medication checks, podiatry and monthly weighing use reusable
   defaults; visiting, PGT and training accept manager-entered requirements.
@@ -52,6 +55,19 @@ compliance and explanation work remains intentionally outside this phase.
   16:00–21:30 local-P-shift composition rule.
 - `/validate-roster` runs the same operational checks for manual and solver
   versions, and those checks also guard publishing.
+
+All three data sets are managed from **Task Scheduling** (`/scheduling`) —
+events with their staffing requirements, staff qualifications, and floor
+minimums. Before that screen existed the rules were real but unreachable: the
+tables were seed-only, so a manager could not record that someone is
+medication-audited, book an event with its extra cover, or state a floor
+minimum at all.
+
+**A task code follows the duty, not the shift label.** A/N is two duty windows,
+so a morning code belongs on an A/N cell even though the codes differ. The
+check (`shift_type_matches`) matches on the code when the codes are equal, and
+otherwise only for a split shift whose segment starts inside the required
+code's own window — so an A code is still refused on a B or E shift.
 
 ### Built on the backend, no UI yet
 
@@ -224,8 +240,8 @@ is backend-driven, with a period + date selector and three tabs:
 ## Frontend layout
 
 ```
-src/app/        routes: login, dashboard, roster, staff, staff-app, compliance,
-                approval, alert, personnel, reports, roi
+src/app/        routes: login, dashboard, roster, scheduling, staff, staff-app,
+                compliance, approval, alert, personnel, reports, roi
 src/components/  ui/ (shadcn), layout/ (AuthContext, AppShell, Sidebar, TopNav), roster/
 src/lib/         api.ts (typed client), apiTypes.ts, types.ts, utils.ts
 ```

@@ -5,6 +5,7 @@ from fastapi.responses import JSONResponse
 from postgrest.exceptions import APIError as PostgrestAPIError
 
 from emma_core.config import settings
+from emma_core.errors import RuleViolationError
 
 from api.routers import analytics as _analytics
 from api.routers import auth as _auth
@@ -36,6 +37,13 @@ def _postgrest_error(_request: Request, exc: PostgrestAPIError) -> JSONResponse:
     message = getattr(exc, "message", None) or "database error"
     return JSONResponse(status_code=500,
                         content={"detail": {"code": "db_error", "message": message}})
+
+
+@app.exception_handler(RuleViolationError)
+def _rule_violation(_request: Request, exc: RuleViolationError) -> JSONResponse:
+    # A rule rejection is a list of reasons, not one sentence: the UI renders
+    # each issue on its own, so they must reach it as data.
+    return JSONResponse(status_code=422, content={"detail": exc.payload()})
 
 
 @app.exception_handler(ValueError)

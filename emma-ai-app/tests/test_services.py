@@ -24,9 +24,13 @@ def test_roster_grid_shape():
     assert len(grid.dates) == 28       # the 7-day pattern repeats across the period
     rn = next(r for r in grid.rows if r.staff.rank == "RN")
     en = next(r for r in grid.rows if r.staff.rank == "EN")
+    hw = next(r for r in grid.rows if r.staff.rank == "HW")
     assert rn.cells[0].shift_type == "P" and rn.cells[0].is_working
     assert en.cells[0].shift_type == "OFF" and not en.cells[0].is_working
-    assert rn.cells[0].tasks  # day-0 task labels present
+    # Task labels ride on the care ranks: the Phase 4 dictionary is
+    # profession-specific and gives RN/EN no daily codes.
+    assert hw.cells[0].tasks  # day-0 task labels present
+    assert not rn.cells[0].tasks
 
 
 def test_shift_defs_present():

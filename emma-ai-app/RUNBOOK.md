@@ -159,6 +159,13 @@ python scripts/seed.py
 3. Run `python scripts/seed.py` against the cloud DB.
 4. Replace the four `SUPABASE_*`/`DATABASE_URL` values in `.env`. No code changes.
 
+> A cloud database that already holds real rosters must not be re-seeded —
+> `seed.py` wipes both demo facilities to rebuild them. Apply the migrations,
+> then run `python scripts/backfill_phase4.py` (`--dry-run` first), which
+> reconciles the Phase 4 reference data in place and leaves rosters untouched.
+> Skipping it leaves the roster carrying task labels the Phase 4 rules reject,
+> which blocks publishing until they are corrected.
+
 ---
 
 ## Reference — ports

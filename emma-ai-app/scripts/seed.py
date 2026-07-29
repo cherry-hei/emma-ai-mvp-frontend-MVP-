@@ -805,6 +805,11 @@ def main() -> None:
     super_a = make_user("super_a@emma.local", "superintendent", fa)
     make_user("admin_a@emma.local", "admin", fa)
     make_user("staff_a@emma.local", "staff", fa, staff_id=a_ids[0])
+    # The Phase 4 task dictionary is profession-specific and gives RN/EN no
+    # daily codes — their contribution is event staffing. So the RN account
+    # above shows an empty task list by design, and the staff app needs a
+    # care-side login to demonstrate task completion at all.
+    make_user("staff_hw_a@emma.local", "staff", fa, staff_id=a_ids[2])
     make_user("super_b@emma.local", "superintendent", fb)
 
     # SQL: select id from users_profile where auth_user_id = :super_a
@@ -839,7 +844,8 @@ def main() -> None:
     print("  Dev logins (password: %s):" % DEV_PASSWORD)
     print("    super_a@emma.local  (Superintendent, Home A)")
     print("    admin_a@emma.local  (Admin, Home A)")
-    print("    staff_a@emma.local  (Staff app, Home A — 余逸詩 / Yu Yat Sze)")
+    print("    staff_a@emma.local  (Staff app, Home A — 余逸詩 / Yu Yat Sze, RN)")
+    print("    staff_hw_a@emma.local (Staff app, Home A — 黃日心 / Wong Yat Sum, HW: has daily tasks)")
     print("    super_b@emma.local  (Superintendent, Home B)")
 
 

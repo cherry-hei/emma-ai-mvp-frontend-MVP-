@@ -195,7 +195,14 @@ export default function DashboardPage() {
         </div>
 
         <div className="bg-white border border-gray-200 rounded-xl p-4">
-          <div className="text-sm font-semibold text-gray-900 mb-3">{L.shift_title}</div>
+          <div className="flex items-baseline gap-2 mb-3">
+            <span className="text-sm font-semibold text-gray-900">{L.shift_title}</span>
+            {/* Between roster cycles this is the nearest rostered day, not today.
+                Saying which day it is keeps it from reading as live staffing. */}
+            {data.shift_distribution_date && data.shift_distribution_date !== data.date && (
+              <span className="text-[10px] text-amber-600">{data.shift_distribution_date}</span>
+            )}
+          </div>
           {data.shift_distribution.length === 0 ? (
             <div className="text-[11px] text-gray-400 py-3">{L.no_roster}</div>
           ) : (
