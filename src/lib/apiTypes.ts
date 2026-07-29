@@ -200,10 +200,13 @@ export interface TaskDefOut {
 export interface ViolationOut {
   rule_code: string
   shift_id?: string | null
+  staff_id?: string | null
   date?: string | null
   unit_id?: string | null
   task_assignment_id?: string | null
   event_id?: string | null
+  validation_run_id?: string | null
+  rule_definition_id?: string | null
   severity: string
   message?: string | null
   details: Record<string, unknown>
@@ -265,13 +268,39 @@ export interface CompareOptionsResponse {
 
 export interface ValidationOut {
   roster_version_id: string
-  method: string // solver/ratio validation plus Phase 4 operational checks
+  method: string
   passes: boolean
   hard_violation_count: number
   constraint_score?: number | null
   violations: ViolationOut[]
   ratio_checks: RatioResult[]
+  validation_run_id?: string | null
+  input_digest?: string | null
 }
+
+export interface RuleDefinition {
+  id: string
+  facility_id?: string | null
+  rule_code: string
+  name?: string | null
+  description?: string | null
+  severity: 'hard' | 'soft'
+  config_json: Record<string, unknown>
+  config_version: number
+  effective_from?: string | null
+  effective_to?: string | null
+  active: boolean
+  created_at?: string | null
+  updated_at?: string | null
+}
+
+export type RuleDefinitionCreate =
+  Pick<RuleDefinition, 'rule_code'> &
+  Partial<Pick<
+    RuleDefinition,
+    'name' | 'description' | 'severity' | 'config_json' | 'config_version' |
+    'effective_from' | 'effective_to' | 'active'
+  >>
 
 export interface CreatePeriodResponse {
   period: PeriodOut
@@ -306,6 +335,13 @@ export interface LeaveRequest extends StaffBrief {
   reason?: string | null
   remark?: string | null
   document_url?: string | null
+  priority?: 'low' | 'normal' | 'high' | 'urgent'
+  priority_reason?: string | null
+  policy_result_json?: {
+    passes?: boolean
+    issues?: Array<Record<string, unknown>>
+    priority_weight?: number
+  }
   status: 'pending' | 'reviewed' | 'approved' | 'rejected' | 'cancelled'
   reviewed: boolean
   decided_at?: string | null

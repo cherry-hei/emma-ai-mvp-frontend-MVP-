@@ -14,7 +14,7 @@ and [`emma-ai-app/RUNBOOK.md`](emma-ai-app/RUNBOOK.md) for backend details.
 
 ## Status — what's real
 
-**Phases 1 through 4.3 are wired to the backend** — real data, RLS-scoped to the
+**Phases 1 through 5 are wired to the backend** — real data, RLS-scoped to the
 signed-in facility. There is no mock data left in the app; `src/lib/data.ts` and the
 fixture-backed `/api/*` route handlers were deleted.
 
@@ -22,20 +22,42 @@ fixture-backed `/api/*` route handlers were deleted.
 |---|---|---|
 | **Login / account switch** | 1 | `/auth/login` · `/auth/refresh` · `/auth/me` |
 | **Roster** — grid, manual edit, publish | 1 | `/rosters`, `/shifts`, `/roster-versions` |
-| **Roster → AI Suggest** — A/B/C solver | 2 | `/optimize-roster`, `/optimization-jobs`, `/validate-roster` |
+| **Roster → AI Suggest** — A/B/C solver | 2 + 5 | `/optimize-roster`, `/optimization-jobs`, `/validate-roster` |
 | **Task scheduling** — eligibility, events, floor coverage | 4 | `/task-assignments`, `/facility-events`, `/validate-roster` |
-| **Compliance** — ratio, residents, certs | 1 | `/compliance/ratio`, `/resident-counts`, `/units`, `/staff` |
+| **Compliance** — ratio, residents, certs | 1 + 5 | `/compliance/ratio`, `/compliance/minute-ratio`, `/compliance/rule-definitions`, `/resident-counts`, `/units`, `/staff` |
 | **Staff Portfolio** — directory + profile | 1 | `/staff`, `/staff/{id}` |
 | **Dashboard** — KPIs, incident mix, shift mix, alerts | 3 | `/dashboard/summary` |
-| **Approval Centre** — AL / duty / sick queues, approve & reject | 3 | `/leave-requests`, `/leave-requests/stats` |
+| **Approval Centre** — AL / duty / sick queues, approve & reject | 3 + 5 | `/leave-requests`, `/leave-requests/stats` |
 | **Alert Centre** — live alerts, cover flow, resolution | 3 | `/alerts`, `/sl-incidents`, `/replacement-candidates`, `/sl-incidents/{id}/resolve` |
 | **ROI** — A1 / A2 / agency, editable baseline | 3 | `/roi/summary`, `/roi/settings` |
 | **Reports** — generation, schedules, thresholds, regulatory sync | 3 | `/reports/*`, `/compliance/thresholds` |
 | **Staff App** — roster, tasks, clock in/out, profile | 3 | `/me/*` |
 | **Staff profile → AI Analysis** | 3 | `/staff/{id}/ai-analysis` |
 
-Phase 4 covers task-based scheduling through milestone 4.3. Later automatic
-compliance and explanation work remains intentionally outside this phase.
+Phase 5 makes deterministic compliance the source of truth for validation and
+publishing. Natural-language explanations remain a later phase.
+
+## Phase 5 — deterministic compliance
+
+- **SWD ratios (5.1):** effective-dated, facility-over-global rules support
+  unit denominators, combined ranks, equivalent-head weights, duplicate-person
+  protection, and audit-grade minute coverage.
+- **Hard constraints (5.2):** one validation engine checks coverage, overlap,
+  rest, hours, eligibility, approved leave, Phase 4 tasks/events/floors, and
+  persists a digest of every consumed input plus structured evidence for every
+  run. Read-only validation does not mutate roster tasks. Publish always performs
+  a fresh run and atomically replaces the period's previous operative version.
+- **Night chain (5.3):** monthly night limits, `N/AN → SLEEP/SD → DO`, standalone
+  N overtime, and next-period nurse cooldown are enforced and recorded.
+- **External workforce (5.4):** employment-type-aware bans, calendar/peak-day
+  restrictions, rank/day caps, the 50% capacity cap, and Home B's vacancy
+  formula are validated. Imported-labour rest/weighting and Home A/B fixed PT
+  work patterns are enforced by both the validator and solver. Solver agency
+  fills are ledgered without double-counting KPI or ROI spend.
+- **Leave rules (5.5):** cutoffs, Home A/B request quotas, priority, locked-night
+  exclusions, high-demand same-rank conflicts, and period-scoped balances are
+  rechecked at approval time. Duty requests remain positive work preferences;
+  pending requests cannot make an unchanged roster unpublishable.
 
 ## Phase 4 — task-based scheduling
 

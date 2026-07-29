@@ -203,10 +203,13 @@ def external_workforce(client, facility_id: str, period_id: str | None = None) -
         .eq("facility_id", facility_id).execute().data)}
 
     total = external = 0
+    roster_assignment_ids: set[str] = set()
     by_role: dict[str, dict] = {}
     for a in assigns:
         if not by_id[a["shift_id"]].get("is_working"):
             continue
+        if a.get("id"):
+            roster_assignment_ids.add(str(a["id"]))
         total += 1
         st = staff.get(a["staff_id"]) or {}
         is_external = bool(a.get("is_agency")) or st.get("employment_type") in EXTERNAL_TYPES
@@ -217,21 +220,41 @@ def external_workforce(client, facility_id: str, period_id: str | None = None) -
             external += 1
             slot["external"] += 1
 
-    # SQL: select cost, date, role from agency_assignments
+    # SQL: select id, cost, date, role, shift_id, shift_assignment_id
+    #      from agency_assignments
     #      where facility_id = :facility_id
     #        and date >= :period_start and date <= :period_end
-    agency_rows = (client.table("agency_assignments").select("cost,date,role")
+    agency_rows = (
+        client.table("agency_assignments")
+        .select("id,cost,date,role,shift_id,shift_assignment_id")
                    .eq("facility_id", facility_id)
                    .gte("date", str(period["period_start"]))
-                   .lte("date", str(period["period_end"])).execute().data)
+        .lte("date", str(period["period_end"]))
+        .execute()
+        .data
+    )
+    # Generated A/B/C drafts share the same calendar dates. Linked purchases
+    # belong only to the operative roster version; unlinked rows are legacy /
+    # directly purchased agency shifts and remain period-scoped.
+    agency_rows = [
+        row for row in agency_rows
+        if not row.get("shift_id") or row["shift_id"] in by_id
+    ]
     cost = sum(float(r.get("cost") or 0) for r in agency_rows)
     for r in agency_rows:
+        # A purchased shift can be linked to the roster assignment that represents
+        # the same person. Keep its spend, but do not count that worker twice.
+        if (
+            r.get("shift_assignment_id")
+            and str(r["shift_assignment_id"]) in roster_assignment_ids
+        ):
+            continue
         role = r.get("role") or "—"
         slot = by_role.setdefault(role, {"role": role, "shifts": 0, "external": 0})
         slot["shifts"] += 1
         slot["external"] += 1
-    total += len(agency_rows)
-    external += len(agency_rows)
+        total += 1
+        external += 1
 
     for slot in by_role.values():
         slot["dependency_pct"] = (round(slot["external"] / slot["shifts"] * 100, 1)

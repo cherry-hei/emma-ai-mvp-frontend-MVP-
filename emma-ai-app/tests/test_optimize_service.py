@@ -194,7 +194,11 @@ def test_run_optimization_persists_three_versions():
         assert len(_shifts_of(store, v["id"])) == 6            # every demand slot materialized
         shift_ids = {s["id"] for s in _shifts_of(store, v["id"])}
         n_assign = sum(1 for a in store.data["shift_assignments"] if a["shift_id"] in shift_ids)
-        assert n_assign == 6                                   # every slot filled (staff/agency)
+        # Phase 5 bans agency on N and caps external volume at 50% of internal
+        # capacity. This deliberately tiny two-day fixture cannot cover its two
+        # N slots within the prorated staff-hours cap, so the solver preserves
+        # them as explicit hard gaps instead of violating policy.
+        assert n_assign == 4
 
     assert len(store.data.get("roster_option_scores", [])) == 3
     jobs = store.data["optimization_jobs"]

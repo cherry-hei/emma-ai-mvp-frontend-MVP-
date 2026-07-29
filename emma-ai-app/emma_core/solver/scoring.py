@@ -14,6 +14,22 @@ def _val(solver, expr):
     return expr if isinstance(expr, int) else solver.Value(expr)
 
 
+def _ratio_short_heads(sm: SolverModel, solver, key, var) -> int:
+    value = solver.Value(var)
+    rule = sm.inputs.ratio_rules[key[1]]
+    return (value + rule.weight_scale - 1) // rule.weight_scale
+
+
+def _hard_units(sm: SolverModel, solver) -> int:
+    return (
+        sum(solver.Value(var) for var in sm.gap.values())
+        + sum(
+            _ratio_short_heads(sm, solver, key, var)
+            for key, var in sm.ratio_short.items()
+        )
+    )
+
+
 def extract_assignments(sm: SolverModel, solver) -> list[SolvedAssignment]:
     out: list[SolvedAssignment] = []
     staff_by_id = {staff.id: staff for staff in sm.inputs.staff}
@@ -44,13 +60,21 @@ def collect_violations(sm: SolverModel, solver) -> list[Violation]:
                 message=(f"Coverage short by {n}: {sl.date} {sl.shift_type} "
                          f"{sl.required_rank or 'any rank'} (needed {sl.required_count})"),
             ))
-    for (d, k), var in sm.ratio_short.items():
-        n = solver.Value(var)
+    for key, var in sm.ratio_short.items():
+        d, k = key[:2]
+        n = _ratio_short_heads(sm, solver, key, var)
         if n > 0:
             rule = sm.inputs.ratio_rules[k]
+            window = ""
+            if len(key) >= 4:
+                lo, hi = key[2:4]
+                window = f" during {lo // 60:02d}:{lo % 60:02d}-{hi // 60:02d}:{hi % 60:02d}"
             vs.append(Violation(
                 rule_code=ViolationCode.RATIO, slot_id=None,
-                message=f"SWD ratio short by {n} on {d} for {rule.staff_rank or 'any rank'}.",
+                message=(
+                    f"SWD ratio short by {n} equivalent head(s) on {d}{window} "
+                    f"for {rule.staff_rank or 'configured ranks'}."
+                ),
             ))
     return vs
 
@@ -65,8 +89,7 @@ def raw_objectives(sm: SolverModel, solver) -> dict[str, int]:
         "future_debt": _val(solver, p["future_debt"]),
         "unmet": _val(solver, p["unmet"]),
         "fairness": _val(solver, p["fairness"]),
-        "hard": (sum(solver.Value(v) for v in sm.gap.values())
-                 + sum(solver.Value(v) for v in sm.ratio_short.values())),
+        "hard": _hard_units(sm, solver),
     }
 
 
@@ -76,8 +99,7 @@ def score(sm: SolverModel, solver, weights) -> tuple[int, int, int]:
     Score is 100 - normalized(soft); any hard slack forces it below
     PUBLISH_THRESHOLD (minus _HARD_STEP per unit) so an unsafe roster can never
     look publishable."""
-    hard = (sum(solver.Value(v) for v in sm.gap.values())
-            + sum(solver.Value(v) for v in sm.ratio_short.values()))
+    hard = _hard_units(sm, solver)
     p, ub = sm.penalties, sm.soft_ub
     soft = (weights.agency * _val(solver, p["agency"])
             + weights.ot * _val(solver, p["ot"])
@@ -100,7 +122,9 @@ def build_kpi(sm: SolverModel, solver, inputs) -> SolverKpi:
         agency_count=sum(1 for a in assigns if a.is_agency),
         ot_minutes=sum(solver.Value(v) for v in sm.ot.values()),
         coverage_gap=sum(solver.Value(v) for v in sm.gap.values()),
-        ratio_breaches=sum(1 for v in sm.ratio_short.values() if solver.Value(v) > 0),
+        ratio_breaches=len({
+            key[:2] for key, var in sm.ratio_short.items() if solver.Value(var) > 0
+        }),
         deviation_from_baseline=_val(solver, sm.raw_unmet),
         fairness_spread_minutes=_val(solver, sm.penalties["fairness"]),
     )

@@ -13,7 +13,8 @@ import type {
   DashboardSummary, EventTrigger, FacilityEvent, FutureDebtRow, GeneratedReport, Incident,
   IncidentStats, JobView, LeaveCategory, LeaveGroup, LeaveRequest, LeaveStats,
   MyAttendance, MyProfile, MyRoster, MySummary, MyTask, OptimizeResponse, PeriodOut,
-  Profile, RatioResult, RegulatoryDoc, ReplacementCandidate, ReportRow,
+  Profile, RatioResult, RegulatoryDoc, ReplacementCandidate, ReportRow, RuleDefinition,
+  RuleDefinitionCreate,
   ReportSchedule, ReportType, ResidentCountOut, RoiSettings, RoiSummary, RosterGrid,
   RosterOption, SessionOut, ShiftDef, StaffAiAnalysis, StaffDetail, TaskAssignment, TaskDefOut,
   ThresholdMonitor, Unit, ValidationOut, VersionOut,
@@ -294,6 +295,21 @@ export const api = {
     if (versionId) q.set('roster_version_id', versionId)
     return apiFetch<RatioResult[]>(`/compliance/ratio?${q.toString()}`)
   },
+
+  complianceRuleDefinitions: (ruleCode?: string) => {
+    const q = new URLSearchParams()
+    if (ruleCode) q.set('rule_code', ruleCode)
+    const qs = q.toString()
+    return apiFetch<RuleDefinition[]>(
+      `/compliance/rule-definitions${qs ? `?${qs}` : ''}`,
+    )
+  },
+
+  createComplianceRuleDefinition: (body: RuleDefinitionCreate) =>
+    apiFetch<RuleDefinition>('/compliance/rule-definitions', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
 
   units: () => apiFetch<Unit[]>('/units'),
 

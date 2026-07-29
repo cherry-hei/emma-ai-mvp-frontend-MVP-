@@ -15,6 +15,7 @@ from __future__ import annotations
 from collections import defaultdict
 from datetime import date as Date, datetime as DateTime
 from typing import Iterable
+from uuid import UUID
 
 from ..constants import can_cover_rank
 from ..shifttime import day_spans, duty_spans, to_minutes
@@ -69,6 +70,20 @@ EVENT_DEFAULT_REQUIREMENTS: dict[str, tuple[dict, ...]] = {
 
 def _normalise_code(value: str) -> str:
     return value.strip().lower().replace("-", "_").replace(" ", "_")
+
+
+def _persisted_task_assignment_id(value: object) -> str | None:
+    """Return only identifiers that can satisfy the audit table's UUID FK.
+
+    Read-only validation synthesises ``legacy:...`` references for task labels
+    that still live in the old shift-assignment cell. Those references are
+    useful evidence, but they are not rows in ``task_assignments`` and must not
+    be written into its UUID foreign-key column.
+    """
+    try:
+        return str(UUID(str(value)))
+    except (TypeError, ValueError, AttributeError):
+        return None
 
 
 def task_rank_matches(actual_rank: str | None, required_rank: str | None) -> bool:
@@ -971,6 +986,8 @@ def _task_roster_violations(
     violations: list[dict] = []
     qualification_cache: dict[str, dict[str, set[str]]] = {}
     for row in task_rows:
+        task_assignment_id = _persisted_task_assignment_id(row.get("id"))
+        task_reference = str(row.get("id") or "")
         assignment = assignments_by_id.get(row.get("shift_assignment_id"))
         if not assignment:
             continue
@@ -985,10 +1002,14 @@ def _task_roster_violations(
                 "shift_id": shift["id"],
                 "date": str(shift["date"])[:10],
                 "unit_id": shift.get("unit_id"),
-                "task_assignment_id": row["id"],
+                "task_assignment_id": task_assignment_id,
                 "severity": "hard",
                 "message": f"Unknown task '{row.get('task_label')}'.",
-                "details": {"reason": "unknown_task"},
+                "details": {
+                    "reason": "unknown_task",
+                    "task_reference": task_reference,
+                    "source_type": row.get("source_type"),
+                },
                 "resolved": False,
             })
             continue
@@ -1006,15 +1027,156 @@ def _task_roster_violations(
             "shift_id": shift["id"],
             "date": str(shift["date"])[:10],
             "unit_id": shift.get("unit_id"),
-            "task_assignment_id": row["id"],
+            "task_assignment_id": task_assignment_id,
             "severity": "hard",
             "message": (
                 f"{row.get('task_label')} is not eligible for "
                 f"{staff.get('name_en') or staff.get('name')}."
             ),
-            "details": {"issues": issues, "task_id": task["id"]},
+            "details": {
+                "issues": issues,
+                "task_id": task["id"],
+                "task_reference": task_reference,
+                "source_type": row.get("source_type"),
+            },
             "resolved": False,
         })
+    return violations
+
+
+def _task_definitions_by_label(
+    task_definitions: Iterable[dict],
+    *,
+    shift: dict,
+    staff: dict,
+) -> dict[str, dict]:
+    """Resolve legacy labels using the same context preference as persistence."""
+    task_by_label: dict[str, dict] = {}
+    for task in task_definitions:
+        matches_context = (
+            task_rank_matches(staff.get("rank"), task.get("required_rank"))
+            and (
+                not task.get("shift_type")
+                or task["shift_type"] == shift.get("shift_type")
+            )
+        )
+        for label in (task.get("task_name"), task.get("task_code")):
+            if label and (label not in task_by_label or matches_context):
+                task_by_label[label] = task
+    return task_by_label
+
+
+def _reconciled_task_rows(
+    *,
+    task_rows: Iterable[dict],
+    assignments: Iterable[dict],
+    shifts_by_id: dict[str, dict],
+    staff_by_id: dict[str, dict],
+    task_definitions: list[dict],
+) -> list[dict]:
+    """Return the task rows validation would see after legacy reconciliation.
+
+    This is deliberately in-memory. A read-only validation must not materialize
+    ``shift_assignments.tasks`` into ``task_assignments`` or remove stale rows.
+    """
+    rows = [dict(row) for row in task_rows]
+    for assignment in assignments:
+        labels = list(assignment.get("tasks") or ())
+        if not labels:
+            continue
+        shift = shifts_by_id.get(assignment.get("shift_id"))
+        if not shift:
+            continue
+        assignment_id = assignment["id"]
+        existing = [
+            row for row in rows
+            if row.get("shift_assignment_id") == assignment_id
+        ]
+        existing_labels = {
+            row.get("task_label") for row in existing
+            if row.get("task_label") in labels
+        }
+        rows = [
+            row for row in rows
+            if (
+                row.get("shift_assignment_id") != assignment_id
+                or row.get("task_label") in labels
+            )
+        ]
+        task_by_label = _task_definitions_by_label(
+            task_definitions,
+            shift=shift,
+            staff=staff_by_id.get(assignment.get("staff_id"), {}),
+        )
+        for index, label in enumerate(labels):
+            if label in existing_labels:
+                continue
+            task = task_by_label.get(label)
+            rows.append({
+                "id": f"legacy:{assignment_id}:{index}",
+                "shift_assignment_id": assignment_id,
+                "staff_id": assignment.get("staff_id"),
+                "task_id": task.get("id") if task else None,
+                "task_label": label,
+                "source_type": "legacy_cell",
+            })
+            existing_labels.add(label)
+    return rows
+
+
+def evaluate_roster_rules(
+    *,
+    shifts: Iterable[dict],
+    assignments: Iterable[dict],
+    staff: Iterable[dict],
+    units: Iterable[dict],
+    task_definitions: Iterable[dict],
+    task_assignments: Iterable[dict],
+    qualification_rows: Iterable[dict],
+    events: Iterable[dict],
+    event_requirements: Iterable[dict],
+    floor_rules: Iterable[dict],
+) -> list[dict]:
+    """Pure Phase 4 validation over one immutable set of roster inputs."""
+    shifts = list(shifts)
+    assignments = list(assignments)
+    staff = list(staff)
+    units = list(units)
+    task_definitions = list(task_definitions)
+    shifts_by_id = {row["id"]: row for row in shifts}
+    assignments_by_id = {row["id"]: row for row in assignments}
+    staff_by_id = {row["id"]: row for row in staff}
+    task_by_id = {row["id"]: row for row in task_definitions}
+    reconciled_tasks = _reconciled_task_rows(
+        task_rows=task_assignments,
+        assignments=assignments,
+        shifts_by_id=shifts_by_id,
+        staff_by_id=staff_by_id,
+        task_definitions=task_definitions,
+    )
+
+    violations = _task_roster_violations(
+        task_rows=reconciled_tasks,
+        assignments_by_id=assignments_by_id,
+        shifts_by_id=shifts_by_id,
+        staff_by_id=staff_by_id,
+        task_by_id=task_by_id,
+        qualification_rows=list(qualification_rows),
+    )
+    violations.extend(evaluate_event_staffing(
+        events=list(events),
+        requirements=list(event_requirements),
+        shifts=shifts,
+        assignments=assignments,
+        staff_by_id=staff_by_id,
+    ))
+    violations.extend(evaluate_floor_coverage(
+        rules=list(floor_rules),
+        units=units,
+        shifts=shifts,
+        assignments=assignments,
+        staff_by_id=staff_by_id,
+    ))
     return violations
 
 
@@ -1041,7 +1203,6 @@ def validate_roster_rules(
         assignments = (client.table("shift_assignments").select("*")
                        .eq("facility_id", facility_id)
                        .in_("shift_id", list(shifts_by_id)).execute().data)
-    assignments_by_id = {row["id"]: row for row in assignments}
     staff = (client.table("staff").select("*")
              .eq("facility_id", facility_id).execute().data)
     staff_by_id = {row["id"]: row for row in staff}
@@ -1051,28 +1212,22 @@ def validate_roster_rules(
     task_defs = (client.table("task_definitions").select("*")
                  .or_(f"facility_id.eq.{facility_id},facility_id.is.null")
                  .eq("active", True).execute().data)
-    task_by_id = {row["id"]: row for row in task_defs}
     # Older roster cells store labels in shift_assignments.tasks. Materialize
-    # them before checking so validation covers both the legacy UI path and the
-    # Phase 4 task-assignment endpoints.
-    from .tasks import sync_assignment_tasks
+    # them only for a persisted validation. The pure path reconciles an
+    # equivalent view in memory and therefore performs no writes.
+    if persist:
+        from .tasks import sync_assignment_tasks
 
-    for assignment in assignments:
-        if assignment.get("tasks"):
-            shift = shifts_by_id[assignment["shift_id"]]
-            staff_row = staff_by_id.get(assignment.get("staff_id"), {})
-            task_by_label: dict[str, dict] = {}
-            for task in task_defs:
-                matches_context = (
-                    task_rank_matches(staff_row.get("rank"), task.get("required_rank"))
-                    and (not task.get("shift_type")
-                         or task["shift_type"] == shift.get("shift_type"))
+        for assignment in assignments:
+            if assignment.get("tasks"):
+                shift = shifts_by_id[assignment["shift_id"]]
+                task_by_label = _task_definitions_by_label(
+                    task_defs,
+                    shift=shift,
+                    staff=staff_by_id.get(assignment.get("staff_id"), {}),
                 )
-                for label in (task.get("task_name"), task.get("task_code")):
-                    if label and (label not in task_by_label or matches_context):
-                        task_by_label[label] = task
-            sync_assignment_tasks(
-                client, facility_id, assignment, shift, task_by_label)
+                sync_assignment_tasks(
+                    client, facility_id, assignment, shift, task_by_label)
     task_rows = (client.table("task_assignments").select("*")
                  .eq("facility_id", facility_id)
                  .eq("roster_version_id", roster_version_id).execute().data)
@@ -1082,15 +1237,6 @@ def validate_roster_rules(
                               .eq("facility_id", facility_id)
                               .in_("staff_id", list(staff_by_id))
                               .eq("is_active", True).execute().data)
-    violations = _task_roster_violations(
-        task_rows=task_rows,
-        assignments_by_id=assignments_by_id,
-        shifts_by_id=shifts_by_id,
-        staff_by_id=staff_by_id,
-        task_by_id=task_by_id,
-        qualification_rows=qualification_rows,
-    )
-
     if shifts:
         date_from = min(str(row["date"])[:10] for row in shifts)
         date_to = max(str(row["date"])[:10] for row in shifts)
@@ -1105,24 +1251,22 @@ def validate_roster_rules(
                               .eq("facility_id", facility_id)
                               .in_("event_id", [event["id"] for event in events])
                               .execute().data)
-    violations.extend(evaluate_event_staffing(
-        events=events,
-        requirements=event_requirements,
+    violations = evaluate_roster_rules(
         shifts=shifts,
         assignments=assignments,
-        staff_by_id=staff_by_id,
-    ))
-
-    floor_rules = (client.table("floor_min_staffing_rules").select("*")
-                   .eq("facility_id", facility_id).eq("active", True)
-                   .execute().data)
-    violations.extend(evaluate_floor_coverage(
-        rules=floor_rules,
+        staff=staff,
         units=units,
-        shifts=shifts,
-        assignments=assignments,
-        staff_by_id=staff_by_id,
-    ))
+        task_definitions=task_defs,
+        task_assignments=task_rows,
+        qualification_rows=qualification_rows,
+        events=events,
+        event_requirements=event_requirements,
+        floor_rules=(
+            client.table("floor_min_staffing_rules").select("*")
+            .eq("facility_id", facility_id).eq("active", True)
+            .execute().data
+        ),
+    )
 
     if persist:
         (client.table("violation_log").delete()

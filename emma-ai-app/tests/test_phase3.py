@@ -128,7 +128,9 @@ def _rule(rank, start, end, ratio=None, min_any=None):
 def test_minute_ratio_counts_only_minutes_actually_covered():
     from emma_core.services.compliance import _minute_eval
 
-    # Window 07:00–20:00 (780 min) needs 1 RN for 50 residents at 1:60.
+    # Window 07:00–20:00 (780 min) needs 50/60 RN-equivalent capacity.
+    # The fractional equivalent also supports weighted substitutes such as one
+    # HW per 40 residents against the same statutory nurse rule.
     # The only RN works 07:00–15:00, so 15:00–20:00 (300 min) is uncovered.
     rules = [_rule("RN", "07:00", "20:00", ratio=60)]
     shifts = {"s1": {"id": "s1", "start_time": "07:00", "end_time": "15:00",
@@ -138,7 +140,7 @@ def test_minute_ratio_counts_only_minutes_actually_covered():
     out = _minute_eval(rules, 50, shifts, assigns, "2026-07-01")
     assert len(out) == 1
     row = out[0]
-    assert row["required"] == 1
+    assert row["required"] == pytest.approx(50 / 60, abs=0.001)
     assert row["window_minutes"] == 780
     assert row["breach_minutes"] == 300
     assert row["passes"] is False

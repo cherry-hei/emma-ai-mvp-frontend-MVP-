@@ -90,13 +90,52 @@ def _staff_breakdown(client, facility_id: str, vacancies: dict) -> dict:
 
 
 def _agency_spend(client, facility_id: str, start: str, end: str) -> dict:
-    # SQL: select role, cost, hours, vendor, date from agency_assignments
+    # SQL: select role, cost, hours, vendor, date, shift_id from agency_assignments
     #      where facility_id = :facility_id and date >= :start and date <= :end
     # (per-role cost rollup is done in Python; in SQL it would be
     #  `group by role` with `count(*)` and `sum(cost)`)
-    rows = (client.table("agency_assignments").select("role,cost,hours,vendor,date")
+    rows = (client.table("agency_assignments")
+            .select("role,cost,hours,vendor,date,shift_id")
             .eq("facility_id", facility_id)
             .gte("date", start).lte("date", end).execute().data)
+    linked_shift_ids = {
+        row["shift_id"] for row in rows if row.get("shift_id")
+    }
+    published_shift_ids: set[str] = set()
+    if linked_shift_ids:
+        shifts = (
+            client.table("shifts")
+            .select("id,roster_version_id")
+            .eq("facility_id", facility_id)
+            .in_("id", list(linked_shift_ids))
+            .execute()
+            .data
+        )
+        version_ids = {
+            row.get("roster_version_id") for row in shifts
+            if row.get("roster_version_id")
+        }
+        published_versions: set[str] = set()
+        if version_ids:
+            published_versions = {
+                row["id"] for row in (
+                    client.table("roster_versions")
+                    .select("id,status")
+                    .eq("facility_id", facility_id)
+                    .in_("id", list(version_ids))
+                    .eq("status", "published")
+                    .execute()
+                    .data
+                )
+            }
+        published_shift_ids = {
+            row["id"] for row in shifts
+            if row.get("roster_version_id") in published_versions
+        }
+    rows = [
+        row for row in rows
+        if not row.get("shift_id") or row["shift_id"] in published_shift_ids
+    ]
     by_role: dict[str, dict] = {}
     total = 0.0
     for r in rows:

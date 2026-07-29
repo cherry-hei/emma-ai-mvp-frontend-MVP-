@@ -83,20 +83,161 @@ def seed_shift_defs(facility_id: str, defs: list[tuple], splits: dict) -> None:
     ins_many("shift_definitions", rows)
 
 
-def seed_ratio_rules(facility_id: str, cw_rank: str) -> None:
-    rules = [
-        ("RN", "07:00", "20:00", 60, None),
-        ("HW", "07:00", "20:00", 30, None),
-        (cw_rank, "07:00", "17:00", 20, None),
-        (cw_rank, "17:00", "07:00", 40, None),
-        ("AW", "07:00", "18:00", 40, None),
-        (None, "18:00", "07:00", None, 2),  # night: >=2 staff any rank
-    ]
+def seed_ratio_rules(facility_id: str, facility_code: str) -> None:
+    """Seed the exact Home A/B SWD windows from the source specification."""
+    if facility_code == "A":
+        rules = [
+            ("swd_aw", "AW", "08:30", "19:30", 40, ["AW"], {}),
+            ("swd_care_day", "CW", "07:00", "17:00", 20, ["CW"], {}),
+            ("swd_care_night", "CW", "17:00", "07:00", 240, ["CW"], {}),
+            (
+                "swd_health_worker",
+                "HW",
+                "07:00",
+                "18:00",
+                30,
+                ["HW", "RN", "EN"],
+                {"HW": 1, "RN": 2, "EN": 2},
+            ),
+            (
+                "swd_nurse",
+                "RN",
+                "07:00",
+                "18:00",
+                60,
+                ["RN", "EN"],
+                {"RN": 1, "EN": 1},
+            ),
+        ]
+    else:
+        rules = [
+            ("swd_aw", "AW", "07:00", "18:00", 40, ["AW"], {}),
+            ("swd_care_day", "HCA", "07:00", "17:00", 20, ["HCA"], {}),
+            ("swd_health_worker", "HW", "07:00", "20:00", 30, ["HW"], {}),
+            (
+                "swd_nurse",
+                "RN",
+                "07:00",
+                "20:00",
+                60,
+                ["RN", "EN", "HW"],
+                # One RN/EN covers 60 residents; the HW substitute covers 40,
+                # so an HW contributes two-thirds of a nurse-equivalent head.
+                {"RN": 1, "EN": 1, "HW": 2 / 3},
+            ),
+        ]
     ins_many("staffing_ratio_rules", [{
-        "facility_id": facility_id, "staff_rank": r, "time_window_start": s,
-        "time_window_end": e, "ratio_residents_per_staff": ratio,
-        "min_staff_any_rank": mn, "effective_from": "2026-01-01", "active": True,
-    } for (r, s, e, ratio, mn) in rules])
+        "facility_id": facility_id,
+        "rule_code": code,
+        "staff_rank": rank,
+        "time_window_start": start,
+        "time_window_end": end,
+        "ratio_residents_per_staff": ratio,
+        "counted_ranks_json": counted_ranks,
+        "rank_weights_json": rank_weights,
+        "effective_from": "2026-01-01",
+        "config_version": 1,
+        "active": True,
+    } for code, rank, start, end, ratio, counted_ranks, rank_weights in rules])
+
+
+def seed_phase5_rules(facility_id: str, facility_code: str) -> None:
+    night_types = ["AN", "N"] if facility_code == "A" else ["AN", "N", "7P"]
+    agency_config = {
+        "agency_employment_types": ["agency", "outsource", "casual"],
+        "banned_shift_types": [] if facility_code == "A" else ["AN", "N", "7P"],
+        "period_ratio_cap": 0.5,
+        "daily_rank_caps": {"RN|EN|HW": 2, "CW|HCA": 12},
+        "monthly_shift_caps": {"AN": 2} if facility_code == "A" else {},
+        "peak_holiday_terms": [
+            "mid-autumn", "winter solstice", "lunar new year",
+            "農曆新年", "中秋", "冬至",
+        ],
+        "part_time_policy": {
+            "employment_types": ["local_pt"],
+            "required_start": "09:00",
+            "required_end": "17:48" if facility_code == "A" else "18:00",
+            "allowed_weekdays": (
+                [] if facility_code == "A" else [0, 1, 3, 5]
+            ),
+            "weekly_work_days": (
+                {"min": 5, "max": 6}
+                if facility_code == "A"
+                else {"min": 4, "max": 4}
+            ),
+            "fortnightly_work_days": (
+                {"min": 11, "max": 11}
+                if facility_code == "A"
+                else None
+            ),
+            "saturday_requires_weekday_cl": facility_code == "A",
+        },
+    }
+    if facility_code == "B":
+        agency_config["vacancy_cap"] = {
+            "enabled": True,
+            "standard_do_days": 6,
+            "factor": 0.7,
+        }
+    ins_many("rule_definitions", [
+        {
+            "facility_id": facility_id,
+            "rule_code": "night_chain",
+            "name": f"Home {facility_code} night recovery chain",
+            "severity": "hard",
+            "config_json": {
+                "night_shift_types": night_types,
+                "chain_employment_types": ["local_ft"],
+                "sleep_codes": ["SLEEP", "SD"],
+                "day_off_codes": ["DO", "OFF"],
+                "an_monthly_limit": 2,
+                "nurse_night_monthly_limit": 2,
+                "cooldown_ranks": ["RN", "EN"],
+            },
+            "config_version": 1,
+            "effective_from": "2026-01-01",
+        },
+        {
+            "facility_id": facility_id,
+            "rule_code": "agency_limits",
+            "name": f"Home {facility_code} external workforce limits",
+            "severity": "hard",
+            "config_json": agency_config,
+            "config_version": 1,
+            "effective_from": "2026-01-01",
+        },
+        {
+            "facility_id": facility_id,
+            "rule_code": "leave_rules",
+            "name": f"Home {facility_code} leave policy",
+            "severity": "hard",
+            "config_json": {
+                "request_cutoff_day": 10,
+                "max_do_cl_balance": 3,
+            },
+            "config_version": 1,
+            "effective_from": "2026-01-01",
+        },
+    ])
+
+
+def seed_leave_balances(
+    facility_id: str,
+    period_id: str,
+    staff_ids: list[str],
+) -> None:
+    ins_many("leave_balances", [
+        {
+            "facility_id": facility_id,
+            "staff_id": staff_id,
+            "period_id": period_id,
+            "leave_type": leave_type,
+            "opening_balance": opening,
+        }
+        for staff_id in staff_ids
+        # DO + CL are one combined carry-over pool with a hard maximum of 3.
+        for leave_type, opening in (("AL", 12), ("PH", 2), ("CL", 1), ("DO", 2))
+    ])
 
 
 # time maps per shift code -> (start, end, cross_midnight, is_working).
@@ -106,15 +247,19 @@ SHIFT_TIMES_A = {
     "A": ("07:00", "15:00", False, True), "B": ("08:00", "16:00", False, True),
     "E": ("09:00", "17:00", False, True), "P": ("13:30", "21:30", False, True),
     "N": ("21:30", "07:00", True, True),  "AN": ("07:00", "13:30", False, True),
+    "PT": ("09:00", "17:48", False, True),
     "OFF": (None, None, False, False), "AL": (None, None, False, False),
     "SLEEP": (None, None, False, False), "DO": (None, None, False, False),
+    "CL": (None, None, False, False),
 }
 SHIFT_TIMES_B = {
     "7A": ("07:00", "19:00", False, True), "9A": ("09:00", "21:00", False, True),
     "7P": ("19:00", "07:00", True, True),  "A": ("07:00", "16:00", False, True),
     "P": ("12:30", "21:30", False, True),  "AN": ("07:00", "14:30", False, True),
+    "PT": ("09:00", "18:00", False, True),
     "OFF": (None, None, False, False), "DO": (None, None, False, False),
     "AL": (None, None, False, False), "SLEEP": (None, None, False, False),
+    "CL": (None, None, False, False),
 }
 
 # Split shifts, straight from the scheduling spec:
@@ -695,12 +840,15 @@ def main() -> None:
         ("P", "Afternoon", "13:30", "21:30", False, True),
         ("N", "Night", "21:30", "07:00", True, True),
         ("AN", "A/N split", "07:00", "13:30", True, True),
+        ("PT", "Part-time", "09:00", "17:48", False, True),
         ("OFF", "Day Off", None, None, False, False),
         ("AL", "Annual Leave", None, None, False, False),
         ("SLEEP", "Sleeping Day", None, None, False, False),
         ("DO", "Rest Day", None, None, False, False),
+        ("CL", "Compensatory Leave", None, None, False, False),
     ], SPLIT_A)
-    seed_ratio_rules(fa, "CW")
+    seed_ratio_rules(fa, "A")
+    seed_phase5_rules(fa, "A")
     seed_task_definitions(fa)
 
     period_a = ins("roster_periods", {
@@ -711,6 +859,7 @@ def main() -> None:
         "facility_id": fa, "period_id": period_a, "version_type": "manual",
         "label": "July 2026 draft", "status": "draft",
     })
+    seed_leave_balances(fa, period_a, a_ids)
     # Weekly patterns sized to the 44h local-FT contract, with the spec's A/N ->
     # SLEEP -> DO chain honoured. Previously the AW worked all seven days and the
     # PCW six nights, which put them 27-30% over contract before any overtime —
@@ -774,12 +923,15 @@ def main() -> None:
         ("A", "Morning", "07:00", "16:00", False, True),
         ("P", "Afternoon", "12:30", "21:30", False, True),
         ("AN", "A/N split", "07:00", "14:30", True, True),
+        ("PT", "Part-time", "09:00", "18:00", False, True),
         ("OFF", "Day Off", None, None, False, False),
         ("DO", "Rest Day", None, None, False, False),
         ("AL", "Annual Leave", None, None, False, False),
         ("SLEEP", "Sleeping Day", None, None, False, False),
+        ("CL", "Compensatory Leave", None, None, False, False),
     ], SPLIT_B)
-    seed_ratio_rules(fb, "HCA")
+    seed_ratio_rules(fb, "B")
+    seed_phase5_rules(fb, "B")
     seed_task_definitions(fb)
     seed_floor_rules(fb, {"1F": f1, "2F": f2, "6F": f6})
 
@@ -791,6 +943,7 @@ def main() -> None:
         "facility_id": fb, "period_id": period_b, "version_type": "manual",
         "label": "July 2026 draft", "status": "draft",
     })
+    seed_leave_balances(fb, period_b, b_ids)
     # Home B: imported HCA 72h/week, local staff 49.5h/week (spec: 11 working days
     # + 3 rest days per fortnight). 7A/7P are 12h, A/P are 9h.
     pattern_b = [

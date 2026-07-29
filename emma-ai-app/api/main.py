@@ -19,7 +19,7 @@ from api.routers import roster as _roster
 from api.routers import scheduling as _scheduling
 from api.routers import staff as _staff
 
-app = FastAPI(title="Emma AI API", version="0.4.0")
+app = FastAPI(title="Emma AI API", version="0.5.0")
 
 app.add_middleware(
     CORSMiddleware,

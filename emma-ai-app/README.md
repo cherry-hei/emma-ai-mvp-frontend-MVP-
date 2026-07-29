@@ -10,7 +10,7 @@ there is no Python UI here.
 | Concern | Tech |
 |---|---|
 | REST API | **FastAPI** (uvicorn) |
-| Domain / AI | `emma_core` + **OR-Tools** CP-SAT + Phase 4 operational rules |
+| Domain / AI | `emma_core` + **OR-Tools** CP-SAT + Phase 5 deterministic compliance |
 | Data + Auth | **Supabase** (Postgres + GoTrue + RLS) |
 | Frontend (separate repo) | **Next.js** — consumes this API |
 
@@ -44,11 +44,14 @@ to `http://localhost:3000`.
 Switching to cloud Supabase later = change the four `SUPABASE_*`/`DATABASE_URL`
 values in `.env`; nothing else.
 
-## Phase 4 extension points
+## Phase 5 extension points
 
-`emma_core/services/scheduling.py` owns the pure task-eligibility, event-staffing
-and floor-coverage evaluators. API writes, roster validation and publishing all
-call those functions. Add later automatic checks and explanations there rather
-than duplicating policy in routers or UI code. The Phase 4 migration stores
-versionable qualification, event-requirement and floor-rule data with facility
-RLS.
+`emma_core/services/validation.py` is the roster compliance source of truth and
+composes the Phase 4 task/event/floor evaluators from
+`emma_core/services/scheduling.py`. The optimizer, manual validation and publish
+guard share those rules; new Phase 6 explanations should consume their structured
+evidence rather than reimplementing policy. Ratio and rule configuration are
+effective-dated, facility-scoped and protected by RLS. Phase 5 also keeps
+Home-specific night, agency, part-time and leave policies in the same versioned
+rule model; publication is an atomic, validation-gated database operation with
+one operative roster per period.

@@ -14,6 +14,7 @@ from .inputs import (
     SolverInputs,
     SolverLimits,
     StaffInput,
+    WorkPatternInput,
 )
 from .objective import PLAN_LABELS, PLAN_WEIGHTS
 from .pareto import solve_pareto, weight_grid
@@ -21,7 +22,7 @@ from .results import SolvedAssignment, SolverKpi, SolverResult, Violation
 from .solve import build_and_solve, solve_plan
 
 __all__ = [
-    "StaffInput", "DemandSlot", "RatioRuleInput", "ResidentCountInput",
+    "StaffInput", "WorkPatternInput", "DemandSlot", "RatioRuleInput", "ResidentCountInput",
     "BaselineCell", "LockedAssignment", "SolverLimits", "PlanWeights", "SolverInputs",
     "SolvedAssignment", "Violation", "SolverKpi", "SolverResult",
     "PLAN_WEIGHTS", "PLAN_LABELS", "build_and_solve", "solve_plan",

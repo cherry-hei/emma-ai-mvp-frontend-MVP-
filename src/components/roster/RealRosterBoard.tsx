@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { api, optimizeAndPoll } from '@/lib/api'
 import type {
   OptionScoreOut, PeriodOut, RosterCell, RosterGrid, RosterOption,
@@ -90,6 +90,8 @@ export function RealRosterBoard() {
   const [publishingId, setPublishingId] = useState('')
   const [publishedIds, setPublishedIds] = useState<Set<string>>(new Set())
   const [publishError, setPublishError] = useState('')
+  const gridRequestRef = useRef(0)
+  const validationRequestRef = useRef(0)
 
   const T = {
     period: isZH ? '週期' : 'Period', newPeriod: isZH ? '＋ 新週期' : '＋ New period',
@@ -110,6 +112,11 @@ export function RealRosterBoard() {
   const flash = (m: string) => { setNotice(m); setError(''); window.setTimeout(() => setNotice(''), 2500) }
 
   // ── loaders ──────────────────────────────────────────────────────────────
+  useEffect(() => () => {
+    gridRequestRef.current += 1
+    validationRequestRef.current += 1
+  }, [])
+
   useEffect(() => {
     api.shiftDefinitions().then(setShiftDefs).catch(() => {})
     api.taskDefinitions().then(setTaskDefs).catch(() => {})
@@ -138,14 +145,46 @@ export function RealRosterBoard() {
     loadVersions(periodId).catch(() => {})
   }, [periodId, loadVersions])
 
+  const validateVersion = useCallback(async (vid: string) => {
+    const requestId = ++validationRequestRef.current
+    try {
+      const result = await api.validateRoster(vid)
+      if (requestId === validationRequestRef.current) setValidation(result)
+      return result
+    } catch (e) {
+      // A newer version or manual re-check supersedes this request.
+      if (requestId !== validationRequestRef.current) return null
+      throw e
+    }
+  }, [])
+
   const loadGrid = useCallback(async (pid: string, vid: string) => {
+    const requestId = ++gridRequestRef.current
+    // The next grid owns the validation strip; invalidate any older response.
+    validationRequestRef.current += 1
     setLoading(true); setError(''); setValidation(null)
     try {
-      setGrid(await api.rosterGrid(pid, vid ? { versionId: vid } : undefined))
+      const nextGrid = await api.rosterGrid(pid, vid ? { versionId: vid } : undefined)
+      if (requestId !== gridRequestRef.current) return
+      setGrid(nextGrid)
+      setLoading(false)
+      if (nextGrid.version_id) {
+        try {
+          await validateVersion(nextGrid.version_id)
+        } catch (e) {
+          if (requestId === gridRequestRef.current) {
+            setError(e instanceof Error ? e.message : 'Validation failed')
+          }
+        }
+      }
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to load roster')
-    } finally { setLoading(false) }
-  }, [])
+      if (requestId === gridRequestRef.current) {
+        setError(e instanceof Error ? e.message : 'Failed to load roster')
+      }
+    } finally {
+      if (requestId === gridRequestRef.current) setLoading(false)
+    }
+  }, [validateVersion])
 
   useEffect(() => { if (periodId) loadGrid(periodId, versionId) }, [periodId, versionId, loadGrid])
 
@@ -205,14 +244,18 @@ export function RealRosterBoard() {
   async function handleValidate() {
     if (!activeVersionId) return
     setBusy('validate'); setError('')
-    try { setValidation(await api.validateRoster(activeVersionId)) }
+    try { await validateVersion(activeVersionId) }
     catch (e) { setError(e instanceof Error ? e.message : 'Validation failed') } finally { setBusy('') }
   }
 
   async function handleSaveDraft() {
     if (!activeVersionId) return
     setBusy('save')
-    try { await api.saveDraft(activeVersionId); flash(isZH ? '已儲存草稿' : 'Draft saved') }
+    try {
+      await api.saveDraft(activeVersionId)
+      try { await validateVersion(activeVersionId) } catch { /* draft remains saved */ }
+      flash(isZH ? '已儲存草稿' : 'Draft saved')
+    }
     catch (e) { setError(e instanceof Error ? e.message : 'Save failed') } finally { setBusy('') }
   }
 
@@ -223,7 +266,11 @@ export function RealRosterBoard() {
       await api.publish(activeVersionId)
       flash(isZH ? '已發佈' : 'Published')
       await refresh()
-    } catch (e) { setError(e instanceof Error ? e.message : 'Publish failed') } finally { setBusy('') }
+    } catch (e) {
+      const message = e instanceof Error ? e.message : 'Publish failed'
+      try { await validateVersion(activeVersionId) } catch { /* preserve the publish error */ }
+      setError(message)
+    } finally { setBusy('') }
   }
 
   async function handleAI() {

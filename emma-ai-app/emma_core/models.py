@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from datetime import date as Date, datetime as DateTime
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from .constants import EmploymentType, JobStatus, PlanMode, Rank, Role, SolveStatus
 
@@ -109,8 +109,8 @@ class RatioResult(BaseModel):
     window_start: str
     window_end: str
     residents: int
-    required: int
-    actual: int
+    required: float
+    actual: float
     passes: bool
 
 
@@ -118,8 +118,9 @@ class RatioResult(BaseModel):
 # Request/response for POST /optimize-roster.
 class SolverLimitsModel(BaseModel):
     model_config = ConfigDict(extra="ignore")
-    max_seconds: float = 10.0
-    workers: int = 8
+    # Keep caller-controlled solver resources inside an API-safe envelope.
+    max_seconds: float = Field(default=10.0, gt=0, le=120)
+    workers: int = Field(default=8, ge=1, le=32)
     seed: int = 42
 
 
@@ -314,10 +315,13 @@ class ViolationOut(BaseModel):
     model_config = ConfigDict(extra="ignore")
     rule_code: str
     shift_id: str | None = None
+    staff_id: str | None = None
     date: Date | None = None
     unit_id: str | None = None
     task_assignment_id: str | None = None
     event_id: str | None = None
+    validation_run_id: str | None = None
+    rule_definition_id: str | None = None
     severity: str = "hard"
     message: str | None = None
     details: dict = Field(default_factory=dict)
@@ -340,13 +344,37 @@ class OptionScoreOut(BaseModel):
 
 
 class ValidationOut(BaseModel):
+    model_config = ConfigDict(extra="ignore")
     roster_version_id: str
-    method: str                       # 'solver-scored' | 'ratio-check'
+    method: str
     passes: bool
     hard_violation_count: int = 0
     constraint_score: int | None = None
     violations: list[ViolationOut] = Field(default_factory=list)
     ratio_checks: list[RatioResult] = Field(default_factory=list)
+    validation_run_id: str | None = None
+    input_digest: str | None = None
+
+
+class RuleDefinitionCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    rule_code: str = Field(min_length=1)
+    name: str | None = None
+    description: str | None = None
+    severity: str = Field(default="hard", pattern="^(hard|soft)$")
+    config_json: dict = Field(default_factory=dict)
+    config_version: int = Field(default=1, ge=1)
+    effective_from: Date | None = None
+    effective_to: Date | None = None
+    active: bool = True
+
+
+class RuleDefinitionOut(RuleDefinitionCreate):
+    model_config = ConfigDict(extra="ignore")
+    id: str
+    facility_id: str | None = None
+    created_at: DateTime | None = None
+    updated_at: DateTime | None = None
 
 
 # ── Phase 3 request bodies ──────────────────────────────────────────────────
@@ -355,6 +383,8 @@ class ValidationOut(BaseModel):
 # to each one buys nothing but drift. Request bodies stay typed: those are the
 # trust boundary.
 class LeaveRequestCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     staff_id: str | None = None       # None => the caller's own staff record
     leave_type: str                   # AL|special|marriage|DO|duty_request|SL|DSL|urgent|late
     date_start: Date
@@ -364,10 +394,34 @@ class LeaveRequestCreate(BaseModel):
     requested_shift_type: str | None = None
     document_url: str | None = None
 
+    @model_validator(mode="after")
+    def validate_request_semantics(self):
+        if self.date_end < self.date_start:
+            raise ValueError("date_end must be on or after date_start")
+        positive_duty = self.leave_type in {"duty_request", "shift_swap"}
+        if positive_duty and not self.requested_shift_type:
+            raise ValueError(
+                "requested_shift_type is required for a duty request or shift swap"
+            )
+        if not positive_duty and self.requested_shift_type:
+            raise ValueError(
+                "requested_shift_type is only valid for a duty request or shift swap"
+            )
+        return self
+
 
 class LeaveDecisionRequest(BaseModel):
-    decision: str                     # approve|reject|review
+    model_config = ConfigDict(extra="forbid")
+
+    decision: str = Field(pattern="^(approve|reject|review)$")
     note: str | None = None
+    ballot_approved: bool | None = None
+
+    @model_validator(mode="after")
+    def validate_ballot_decision(self):
+        if self.ballot_approved is not None and self.decision != "approve":
+            raise ValueError("ballot_approved is only valid when approving")
+        return self
 
 
 class IncidentCreate(BaseModel):
