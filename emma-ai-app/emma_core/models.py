@@ -1,7 +1,7 @@
 """Pydantic models returned by services. `extra="ignore"` keeps boundary rows forward-compatible as DB columns are added."""
 from __future__ import annotations
 
-from datetime import date as Date
+from datetime import date as Date, datetime as DateTime
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -47,6 +47,28 @@ class Profile(BaseModel):
 
 
 # ── roster grid view (already typed) ────────────────────────────────────────
+class StaffingRequirementOut(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    id: str | None = None
+    rank: str
+    count: int
+    is_additive: bool = True
+    notes: str | None = None
+
+
+class FacilityEventOut(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    id: str
+    event_type: str
+    event_date: Date
+    start_at: DateTime | None = None
+    end_at: DateTime | None = None
+    unit_id: str | None = None
+    title: str | None = None
+    notes: str | None = None
+    staffing_requirements: list[StaffingRequirementOut] = Field(default_factory=list)
+
+
 class StaffLite(BaseModel):
     id: str
     name: str
@@ -78,6 +100,7 @@ class RosterGrid(BaseModel):
     period_end: Date | None = None
     dates: list[Date] = Field(default_factory=list)
     rows: list[RosterRow] = Field(default_factory=list)
+    events: list[FacilityEventOut] = Field(default_factory=list)
 
 
 class RatioResult(BaseModel):
@@ -280,6 +303,10 @@ class TaskDefOut(BaseModel):
     shift_type: str | None = None
     required_rank: str | None = None
     requires_audit: bool = False
+    unit_id: str | None = None
+    description: str | None = None
+    required_qualification_json: dict | list | str | None = None
+    is_restricted: bool = False
     active: bool = True
 
 
@@ -287,8 +314,13 @@ class ViolationOut(BaseModel):
     model_config = ConfigDict(extra="ignore")
     rule_code: str
     shift_id: str | None = None
+    date: Date | None = None
+    unit_id: str | None = None
+    task_assignment_id: str | None = None
+    event_id: str | None = None
     severity: str = "hard"
     message: str | None = None
+    details: dict = Field(default_factory=dict)
     resolved: bool = False
 
 
@@ -360,6 +392,65 @@ class ClockRequest(BaseModel):
 
 class TaskStatusRequest(BaseModel):
     status: str                       # pending|done|skipped
+
+
+class TaskAssignmentCreate(BaseModel):
+    shift_assignment_id: str
+    task_id: str
+    start_at: DateTime | None = None
+    end_at: DateTime | None = None
+    source_type: str = "manual"
+
+
+class TaskAssignmentPatch(BaseModel):
+    task_id: str | None = None
+    start_at: DateTime | None = None
+    end_at: DateTime | None = None
+    source_type: str | None = None
+
+
+class TaskAssignmentOut(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    id: str
+    roster_version_id: str | None = None
+    shift_assignment_id: str
+    staff_id: str | None = None
+    task_id: str | None = None
+    task_label: str
+    start_at: DateTime | None = None
+    end_at: DateTime | None = None
+    source_type: str = "manual"
+    task_status: str = "pending"
+    completed_at: DateTime | None = None
+
+
+class StaffingRequirementIn(BaseModel):
+    rank: str
+    count: int = Field(default=1, ge=1)
+    is_additive: bool = True
+    notes: str | None = None
+
+
+class FacilityEventCreate(BaseModel):
+    event_type: str
+    event_date: Date
+    start_at: DateTime | None = None
+    end_at: DateTime | None = None
+    unit_id: str | None = None
+    title: str | None = None
+    notes: str | None = None
+    staffing_requirements: list[StaffingRequirementIn] | None = None
+
+
+class FacilityEventPatch(BaseModel):
+    event_type: str | None = None
+    event_date: Date | None = None
+    start_at: DateTime | None = None
+    end_at: DateTime | None = None
+    unit_id: str | None = None
+    title: str | None = None
+    notes: str | None = None
+    staffing_requirements: list[StaffingRequirementIn] | None = None
 
 
 class RoiSettingsPatch(BaseModel):

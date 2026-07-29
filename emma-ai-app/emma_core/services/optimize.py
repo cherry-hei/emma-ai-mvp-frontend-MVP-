@@ -51,6 +51,15 @@ def _segments_json(segments) -> list[dict] | None:
             for s, e, _ in segments]
 
 
+def _clock_minutes(value, fallback: str) -> int:
+    if not value:
+        return int(to_minutes(fallback))
+    text = str(value)
+    if "T" in text:
+        text = text.split("T", 1)[1]
+    return int(to_minutes(text[:5]))
+
+
 # ── load: DB rows -> pure SolverInputs ───────────────────────────────────────
 def _source_version(client, facility_id, period_id, source_version_id):
     if source_version_id:
@@ -90,8 +99,9 @@ def load_inputs(client, facility_id: str, period_id: str, *, source_version_id=N
     if not src:
         raise ValueError("no source 'manual' roster version to derive demand from")
 
-    # Seven flat reads that together become SolverInputs. They are deliberately
-    # unjoined: the solver wants whole tables in memory, not a denormalised row set.
+    # Flat facility-scoped reads together become SolverInputs. They are
+    # deliberately unjoined: the solver wants whole tables in memory, not a
+    # denormalised row set.
     #
     # SQL: select * from shifts where roster_version_id = :source_version_id
     shifts = client.table("shifts").select("*").eq("roster_version_id", src["id"]).execute().data
@@ -120,6 +130,20 @@ def load_inputs(client, facility_id: str, period_id: str, *, source_version_id=N
     counts = (client.table("daily_resident_counts").select("*")
               .eq("facility_id", facility_id)
               .gte("date", str(period_start)).lte("date", str(period_end)).execute().data)
+    # Phase 4 additive event requirements become independent demand slots. A
+    # concurrent requirement (podiatry/weighing) stays a validation-only overlay.
+    events = (client.table("facility_events").select("*")
+              .eq("facility_id", facility_id)
+              .gte("date", str(period_start)).lte("date", str(period_end))
+              .execute().data)
+    event_requirements = []
+    if events:
+        event_requirements = (
+            client.table("event_staffing_requirements").select("*")
+            .eq("facility_id", facility_id)
+            .in_("event_id", [event["id"] for event in events])
+            .execute().data
+        )
     # SQL: select * from calendar_days
     #      where (facility_id = :facility_id or facility_id is null)
     # (unbounded by date — the whole calendar is pulled, then indexed by date below)
@@ -183,6 +207,41 @@ def load_inputs(client, facility_id: str, period_id: str, *, source_version_id=N
             requires_medication=rank in _AUDIT_RANKS,
             agency_allowed=bool(cal["is_agency_allowed"]) if cal else True,
             agency_cost_scaled=round(float(cal["agency_cost_multiplier"]) * 10) if cal else 10,
+        ))
+
+    event_by_id = {event["id"]: event for event in events}
+    for requirement in event_requirements:
+        if not requirement.get("is_additive", True):
+            continue
+        event = event_by_id.get(requirement.get("event_id"))
+        if not event:
+            continue
+        d = _as_date(event["date"])
+        start = _clock_minutes(event.get("start_at"), "00:00")
+        end = _clock_minutes(event.get("end_at"), "24:00")
+        cross = end <= start
+        duration = ((1440 - start) + end) if cross else end - start
+        cal = cal_by_date.get(d)
+        event_type = str(event.get("event_type") or "event")
+        demand.append(DemandSlot(
+            id=f"event:{event['id']}:{requirement['id']}",
+            date=d,
+            day_index=(d - period_start).days,
+            shift_type=f"EVENT:{event_type}",
+            start_min=start,
+            end_min=end,
+            cross_midnight=cross,
+            duration_min=duration,
+            segments=((start, end, cross),),
+            unit_id=event.get("unit_id"),
+            required_rank=requirement.get("rank"),
+            required_count=int(requirement.get("count") or 1),
+            requires_medication=event_type.lower().startswith("medication"),
+            agency_allowed=bool(cal["is_agency_allowed"]) if cal else True,
+            agency_cost_scaled=(
+                round(float(cal["agency_cost_multiplier"]) * 10) if cal else 10
+            ),
+            is_event_overlay=True,
         ))
 
     ratio_rules = [RatioRuleInput(
@@ -326,7 +385,10 @@ def _writeback_version(client, request, inputs, res) -> str:
             "date": str(sl.date), "shift_type": sl.shift_type,
             "start_time": _min_to_time(sl.start_min), "end_time": _min_to_time(sl.end_min),
             "cross_midnight": sl.cross_midnight, "unit_id": sl.unit_id,
-            "required_rank": sl.required_rank, "required_count": sl.required_count,
+            "required_rank": (
+                sl.required_rank if "|" not in (sl.required_rank or "") else None
+            ),
+            "required_count": sl.required_count,
             "is_working": True,
             # carry the split-shift shape through, else a solver option would
             # silently re-inflate an A/N shift back to its elapsed span

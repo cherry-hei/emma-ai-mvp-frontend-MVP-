@@ -21,6 +21,7 @@ from emma_core.models import (
     ViolationOut,
 )
 from emma_core.services import optimize as opt
+from emma_core.services import scheduling as scheduling_svc
 from emma_core.services.compliance import compute_ratios
 from emma_core.services.roster import get_roster_grid
 
@@ -44,8 +45,14 @@ def _to_option_score_out(row: dict, *, with_violations: bool = True) -> OptionSc
         publishable=(cs >= PUBLISH_THRESHOLD and hv == 0),
         version_label=row.get("version_label"),      # set by list_period_option_scores (compare)
         version_status=row.get("version_status"),
-        violations=([ViolationOut.model_validate(v) for v in row.get("violations", [])]
-                    if with_violations else []),
+        violations=[
+            ViolationOut.model_validate({
+                **v,
+                "details": v.get("details") or v.get("details_json") or {},
+            })
+
+            for v in row.get("violations", [])
+        ] if with_violations else [],
     )
 
 
@@ -133,15 +140,24 @@ def option_scores(roster_version_id: str, ctx: AuthCtx = Depends(get_ctx)):
 @router.post("/validate-roster", response_model=ValidationOut)
 def validate_roster(body: ValidateRequest, ctx: AuthCtx = Depends(get_ctx)):
     vid = body.roster_version_id
+    phase4_rows = scheduling_svc.validate_roster_rules(
+        ctx.client, ctx.facility_id, vid, persist=True)
+    phase4 = [ViolationOut.model_validate(row) for row in phase4_rows]
+    phase4_codes = {row.rule_code for row in phase4}
     # Solver option: return its persisted hard-constraint result.
     score = opt.get_option_scores(ctx.client, vid)
     if score is not None:
         out = _to_option_score_out(score)
+        solver_violations = [
+            row for row in out.violations if row.rule_code not in phase4_codes
+        ]
+        hard_count = out.hard_violation_count + len(phase4)
         # passes == no hard violations; the publish threshold is enforced at publish time.
         return ValidationOut(
-            roster_version_id=vid, method="solver-scored",
-            passes=(out.hard_violation_count == 0), constraint_score=out.constraint_score,
-            hard_violation_count=out.hard_violation_count, violations=out.violations,
+            roster_version_id=vid, method="solver-scored+operational",
+            passes=(hard_count == 0), constraint_score=out.constraint_score,
+            hard_violation_count=hard_count,
+            violations=[*solver_violations, *phase4],
         )
     # Manual roster (no solver score): live SWD ratio check across its dated shifts.
     grid = get_roster_grid(ctx.client, ctx.facility_id, version_id=vid, version_type=None)
@@ -150,8 +166,9 @@ def validate_roster(body: ValidateRequest, ctx: AuthCtx = Depends(get_ctx)):
         checks.extend(compute_ratios(ctx.client, ctx.facility_id, d, roster_version_id=vid))
     breaches = [c for c in checks if not c.passes]
     return ValidationOut(
-        roster_version_id=vid, method="ratio-check",
+        roster_version_id=vid, method="ratio+operational",
         # an empty roster covers nothing — not a vacuous pass.
-        passes=bool(grid.dates) and not breaches,
-        hard_violation_count=len(breaches), ratio_checks=checks,
+        passes=bool(grid.dates) and not breaches and not phase4,
+        hard_violation_count=len(breaches) + len(phase4),
+        ratio_checks=checks, violations=phase4,
     )

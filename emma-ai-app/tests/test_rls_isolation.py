@@ -80,3 +80,15 @@ def test_cross_facility_write_is_blocked(home_a, home_b):
             "facility_id": b_fac_id, "name": "intruder", "rank": "CW",
             "employment_type": "agency",
         }).execute()
+
+
+def test_phase4_rule_tables_block_cross_facility_reads(home_a, home_b):
+    b_fac_id = home_b.table("facilities").select("id").limit(1).execute().data[0]["id"]
+    for table in (
+        "staff_qualifications",
+        "event_staffing_requirements",
+        "floor_min_staffing_rules",
+    ):
+        leaked = (home_a.table(table).select("id")
+                  .eq("facility_id", b_fac_id).execute().data)
+        assert leaked == [], f"RLS leak: Home A read Home B {table}"

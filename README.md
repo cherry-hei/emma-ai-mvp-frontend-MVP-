@@ -14,7 +14,7 @@ and [`emma-ai-app/RUNBOOK.md`](emma-ai-app/RUNBOOK.md) for backend details.
 
 ## Status — what's real
 
-**Phases 1, 2 and 3 are fully wired to the backend** — real data, RLS-scoped to the
+**Phases 1 through 4.3 are wired to the backend** — real data, RLS-scoped to the
 signed-in facility. There is no mock data left in the app; `src/lib/data.ts` and the
 fixture-backed `/api/*` route handlers were deleted.
 
@@ -23,6 +23,7 @@ fixture-backed `/api/*` route handlers were deleted.
 | **Login / account switch** | 1 | `/auth/login` · `/auth/refresh` · `/auth/me` |
 | **Roster** — grid, manual edit, publish | 1 | `/rosters`, `/shifts`, `/roster-versions` |
 | **Roster → AI Suggest** — A/B/C solver | 2 | `/optimize-roster`, `/optimization-jobs`, `/validate-roster` |
+| **Task scheduling** — eligibility, events, floor coverage | 4 | `/task-assignments`, `/facility-events`, `/validate-roster` |
 | **Compliance** — ratio, residents, certs | 1 | `/compliance/ratio`, `/resident-counts`, `/units`, `/staff` |
 | **Staff Portfolio** — directory + profile | 1 | `/staff`, `/staff/{id}` |
 | **Dashboard** — KPIs, incident mix, shift mix, alerts | 3 | `/dashboard/summary` |
@@ -33,7 +34,24 @@ fixture-backed `/api/*` route handlers were deleted.
 | **Staff App** — roster, tasks, clock in/out, profile | 3 | `/me/*` |
 | **Staff profile → AI Analysis** | 3 | `/staff/{id}/ai-analysis` |
 
-**Phase 4 (NLP feedback analysis) is not started.**
+Phase 4 covers task-based scheduling through milestone 4.3. Later automatic
+compliance and explanation work remains intentionally outside this phase.
+
+## Phase 4 — task-based scheduling
+
+- **Task codes and eligibility (4.1):** rank/shift/unit rules, qualifications,
+  medication-audit restrictions, mentor/new-staff controls, and the A3/P3-only
+  rule for unaudited agency staff are enforced before an edit is saved.
+  Rejected attempts are recorded in `violation_log`.
+- **Event overlays (4.2):** events carry normalized staffing requirements. Hair
+  cutting, CGAT, medication checks, podiatry and monthly weighing use reusable
+  defaults; visiting, PGT and training accept manager-entered requirements.
+  Event markers are included in roster date headers.
+- **Floor coverage (4.3):** data-driven, minute-level rules support Home B's
+  1/F, 2/F and 6/F HCA minimums, 6/F weekend relaxation, and the 2/F
+  16:00–21:30 local-P-shift composition rule.
+- `/validate-roster` runs the same operational checks for manual and solver
+  versions, and those checks also guard publishing.
 
 ### Built on the backend, no UI yet
 

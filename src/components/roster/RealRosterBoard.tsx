@@ -45,7 +45,21 @@ function dayLabel(iso: string, isZH: boolean) {
   return { wd, dm: `${d.getUTCDate()}/${d.getUTCMonth() + 1}`, weekend: dow === 0 || dow === 6 }
 }
 
-type EditState = { staffId: string; staffName: string; date: string; shiftType: string; tasks: string[] }
+type EditState = {
+  staffId: string
+  staffName: string
+  staffRank: string
+  date: string
+  shiftType: string
+  tasks: string[]
+}
+
+function canSeeTask(actualRank: string, task: TaskDefOut, shiftType: string): boolean {
+  if (task.shift_type && task.shift_type !== shiftType) return false
+  if (!task.required_rank || task.required_rank === actualRank) return true
+  return new Set([actualRank, task.required_rank]).size === 2
+    && [actualRank, task.required_rank].every((rank) => rank === 'CW' || rank === 'HCA')
+}
 
 export function RealRosterBoard() {
   const { lang } = useLang()
@@ -159,6 +173,14 @@ export function RealRosterBoard() {
       m.set(r.staff.id, byDate)
     })
     return m
+  }, [grid])
+
+  const eventsByDate = useMemo(() => {
+    const grouped = new Map<string, NonNullable<RosterGrid['events']>>()
+    grid?.events.forEach((event) => {
+      grouped.set(event.event_date, [...(grouped.get(event.event_date) ?? []), event])
+    })
+    return grouped
   }, [grid])
 
   // ── actions ──────────────────────────────────────────────────────────────
@@ -347,10 +369,17 @@ export function RealRosterBoard() {
                 </th>
                 {columns.map((iso) => {
                   const d = dayLabel(iso, isZH)
+                  const dayEvents = eventsByDate.get(iso) ?? []
                   return (
                     <th key={iso} className={`px-1 py-1.5 text-center border-r border-gray-100 min-w-[54px] ${d.weekend ? 'bg-pink-50' : 'bg-gray-50'}`}>
                       <div className="text-[8px] text-gray-400">{d.wd}</div>
                       <div className="text-[11px] font-bold text-gray-700">{d.dm}</div>
+                      {dayEvents.length > 0 && (
+                        <div
+                          className="mx-auto mt-0.5 h-1.5 w-1.5 rounded-full bg-amber-400"
+                          title={dayEvents.map((event) => event.title || event.event_type).join(', ')}
+                        />
+                      )}
                     </th>
                   )
                 })}
@@ -374,6 +403,7 @@ export function RealRosterBoard() {
                       <td key={iso}
                         onClick={() => editable && setEditing({
                           staffId: row.staff.id, staffName: row.staff.name_en || row.staff.name,
+                          staffRank: row.staff.rank,
                           date: iso, shiftType: st ?? '', tasks: cell?.tasks ?? [],
                         })}
                         className={`border-r border-gray-100 p-1 align-top ${editable ? 'cursor-pointer hover:bg-pink-50/40' : ''}`}>
@@ -411,7 +441,9 @@ export function RealRosterBoard() {
                 const sel = editing.shiftType === sd.shift_type
                 const style = SHIFT_STYLE[sd.shift_type] ?? DEFAULT_STYLE
                 return (
-                  <button key={sd.id} onClick={() => setEditing({ ...editing, shiftType: sel ? '' : sd.shift_type })}
+                  <button key={sd.id} onClick={() => setEditing({
+                    ...editing, shiftType: sel ? '' : sd.shift_type, tasks: [],
+                  })}
                     className="px-2.5 py-1 rounded-lg text-xs font-bold border-2 transition-all"
                     style={{ background: style.bg, color: style.fg, borderColor: sel ? PINK : 'transparent' }}
                     title={sd.label ?? sd.shift_type}>
@@ -425,7 +457,9 @@ export function RealRosterBoard() {
               <div className="mb-4">
                 <div className="text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-1.5">{T.tasks}</div>
                 <div className="flex flex-wrap gap-1.5 max-h-24 overflow-y-auto">
-                  {taskDefs.map((td) => {
+                  {taskDefs.filter((td) => canSeeTask(
+                    editing.staffRank, td, editing.shiftType,
+                  )).map((td) => {
                     const label = td.task_name || td.task_code
                     const on = editing.tasks.includes(label)
                     return (

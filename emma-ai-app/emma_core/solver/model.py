@@ -27,9 +27,13 @@ def eligible(staff: StaffInput, slot: DemandSlot, inputs: SolverInputs) -> bool:
         return False
     if staff.id in inputs.exclude_staff_ids:
         return False
-    if slot.required_rank and staff.rank != slot.required_rank:
+    allowed_ranks = {
+        value.strip() for value in (slot.required_rank or "").split("|") if value.strip()
+    }
+    if allowed_ranks and staff.rank not in allowed_ranks:
         return False
-    if staff.allowed_shift_types and slot.shift_type not in staff.allowed_shift_types:
+    if (not slot.is_event_overlay and staff.allowed_shift_types
+            and slot.shift_type not in staff.allowed_shift_types):
         return False
     if slot.requires_medication and not staff.is_audited_for_medication:
         return False

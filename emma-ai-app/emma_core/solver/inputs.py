@@ -45,6 +45,7 @@ class DemandSlot:
     requires_medication: bool = False
     agency_allowed: bool = True
     agency_cost_scaled: int = 10                 # round(cost_multiplier * 10); 10 == 1.0x
+    is_event_overlay: bool = False
 
 
 @dataclass(frozen=True, slots=True)

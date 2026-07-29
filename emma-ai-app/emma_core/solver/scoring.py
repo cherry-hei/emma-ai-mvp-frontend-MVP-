@@ -16,15 +16,20 @@ def _val(solver, expr):
 
 def extract_assignments(sm: SolverModel, solver) -> list[SolvedAssignment]:
     out: list[SolvedAssignment] = []
+    staff_by_id = {staff.id: staff for staff in sm.inputs.staff}
     for (sid, slot_id), var in sm.x.items():
         if solver.Value(var) == 1:
-            sl = sm.slot_by_id[slot_id]
-            out.append(SolvedAssignment(slot_id=slot_id, staff_id=sid, role=sl.required_rank))
+            out.append(SolvedAssignment(
+                slot_id=slot_id,
+                staff_id=sid,
+                role=staff_by_id[sid].rank,
+            ))
     for slot_id, var in sm.agency.items():
         sl = sm.slot_by_id[slot_id]
+        agency_role = (sl.required_rank or "").split("|", 1)[0] or None
         for _ in range(solver.Value(var)):
             out.append(SolvedAssignment(slot_id=slot_id, staff_id=None,
-                                        role=sl.required_rank, is_agency=True))
+                                        role=agency_role, is_agency=True))
     return out
 
 

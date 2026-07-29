@@ -130,6 +130,7 @@ export interface RosterGrid {
   period_end?: string | null
   dates: string[]
   rows: RosterRowApi[]
+  events: FacilityEvent[]
 }
 
 export interface RatioResult {
@@ -189,15 +190,58 @@ export interface TaskDefOut {
   shift_type?: string | null
   required_rank?: string | null
   requires_audit: boolean
+  unit_id?: string | null
+  description?: string | null
+  required_qualification_json?: Record<string, unknown> | unknown[] | string | null
+  is_restricted: boolean
   active: boolean
 }
 
 export interface ViolationOut {
   rule_code: string
   shift_id?: string | null
+  date?: string | null
+  unit_id?: string | null
+  task_assignment_id?: string | null
+  event_id?: string | null
   severity: string
   message?: string | null
+  details: Record<string, unknown>
   resolved: boolean
+}
+
+export interface StaffingRequirement {
+  id?: string | null
+  rank: string
+  count: number
+  is_additive: boolean
+  notes?: string | null
+}
+
+export interface FacilityEvent {
+  id: string
+  event_type: string
+  event_date: string
+  start_at?: string | null
+  end_at?: string | null
+  unit_id?: string | null
+  title?: string | null
+  notes?: string | null
+  staffing_requirements: StaffingRequirement[]
+}
+
+export interface TaskAssignment {
+  id: string
+  roster_version_id?: string | null
+  shift_assignment_id: string
+  staff_id?: string | null
+  task_id?: string | null
+  task_label: string
+  start_at?: string | null
+  end_at?: string | null
+  source_type: string
+  task_status: string
+  completed_at?: string | null
 }
 
 export interface OptionScoreOut {
@@ -221,7 +265,7 @@ export interface CompareOptionsResponse {
 
 export interface ValidationOut {
   roster_version_id: string
-  method: string // 'solver-scored' | 'ratio-check'
+  method: string // solver/ratio validation plus Phase 4 operational checks
   passes: boolean
   hard_violation_count: number
   constraint_score?: number | null

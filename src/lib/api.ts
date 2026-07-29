@@ -10,12 +10,12 @@
 // higher-security posture, move auth to a server-side BFF with httpOnly cookies.
 import type {
   AlertItem, ApiError, ApiStaff, CompareOptionsResponse, CreatePeriodResponse,
-  DashboardSummary, EventTrigger, FutureDebtRow, GeneratedReport, Incident,
+  DashboardSummary, EventTrigger, FacilityEvent, FutureDebtRow, GeneratedReport, Incident,
   IncidentStats, JobView, LeaveCategory, LeaveGroup, LeaveRequest, LeaveStats,
   MyAttendance, MyProfile, MyRoster, MySummary, MyTask, OptimizeResponse, PeriodOut,
   Profile, RatioResult, RegulatoryDoc, ReplacementCandidate, ReportRow,
   ReportSchedule, ReportType, ResidentCountOut, RoiSettings, RoiSummary, RosterGrid,
-  RosterOption, SessionOut, ShiftDef, StaffAiAnalysis, StaffDetail, TaskDefOut,
+  RosterOption, SessionOut, ShiftDef, StaffAiAnalysis, StaffDetail, TaskAssignment, TaskDefOut,
   ThresholdMonitor, Unit, ValidationOut, VersionOut,
 } from './apiTypes'
 
@@ -219,6 +219,54 @@ export const api = {
 
   shiftDefinitions: () => apiFetch<ShiftDef[]>('/shift-definitions'),
   taskDefinitions: () => apiFetch<TaskDefOut[]>('/task-definitions'),
+
+  taskAssignments: (params?: { rosterVersionId?: string; shiftAssignmentId?: string }) => {
+    const q = new URLSearchParams()
+    if (params?.rosterVersionId) q.set('roster_version_id', params.rosterVersionId)
+    if (params?.shiftAssignmentId) q.set('shift_assignment_id', params.shiftAssignmentId)
+    return apiFetch<TaskAssignment[]>(`/task-assignments${q.size ? `?${q.toString()}` : ''}`)
+  },
+
+  createTaskAssignment: (body: {
+    shift_assignment_id: string; task_id: string; start_at?: string; end_at?: string; source_type?: string
+  }) => apiFetch<TaskAssignment>('/task-assignments', {
+    method: 'POST', body: JSON.stringify(body),
+  }),
+
+  updateTaskAssignment: (id: string, body: {
+    task_id?: string; start_at?: string | null; end_at?: string | null; source_type?: string
+  }) => apiFetch<TaskAssignment>(`/task-assignments/${id}`, {
+    method: 'PATCH', body: JSON.stringify(body),
+  }),
+
+  deleteTaskAssignment: (id: string) =>
+    apiFetch<void>(`/task-assignments/${id}`, { method: 'DELETE' }),
+
+  facilityEvents: (params?: { dateFrom?: string; dateTo?: string }) => {
+    const q = new URLSearchParams()
+    if (params?.dateFrom) q.set('date_from', params.dateFrom)
+    if (params?.dateTo) q.set('date_to', params.dateTo)
+    return apiFetch<FacilityEvent[]>(`/facility-events${q.size ? `?${q.toString()}` : ''}`)
+  },
+
+  createFacilityEvent: (body: {
+    event_type: string; event_date: string; start_at?: string; end_at?: string
+    unit_id?: string; title?: string; notes?: string
+    staffing_requirements?: Array<{ rank: string; count: number; is_additive?: boolean; notes?: string }>
+  }) => apiFetch<FacilityEvent>('/facility-events', {
+    method: 'POST', body: JSON.stringify(body),
+  }),
+
+  updateFacilityEvent: (id: string, body: Partial<{
+    event_type: string; event_date: string; start_at: string | null; end_at: string | null
+    unit_id: string | null; title: string | null; notes: string | null
+    staffing_requirements: Array<{ rank: string; count: number; is_additive?: boolean; notes?: string }>
+  }>) => apiFetch<FacilityEvent>(`/facility-events/${id}`, {
+    method: 'PATCH', body: JSON.stringify(body),
+  }),
+
+  deleteFacilityEvent: (id: string) =>
+    apiFetch<void>(`/facility-events/${id}`, { method: 'DELETE' }),
 
   // POST and PATCH /shifts share the same upsert-cell behavior on the backend.
   upsertCell: (body: {

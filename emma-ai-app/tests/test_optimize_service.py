@@ -224,3 +224,39 @@ def test_understaffed_writes_violations():
     assert opt.roster_version_id is not None                   # persisted despite gaps
     coverage = [v for v in store.data.get("violation_log", []) if v["rule_code"] == "coverage"]
     assert coverage
+
+
+def test_additive_facility_event_becomes_solver_demand():
+    store = build_store()
+    store.data["facility_events"] = [{
+        "id": "event1", "facility_id": "f1", "event_type": "hair_cutting",
+        "date": "2026-07-01", "start_at": "2026-07-01T09:00:00+08:00",
+        "end_at": "2026-07-01T12:00:00+08:00", "unit_id": None,
+    }]
+    store.data["event_staffing_requirements"] = [{
+        "id": "req1", "facility_id": "f1", "event_id": "event1",
+        "rank": "CW|HCA", "count": 1, "is_additive": True,
+    }]
+
+    inputs = optimize.load_inputs(store, "f1", "p1")
+    overlays = [slot for slot in inputs.demand if slot.is_event_overlay]
+
+    assert len(overlays) == 1
+    assert overlays[0].required_rank == "CW|HCA"
+    assert overlays[0].duration_min == 180
+
+    response = optimize.run_optimization(
+        store,
+        OptimizeRequest(facility_id="f1", period_id="p1", plan_mode=PlanMode.C),
+    )
+    version_id = response.roster_options[0].roster_version_id
+    event_shifts = [
+        shift for shift in _shifts_of(store, version_id)
+        if shift["shift_type"].startswith("EVENT:")
+    ]
+    event_assignments = [
+        assignment for assignment in store.data["shift_assignments"]
+        if assignment["shift_id"] in {shift["id"] for shift in event_shifts}
+    ]
+    assert len(event_shifts) == 1
+    assert event_assignments[0]["role"] in {"CW", "HCA"}

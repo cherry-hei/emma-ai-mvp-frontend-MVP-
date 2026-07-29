@@ -50,9 +50,12 @@ def sync_assignment_tasks(client, facility_id: str, assignment: dict,
         defn = (task_defs or {}).get(label)
         new_rows.append({
             "facility_id": facility_id, "shift_assignment_id": assignment["id"],
+            "roster_version_id": shift.get("roster_version_id"),
             "staff_id": assignment.get("staff_id"),
             "task_id": defn["id"] if defn else None,
             "task_label": label, "scheduled_time": at,
+            "start_at": f"{str(shift.get('date'))[:10]}T{at}" if at else None,
+            "source_type": "legacy_cell",
             "priority": _priority(label), "task_status": "pending",
         })
     if new_rows:

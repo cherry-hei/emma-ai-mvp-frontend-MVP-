@@ -13,6 +13,7 @@ from emma_core.models import (
 )
 from emma_core.services import optimize as opt
 from emma_core.services import roster as svc
+from emma_core.services import scheduling as scheduling_svc
 
 router = APIRouter(tags=["roster"])
 
@@ -73,12 +74,23 @@ def _upsert_cell(body: CellWriteRequest, ctx: AuthCtx):
     if not sd:
         raise api_error(422, "unknown_shift_type",
                         f"'{body.shift_type}' is not a shift type for this facility.")
+    scheduling_svc.validate_task_labels(
+        ctx.client,
+        ctx.facility_id,
+        roster_version_id=body.roster_version_id,
+        staff_id=body.staff_id,
+        shift_type=body.shift_type,
+        on_date=body.date,
+        labels=body.tasks,
+    )
     assignment_id = svc.set_cell(
         ctx.client, facility_id=ctx.facility_id,
         roster_version_id=body.roster_version_id, staff_id=body.staff_id,
         date=body.date, shift_type=body.shift_type, shift_def=sd,
         tasks=body.tasks, changed_by=ctx.profile_id,
     )
+    scheduling_svc.sync_task_rows_for_assignment(
+        ctx.client, ctx.facility_id, assignment_id)
     return {"assignment_id": assignment_id}
 
 
@@ -111,8 +123,16 @@ def save_draft(version_id: str, ctx: AuthCtx = Depends(get_ctx)):
 
 @router.post("/rosters/{version_id}/publish")
 def publish(version_id: str, ctx: AuthCtx = Depends(get_ctx)):
-    # A solver option publishes only if it clears the threshold with zero hard
-    # violations; a manual version (no score row) publishes freely.
+    operational_violations = scheduling_svc.validate_roster_rules(
+        ctx.client, ctx.facility_id, version_id, persist=True)
+    if operational_violations:
+        raise api_error(
+            409, "not_publishable",
+            f"Roster has {len(operational_violations)} task, event, or floor "
+            "coverage violation(s). Validate the roster for details.",
+        )
+    # Solver options have the additional numeric-score gate. Manual versions
+    # have no score row but have already passed the operational guard above.
     score = opt.get_option_scores(ctx.client, version_id)
     if score is not None:
         if score["constraint_score"] < PUBLISH_THRESHOLD or score["hard_violation_count"] > 0:

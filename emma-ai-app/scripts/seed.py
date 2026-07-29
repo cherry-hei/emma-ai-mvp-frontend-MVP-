@@ -8,7 +8,7 @@ service-role key:
 Uses the service-role client (bypasses RLS) to create reference data, a full
 period roster, resident counts, and the Phase 3 operations layer (leave
 requests, SL/DSL incidents, agency spend, attendance, debt ledger, report
-schedules, regulatory registry). Idempotent: wipes the two demo facilities +
+schedules, regulatory registry, and Phase 4 operational rules). Idempotent: wipes the two demo facilities +
 dev users first.
 """
 from __future__ import annotations
@@ -157,7 +157,10 @@ def seed_roster(facility_id, version_id, staff_ids, ranks, units, pattern,
     for shift_id, (i, staff_id, d, code) in zip(shift_ids, meta):
         # A staff member's standing duties recur on every working day, which is
         # what gives the AI-analysis tab real task-frequency evidence.
-        tasks = task_map.get(i, []) if times[code][3] else []
+        configured_tasks = task_map.get(i, [])
+        if isinstance(configured_tasks, dict):
+            configured_tasks = configured_tasks.get(code, [])
+        tasks = configured_tasks if times[code][3] else []
         assign_rows.append({
             "facility_id": facility_id, "shift_id": shift_id, "staff_id": staff_id,
             "role": ranks[i], "status": "assigned", "is_agency": False, "tasks": tasks,
@@ -191,23 +194,108 @@ def make_user(email, role, facility_id, staff_id=None) -> str:
 
 # ── Phase 3 operations layer ─────────────────────────────────────────────────
 def seed_task_definitions(facility_id: str) -> None:
-    ins_many("task_definitions", [{
+    """Phase 4 dictionary: rank-specific codes remain reusable across facilities."""
+    rows = [{
         "facility_id": facility_id, "task_code": code, "task_name": name,
         "shift_type": shift, "required_rank": rank, "requires_audit": audit,
-    } for code, name, shift, rank, audit in [
-        ("A1", "Med Checking", "A", "RN", True),
-        ("A2", "Medication Mgmt", "A", "RN", True),
-        ("A3", "Vital Signs", "A", None, False),
-        ("A4", "Wound Care", "P", "RN", False),
-        ("A5", "ICP Review", "P", "RN", False),
-        ("A6", "Oral Feeding", None, None, False),
-        ("A7", "Diaper Change", None, None, False),
-        ("A8", "Infection Control", None, "AW", False),
-        ("P1", "Rehab Session", "A", "PTA", False),
-        ("P2", "FU Chat", "P", None, False),
-        ("P3", "AOM (Oral)", "A", "HW", True),
-        ("P4", "Escort Duty", None, None, False),
-    ]])
+        "description": description,
+        "required_qualification_json": (
+            {"all_of": ["medication_audited"]} if audit else {}
+        ),
+        "is_restricted": restricted,
+    } for code, name, shift, rank, audit, restricted, description in [
+        ("A1", "Med Checking", "A", "HW", True, True, "Audited morning medication check"),
+        ("A2", "Medication Mgmt", "A", "HW", True, True, "Audited morning medication round"),
+        ("A3", "Vital Signs", "A", "HW", False, False, "Basic morning care; agency-safe"),
+        ("P1", "ICP Review", "P", "HW", True, True, "Audited afternoon care-plan review"),
+        ("P2", "FU Chat", "P", "HW", True, True, "Afternoon clinical follow-up"),
+        ("P3", "AOM (Oral)", "P", "HW", False, False, "Basic afternoon care; agency-safe"),
+    ]]
+    cw_names = {
+        "A1": "Oral Feeding", "A2": "Diaper Change", "A3": "Bathing",
+        "A4": "Transfer", "A5": "Morning Hygiene", "A6": "Hydration Round",
+        "A7": "Bed Making", "A8": "Activity Support",
+        "P1": "Evening Feeding", "P2": "Evening Diaper Change", "P3": "Evening Bathing",
+        "P4": "Evening Transfer", "P5": "Bedtime Care", "P6": "Night Preparation",
+    }
+    rows.extend({
+        "facility_id": facility_id, "task_code": code, "task_name": name,
+        "shift_type": code[0], "required_rank": "CW", "requires_audit": False,
+        "description": "Daily care-worker task code",
+        "required_qualification_json": {}, "is_restricted": False,
+    } for code, name in cw_names.items())
+    # RN/EN intentionally have no daily task codes; event staffing carries their
+    # priorities. Therapy/admin labels retain the existing staff-app demo.
+    rows.extend([
+        {"facility_id": facility_id, "task_code": "R1", "task_name": "Rehab Session",
+         "shift_type": None, "required_rank": "PTA", "requires_audit": False,
+         "description": "Therapy support", "required_qualification_json": {},
+         "is_restricted": False},
+        {"facility_id": facility_id, "task_code": "I1", "task_name": "Infection Control",
+         "shift_type": None, "required_rank": "AW", "requires_audit": False,
+         "description": "Infection-control support", "required_qualification_json": {},
+         "is_restricted": False},
+    ])
+    ins_many("task_definitions", rows)
+
+
+def seed_staff_qualifications(facility_id: str, staff_ids: list[str],
+                              ranks: list[str]) -> None:
+    rows = []
+    for staff_id, rank in zip(staff_ids, ranks):
+        if rank in {"RN", "EN", "HW"}:
+            rows.append({
+                "facility_id": facility_id, "staff_id": staff_id,
+                "qualification_type": "medication_audited", "is_active": True,
+                "effective_from": "2026-01-01",
+            })
+        if rank == "RN":
+            rows.append({
+                "facility_id": facility_id, "staff_id": staff_id,
+                "qualification_type": "mentor", "is_active": True,
+                "effective_from": "2026-01-01",
+            })
+    ins_many("staff_qualifications", rows)
+
+
+def seed_floor_rules(facility_id: str, floors: dict[str, str]) -> None:
+    """Home B's minute-level operational floor coverage from the source spec."""
+    rows = []
+    for floor in ("1F", "2F"):
+        rows.extend([
+            {"facility_id": facility_id, "unit_id": floors[floor], "floor": floor,
+             "time_window_start": "07:00", "time_window_end": "17:00",
+             "rank": "HCA", "min_count": 3,
+             "condition_json": {"required_shift_types": ["7A"]}, "active": True},
+            {"facility_id": facility_id, "unit_id": floors[floor], "floor": floor,
+             "time_window_start": "19:00", "time_window_end": "07:00",
+             "rank": "HCA", "min_count": 1,
+             "condition_json": {"required_shift_types": ["7P"]}, "active": True},
+        ])
+    rows.extend([
+        {"facility_id": facility_id, "unit_id": floors["6F"], "floor": "6F",
+         "time_window_start": "07:00", "time_window_end": "17:00",
+         "rank": "HCA", "min_count": 3,
+         "condition_json": {"weekdays": [0, 1, 2, 3, 4], "required_shift_types": ["7A"]},
+         "active": True},
+        {"facility_id": facility_id, "unit_id": floors["6F"], "floor": "6F",
+         "time_window_start": "07:00", "time_window_end": "17:00",
+         "rank": "HCA", "min_count": 2,
+         "condition_json": {"weekdays": [5, 6], "required_shift_types": ["7A"]},
+         "active": True},
+        {"facility_id": facility_id, "unit_id": floors["6F"], "floor": "6F",
+         "time_window_start": "19:00", "time_window_end": "07:00",
+         "rank": "HCA", "min_count": 1,
+         "condition_json": {"required_shift_types": ["7P"]}, "active": True},
+        {"facility_id": facility_id, "unit_id": floors["2F"], "floor": "2F",
+         "time_window_start": "16:00", "time_window_end": "21:30",
+         "rank": "HCA", "min_count": 1,
+         "condition_json": {
+             "when_7a_composition": {"imported_labor": 2, "local_ft": 1},
+             "required_shift_types": ["P"], "employment_types": ["local_ft"],
+         }, "active": True},
+    ])
+    ins_many("floor_min_staffing_rules", rows)
 
 
 def seed_roi_settings(facility_id: str, profile_id: str, *, total_budget: int,
@@ -475,6 +563,35 @@ def seed_facility_events(facility_id: str, ref: Date) -> None:
         ("RESIDENT_ADMISSION", 12, "New resident — West Wing"),
         ("RESIDENT_ADMISSION", 4, "New resident — East Wing"),
     ]])
+    operational = [
+        ("hair_cutting", 0, "Hair cutting", "09:00", "12:00",
+         [("CW|HCA", 1, True)]),
+        ("CGAT", 1, "Geriatric outreach", "09:00", "12:00",
+         [("RN", 1, True), ("HW", 1, True)]),
+        ("medication_record_checking", 2, "Medication record checking",
+         "09:00", "17:00", [("EN", 1, True), ("HW", 1, True)]),
+        ("podiatry", 3, "Podiatry", "09:00", "12:00",
+         [("HW", 1, False), ("CW|HCA", 1, False)]),
+        ("monthly_weighing", 4, "Monthly weighing", "09:00", "12:00",
+         [("CW|HCA", 1, False)]),
+    ]
+    for event_type, days_ago, title, start, end, requirements in operational:
+        day = ref - timedelta(days=days_ago)
+        start_hour, start_minute = map(int, start.split(":"))
+        end_hour, end_minute = map(int, end.split(":"))
+        event_id = ins("facility_events", {
+            "facility_id": facility_id, "event_type": event_type,
+            "date": day.isoformat(), "start_at": ts(day, start_hour, start_minute),
+            "end_at": ts(day, end_hour, end_minute), "title": title,
+            "required_staffing_json": [
+                {"rank": rank, "count": count, "is_additive": additive}
+                for rank, count, additive in requirements
+            ],
+        })
+        ins_many("event_staffing_requirements", [{
+            "facility_id": facility_id, "event_id": event_id, "rank": rank,
+            "count": count, "is_additive": additive,
+        } for rank, count, additive in requirements])
 
 
 def seed_regulatory_docs() -> None:
@@ -569,6 +686,7 @@ def main() -> None:
         {"facility_id": fa, "staff_id": a_ids[i], "cert_type": c, "expiry_date": exp}
         for i, certs in enumerate(a_certs) for (c, exp) in certs
     ])
+    seed_staff_qualifications(fa, a_ids, a_ranks)
 
     seed_shift_defs(fa, [
         ("A", "Morning", "07:00", "15:00", False, True),
@@ -608,11 +726,11 @@ def main() -> None:
         ["P", "P", "P", "P", "P", "OFF", "OFF"],          # AW   5 x 8      = 40h
     ]
     tasks_a = {
-        0: ["Med Checking", "ICP Review", "FU Chat"],
-        2: ["Vital Signs", "AOM (Oral)"],
-        3: ["Oral Feeding", "Diaper Change"],
-        4: ["Rehab Session"],
-        6: ["Infection Control"],
+        2: {"A": ["Vital Signs"], "AN": ["Vital Signs"],
+            "P": ["AOM (Oral)"]},
+        3: {"A": ["Oral Feeding"], "P": ["Evening Diaper Change"]},
+        4: {"A": ["Rehab Session"]},
+        6: {"P": ["Infection Control"]},
     }
     roster_a = seed_roster(fa, ver_a, a_ids, a_ranks, a_units, pattern_a,
                            SHIFT_TIMES_A, SPLIT_A, tasks_a, dates_a)
@@ -631,6 +749,7 @@ def main() -> None:
         "code": "B", "name": "Care Home B (多層院舍)", "type": "RCHE",
         "scheduling_cycle_days": 31, "capacity": 60,
     })
+    f1 = ins("facility_units", {"facility_id": fb, "unit_type": "floor", "name": "1/F", "code": "1F"})
     f2 = ins("facility_units", {"facility_id": fb, "unit_type": "floor", "name": "2/F", "code": "2F"})
     f6 = ins("facility_units", {"facility_id": fb, "unit_type": "floor", "name": "6/F", "code": "6F"})
     b_staff = [
@@ -646,6 +765,7 @@ def main() -> None:
             "contracted_hours": 49.5 if emp == "local_ft" else 72, "status": "active",
         })
         b_ids.append(sid); b_ranks.append(rank); b_units.append(unit)
+    seed_staff_qualifications(fb, b_ids, b_ranks)
 
     seed_shift_defs(fb, [
         ("7A", "7A 12h", "07:00", "19:00", False, True),
@@ -660,6 +780,8 @@ def main() -> None:
         ("SLEEP", "Sleeping Day", None, None, False, False),
     ], SPLIT_B)
     seed_ratio_rules(fb, "HCA")
+    seed_task_definitions(fb)
+    seed_floor_rules(fb, {"1F": f1, "2F": f2, "6F": f6})
 
     period_b = ins("roster_periods", {
         "facility_id": fb, "period_start": dates_b[0], "period_end": dates_b[-1],

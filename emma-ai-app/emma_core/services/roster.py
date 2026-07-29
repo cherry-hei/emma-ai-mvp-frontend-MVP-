@@ -112,11 +112,19 @@ def get_roster_grid(client, facility_id: str, period_id: str | None = None, *,
             cells=cells,
         ))
 
+    from .scheduling import list_facility_events
+
+    event_start = (period or {}).get("period_start") or (dates[0] if dates else None)
+    event_end = (period or {}).get("period_end") or (dates[-1] if dates else None)
+    events = list_facility_events(
+        client, facility_id, date_from=event_start, date_to=event_end,
+    ) if event_start and event_end else []
+
     return RosterGrid(
         version_id=ver["id"], period_id=ver.get("period_id"), status=ver["status"],
         period_start=(period or {}).get("period_start"),
         period_end=(period or {}).get("period_end"),
-        dates=dates, rows=rows,
+        dates=dates, rows=rows, events=events,
     )
 
 
@@ -194,6 +202,12 @@ def set_cell(client, *, facility_id, roster_version_id, staff_id, date, shift_ty
              shift_def: ShiftDef, tasks=None, changed_by=None):
     """Upsert one staff/day cell (create/replace shift + assignment) and log to manual_override_log."""
     tasks = tasks or []
+    staff_rows = (client.table("staff").select("id,rank,primary_unit_id")
+                  .eq("facility_id", facility_id).eq("id", staff_id)
+                  .execute().data)
+    if not staff_rows:
+        raise ValueError("staff member not found")
+    staff = staff_rows[0]
     # SQL: select id from shifts
     #      where roster_version_id = :roster_version_id and date = :date
     existing_shifts = (client.table("shifts").select("id")
@@ -228,6 +242,8 @@ def set_cell(client, *, facility_id, roster_version_id, staff_id, date, shift_ty
         "start_time": shift_def.start_time, "end_time": shift_def.end_time,
         "cross_midnight": shift_def.cross_midnight,
         "is_working": shift_def.is_working,
+        "unit_id": staff.get("primary_unit_id"),
+        "required_rank": staff.get("rank"),
         # a manually placed A/N cell must keep its split-shift shape
         "segments": shift_def.segments, "paid_minutes": shift_def.paid_minutes,
     }).execute().data[0]["id"])
@@ -237,6 +253,7 @@ def set_cell(client, *, facility_id, roster_version_id, staff_id, date, shift_ty
     #      returning id
     assignment_id = (client.table("shift_assignments").insert({
         "facility_id": facility_id, "shift_id": shift_id, "staff_id": staff_id,
+        "role": staff.get("rank"),
         "status": AssignmentStatus.ASSIGNED, "tasks": tasks,
     }).execute().data[0]["id"])
 

@@ -10,14 +10,14 @@ there is no Python UI here.
 | Concern | Tech |
 |---|---|
 | REST API | **FastAPI** (uvicorn) |
-| Domain / AI | `emma_core` + **OR-Tools** CP-SAT (Phase 2 solver) |
+| Domain / AI | `emma_core` + **OR-Tools** CP-SAT + Phase 4 operational rules |
 | Data + Auth | **Supabase** (Postgres + GoTrue + RLS) |
 | Frontend (separate repo) | **Next.js** — consumes this API |
 
 ## Layout
 ```
-emma_core/   shared domain: config, db (Supabase), models, constants, services, solver/
-api/         FastAPI app + routers (auth, roster, residents, compliance, staff, optimize)
+emma_core/   shared domain: config, db, models, services, scheduling rules, solver/
+api/         FastAPI app + thin routers, including task/event scheduling
 supabase/    migrations + seed
 scripts/     seed.py
 tests/       pytest (offline solver/service tests + HTTP router tests)
@@ -43,3 +43,12 @@ to `http://localhost:3000`.
 
 Switching to cloud Supabase later = change the four `SUPABASE_*`/`DATABASE_URL`
 values in `.env`; nothing else.
+
+## Phase 4 extension points
+
+`emma_core/services/scheduling.py` owns the pure task-eligibility, event-staffing
+and floor-coverage evaluators. API writes, roster validation and publishing all
+call those functions. Add later automatic checks and explanations there rather
+than duplicating policy in routers or UI code. The Phase 4 migration stores
+versionable qualification, event-requirement and floor-rule data with facility
+RLS.
