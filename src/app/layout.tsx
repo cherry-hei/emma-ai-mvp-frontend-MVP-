@@ -17,7 +17,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html lang="en">
       {/* suppressHydrationWarning: browser extensions (e.g. Bitdefender) inject
           attributes like `bis_register` / `__processed_*` onto <body> before React
-          hydrates. Scoped to <body>'s own attributes only — app-tree mismatches still warn. */}
+          hydrates. Scoped to <body>'s own attributes only - app-tree mismatches still warn. */}
       <body className={inter.className} suppressHydrationWarning>
         <LanguageProvider>
           <AuthProvider>

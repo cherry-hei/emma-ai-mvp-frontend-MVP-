@@ -8,7 +8,7 @@ points are picked off the remaining frontier:
 
     A  the cost extreme          (least agency + overtime)
     B  the staff-satisfaction extreme (fewest unmet requests, most even load)
-    C  the knee — the point closest to the ideal corner once each axis is
+    C  the knee - the point closest to the ideal corner once each axis is
        normalised, i.e. the best all-round compromise the frontier offers
 
 The three come back as ordinary SolverResult values with plan_mode A/B/C, so the
@@ -126,7 +126,7 @@ def _normalised(points: list[ParetoPoint]) -> list[dict[str, float]]:
 
 
 def select_representatives(points: list[ParetoPoint]) -> dict[str, ParetoPoint]:
-    """Cost extreme, satisfaction extreme, and the knee — distinct where possible."""
+    """Cost extreme, satisfaction extreme, and the knee - distinct where possible."""
     if not points:
         return {}
     norms = _normalised(points)

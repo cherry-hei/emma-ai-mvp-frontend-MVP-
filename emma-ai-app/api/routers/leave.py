@@ -1,4 +1,4 @@
-"""/leave-requests — the Approval Centre (spec 4.2)."""
+"""/leave-requests - the Approval Centre (spec 4.2)."""
 from __future__ import annotations
 
 from datetime import date as Date

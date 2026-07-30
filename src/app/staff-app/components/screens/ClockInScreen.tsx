@@ -5,7 +5,7 @@ import { api } from '@/lib/api'
 import type { MyAttendance, MySummary } from '@/lib/apiTypes'
 
 function hhmm(iso: string | null | undefined): string {
-  if (!iso) return '—'
+  if (!iso) return '-'
   return new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
 }
 
@@ -98,7 +98,7 @@ export default function ClockInScreen({ summary, onChange }: {
           <div className="rounded-xl bg-gray-50 px-3 py-3">
             <p className="text-xs text-gray-400">本月實際打卡工時</p>
             <p className="text-sm font-medium text-gray-800">
-              {attendance ? `${attendance.month.worked_hours}h · ${attendance.month.days_worked} 天` : '—'}
+              {attendance ? `${attendance.month.worked_hours}h · ${attendance.month.days_worked} 天` : '-'}
             </p>
           </div>
         </div>

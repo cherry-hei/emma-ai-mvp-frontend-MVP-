@@ -219,7 +219,7 @@ def _add_agency_limit_constraints(model, inputs, x, agency) -> None:
 @dataclass
 class SolverModel:
     """CpModel plus its variables, so objective/scoring read them without
-    re-deriving. Holds ortools objects — not frozen."""
+    re-deriving. Holds ortools objects - not frozen."""
     model: object                       # cp_model.CpModel
     inputs: SolverInputs
     x: dict                             # (staff_id, slot_id) -> BoolVar

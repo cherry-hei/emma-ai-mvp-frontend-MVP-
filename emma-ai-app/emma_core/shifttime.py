@@ -69,7 +69,7 @@ def paid_minutes(shift: Mapping) -> int:
 
 
 def envelope(shift: Mapping) -> Segment | None:
-    """Outer (start, end, crosses) span covering every segment — what overlap and
+    """Outer (start, end, crosses) span covering every segment - what overlap and
     minimum-rest checks must use, since the whole span is unavailable."""
     segs = duty_segments(shift)
     if not segs:
@@ -97,7 +97,7 @@ def day_spans(start: int, end: int, cross: bool) -> list[tuple[int, int]]:
 
 
 def duty_spans(shift: Mapping) -> list[tuple[int, int]]:
-    """Every same-day on-duty interval, segments expanded — the coverage footprint."""
+    """Every same-day on-duty interval, segments expanded - the coverage footprint."""
     out: list[tuple[int, int]] = []
     for start, end, cross in duty_segments(shift):
         out.extend(day_spans(start, end, cross))

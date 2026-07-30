@@ -32,7 +32,7 @@ to_min = to_minutes
 
 
 def shift_minutes(shift: dict) -> int:
-    """Paid minutes for a shift row — segment-aware, so a split A/N shift counts
+    """Paid minutes for a shift row - segment-aware, so a split A/N shift counts
     its two duty windows, not the elapsed span between them."""
     return paid_minutes(shift)
 
@@ -70,21 +70,42 @@ def month_bounds(on: Date | None = None) -> tuple[str, str]:
 
 # ── roster period / version resolution ───────────────────────────────────────
 def current_period(client, facility_id: str) -> dict | None:
-    """The period covering today, else the most recent by start date."""
+    """The rostered period covering today, else the most recent rostered one.
+
+    Every caller pairs this with ``operative_version`` and reports on the roster it
+    finds, so a period that only exists to carry leave entitlements - open for
+    planning, no shifts on it yet - is not the operative period. Preferring a
+    rostered one keeps the dashboards and KPIs on the last real roster instead of
+    blanking out the moment a future cycle is opened.
+    """
     # SQL: select * from roster_periods
     #      where facility_id = :facility_id
     #      order by period_start desc
-    # (the "covers today" test is done in Python below, over the newest-first list)
+    # (the "covers today" and "has a roster" tests are done in Python below)
     rows = (client.table("roster_periods").select("*")
             .eq("facility_id", facility_id)
             .order("period_start", desc=True).execute().data)
     if not rows:
         return None
+    # SQL: select period_id, version_type, status from roster_versions
+    #      where facility_id = :facility_id
+    versions = (client.table("roster_versions")
+                .select("period_id,version_type,status")
+                .eq("facility_id", facility_id).execute().data)
+    rostered = {
+        v["period_id"] for v in versions
+        if v.get("status") == "published" or v.get("version_type") == "manual"
+    }
     today = Date.today().isoformat()
-    for p in rows:                                   # newest first
-        if iso(p["period_start"]) <= today <= iso(p["period_end"]):
-            return p
-    return rows[0]
+    covers_today = [
+        p for p in rows                              # newest first
+        if iso(p["period_start"]) <= today <= iso(p["period_end"])
+    ]
+    for group in (covers_today, rows):
+        for p in group:
+            if p["id"] in rostered:
+                return p
+    return covers_today[0] if covers_today else rows[0]
 
 
 def resolve_period(client, facility_id: str, period_id: str | None) -> dict | None:
@@ -99,7 +120,7 @@ def resolve_period(client, facility_id: str, period_id: str | None) -> dict | No
 
 def operative_version(client, facility_id: str, period_id: str) -> dict | None:
     """The version that represents reality for a period: the published one if there
-    is one, else the manual draft. Never an A/B/C candidate — those are proposals."""
+    is one, else the manual draft. Never an A/B/C candidate - those are proposals."""
     # SQL: select * from roster_versions
     #      where facility_id = :facility_id and period_id = :period_id
     #      order by created_at desc
@@ -116,7 +137,7 @@ def operative_version(client, facility_id: str, period_id: str) -> dict | None:
 
 def load_roster(client, facility_id: str, version_id: str) -> tuple[list[dict], list[dict]]:
     """(shifts, assignments) for one roster version, in two queries."""
-    # Two round trips instead of one join — PostgREST cannot return the parent and
+    # Two round trips instead of one join - PostgREST cannot return the parent and
     # child sets as separate arrays, and the callers want them separately anyway.
     #
     # SQL (1): select * from shifts where roster_version_id = :version_id
@@ -143,10 +164,10 @@ def staff_by_id(client, facility_id: str) -> dict[str, dict]:
 def staff_brief(st: dict | None) -> dict:
     """The staff fields every Phase 3 list row shows."""
     if not st:
-        return {"staff_id": None, "name": "—", "name_en": None, "rank": None, "unit_name": None}
+        return {"staff_id": None, "name": "-", "name_en": None, "rank": None, "unit_name": None}
     unit = st.get("unit") or {}
     return {
-        "staff_id": st["id"], "name": st.get("name") or "—",
+        "staff_id": st["id"], "name": st.get("name") or "-",
         "name_en": st.get("name_en"), "rank": st.get("rank"),
         "unit_name": unit.get("name"),
     }

@@ -1,4 +1,4 @@
-"""Domain enums, statuses and display lookups mirroring the DB. Shift codes are intentionally NOT an enum — they're facility-configured data (`shift_definitions`)."""
+"""Domain enums, statuses and display lookups mirroring the DB. Shift codes are intentionally NOT an enum - they're facility-configured data (`shift_definitions`)."""
 from __future__ import annotations
 
 from enum import StrEnum
@@ -32,9 +32,9 @@ class Role(StrEnum):
     SUPERINTENDENT = "superintendent"
     ADMIN = "admin"
     STAFF = "staff"
-    SCHEDULER = "scheduler"   # Phase 1.1 RBAC — builds/edits rosters
-    HR = "hr"                 # Phase 1.1 RBAC — staff records
-    AUDITOR = "auditor"       # Phase 1.1 RBAC — read-only compliance review
+    SCHEDULER = "scheduler"   # Phase 1.1 RBAC - builds/edits rosters
+    HR = "hr"                 # Phase 1.1 RBAC - staff records
+    AUDITOR = "auditor"       # Phase 1.1 RBAC - read-only compliance review
 
 
 class RosterStatus(StrEnum):
@@ -100,7 +100,7 @@ PUBLISH_THRESHOLD = 60
 # ── rank substitution (Phase 3: emergency cover eligibility) ────────────────
 # Care ranks form a seniority ladder: a more senior care rank may cover a less
 # senior slot, never the other way round. Therapy/social ranks are not
-# interchangeable with care ranks at all — only an exact match covers them.
+# interchangeable with care ranks at all - only an exact match covers them.
 CARE_RANKS = frozenset({"RN", "EN", "HW", "HCA", "CW", "PCW", "AW"})
 RANK_SENIORITY: dict[str, int] = {
     "RN": 7, "EN": 6, "HW": 5, "HCA": 4, "CW": 4, "PCW": 3, "AW": 2,

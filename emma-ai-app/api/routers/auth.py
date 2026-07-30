@@ -35,7 +35,7 @@ def _session_out(session, prof: Profile) -> SessionOut:
 def login(body: LoginRequest):
     try:
         client, session = sign_in(body.email, body.password)
-    except Exception as exc:  # noqa: BLE001 — never echo the raw auth error
+    except Exception as exc:  # noqa: BLE001 - never echo the raw auth error
         raise api_error(401, "login_failed", "Invalid email or password.") from exc
     prof = get_profile(client, session.user.id)
     if not prof:
@@ -49,7 +49,7 @@ def refresh(body: RefreshRequest):
     # refresh token is a 401 → the frontend clears state and routes to /login.
     try:
         client, session = refresh_session(body.refresh_token)
-    except Exception as exc:  # noqa: BLE001 — never echo the raw auth error
+    except Exception as exc:  # noqa: BLE001 - never echo the raw auth error
         raise api_error(401, "refresh_failed", "Session expired; please sign in again.") from exc
     prof = get_profile(client, session.user.id)
     if not prof:

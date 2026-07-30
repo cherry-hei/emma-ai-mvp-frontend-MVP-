@@ -2,7 +2,7 @@
 
 `push` writes the record and marks it sent for in-app delivery, which is the
 only channel wired end-to-end. Email and WhatsApp rows are persisted as
-`queued` — a delivery worker owns them; nothing here pretends they were sent.
+`queued` - a delivery worker owns them; nothing here pretends they were sent.
 """
 from __future__ import annotations
 

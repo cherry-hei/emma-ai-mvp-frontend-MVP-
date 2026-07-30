@@ -17,7 +17,7 @@ pydantic>=2.7
 pydantic-settings>=2.3
 pandas>=2.2
 
-# CP-SAT rostering solver (Phase 2 — Roster A/B/C engine)
+# CP-SAT rostering solver (Phase 2 - Roster A/B/C engine)
 ortools>=9.11,<10
 
 # Testing (httpx powers fastapi.testclient)

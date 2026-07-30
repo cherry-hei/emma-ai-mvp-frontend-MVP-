@@ -9,7 +9,7 @@ APP_ROOT = Path(__file__).resolve().parent.parent  # emma-ai-app/
 
 def _env_file() -> Path:
     """Pick the .env for APP_ENV. A missing cloud file must NOT fall back to local
-    ``.env`` — that would point a prod run at the dev DB; OS env vars must supply
+    ``.env`` - that would point a prod run at the dev DB; OS env vars must supply
     the config instead."""
     env = os.getenv("APP_ENV", "development").strip().lower()
     if env in ("", "development"):

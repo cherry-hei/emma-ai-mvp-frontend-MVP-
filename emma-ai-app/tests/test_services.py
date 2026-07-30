@@ -1,5 +1,5 @@
 """Service-layer tests against the seeded local DB (service-role client)."""
-from datetime import date
+from datetime import date, timedelta
 
 from emma_core.db import get_service_client
 from emma_core.services.auth import get_profile, sign_in
@@ -40,7 +40,10 @@ def test_ratio_computation():
     assert res
     rn = next(r for r in res if r.rank == "RN")
     assert rn.residents == 18          # 10 East + 8 West
-    assert rn.required == 1            # ceil(18/60)
+    # Phase 5 compares equivalent-head capacity before rounding, so a 1:60 rule
+    # reports 18/60 rather than ceil(). That is what lets a fractional rank
+    # substitution (Home B: one HW carries 40/60 of RN/EN capacity) be expressed.
+    assert rn.required == 0.3
     assert rn.actual >= 0
 
 
@@ -56,7 +59,11 @@ def test_set_and_clear_cell_write_path():
     grid = get_roster_grid(sb, fid)
     ver, staff_id = grid.version_id, grid.rows[0].staff.id
     defs = {d.shift_type: d for d in get_shift_defs(sb, fid)}
-    day = "2026-08-15"  # outside the seeded roster period
+    # Derive a day past the end of the rostered cycle rather than hardcoding one:
+    # clearing the edit must remove the cell outright, which only holds where no
+    # seeded shift sits underneath, and the current cycle rolls with the calendar.
+    last_day = max(c.date for r in grid.rows for c in r.cells)
+    day = (last_day + timedelta(days=7)).isoformat()
 
     set_cell(sb, facility_id=fid, roster_version_id=ver, staff_id=staff_id,
              date=day, shift_type="P", shift_def=defs["P"], tasks=["Test task"])

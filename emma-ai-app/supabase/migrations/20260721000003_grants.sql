@@ -1,5 +1,5 @@
 -- ============================================================================
--- Emma AI · Phase 0 — role grants for PostgREST/Supabase roles
+-- Emma AI · Phase 0 - role grants for PostgREST/Supabase roles
 -- RLS still enforces per-facility row scoping; these are table-level privileges
 -- the API roles need to reach the tables at all.
 --   service_role  -> full access (bypasses RLS by design; used for admin/seed)

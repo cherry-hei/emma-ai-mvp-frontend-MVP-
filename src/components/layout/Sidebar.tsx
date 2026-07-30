@@ -34,7 +34,7 @@ export function Sidebar() {
     nav_reports:    { zh: '報告',       en: 'Reports'       },
     nav_alert:      { zh: '警報',       en: 'Alert'         },
     urgent_alert:   { zh: '🚨 緊急警報', en: '🚨 Urgent Alert' },
-    staff_shortage: { zh: 'P更人手不足 — F3', en: 'P-shift understaffed — F3' },
+    staff_shortage: { zh: 'P更人手不足 - F3', en: 'P-shift understaffed - F3' },
     new_request:    { zh: '+ 新增請求', en: '+ New Request'  },
   }
 
@@ -59,7 +59,7 @@ export function Sidebar() {
         </div>
       </div>
 
-      {/* Site selector — reflects the signed-in account's facility + role */}
+      {/* Site selector - reflects the signed-in account's facility + role */}
       <div
         className="mx-2 mt-2 p-2.5 rounded-lg border"
         style={{ background: '#f9fafb', borderColor: '#e5e7eb' }}
@@ -117,7 +117,7 @@ export function Sidebar() {
         </div>
       </div>
 
-      {/* New Request button — 已移除獨立按鈕，點 Alert 直接跳頁 */}
+      {/* New Request button - 已移除獨立按鈕，點 Alert 直接跳頁 */}
     </aside>
   )
 }

@@ -80,7 +80,7 @@ def collect_violations(sm: SolverModel, solver) -> list[Violation]:
 
 
 def raw_objectives(sm: SolverModel, solver) -> dict[str, int]:
-    """Unweighted penalty per objective axis — the coordinates a Pareto comparison
+    """Unweighted penalty per objective axis - the coordinates a Pareto comparison
     needs. Weighted totals can't be compared across plans with different weights."""
     p = sm.penalties
     return {

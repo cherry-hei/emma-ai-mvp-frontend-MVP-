@@ -17,7 +17,7 @@ const STATUS_STYLE: Record<string, { bg: string; text: string }> = {
 }
 
 function fmtDate(iso: string | null | undefined): string {
-  if (!iso) return '—'
+  if (!iso) return '-'
   const [y, m, d] = iso.slice(0, 10).split('-')
   return `${Number(d)}/${Number(m)}/${y}`
 }
@@ -163,13 +163,13 @@ export default function ApprovalPage() {
       <div className="grid grid-cols-2 gap-3">
         <div className="bg-white border border-gray-200 rounded-xl p-4">
           <div className="text-[9px] text-gray-400 uppercase tracking-wider mb-1">{L.total_title}</div>
-          <div className="text-3xl font-bold text-gray-900 tabular-nums">{stats?.total_actions ?? '—'}</div>
+          <div className="text-3xl font-bold text-gray-900 tabular-nums">{stats?.total_actions ?? '-'}</div>
           <div className="text-[10px] text-gray-400 mt-1">{L.total_label}</div>
         </div>
         <div className="bg-white border border-gray-200 rounded-xl p-4">
           <div className="text-[9px] text-gray-400 uppercase tracking-wider mb-1">{L.rate_title}</div>
           <div className="text-3xl font-bold tabular-nums" style={{ color: '#10B981' }}>
-            {stats ? `${stats.approval_rate}%` : '—'}
+            {stats ? `${stats.approval_rate}%` : '-'}
           </div>
           <div className="w-full h-1.5 bg-gray-100 rounded-full mt-2 overflow-hidden">
             <div className="h-full rounded-full bg-emerald-400"
@@ -196,7 +196,7 @@ export default function ApprovalPage() {
         </select>
         <input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)}
           className="border border-gray-200 rounded-lg px-2 py-1.5 text-xs text-gray-600 outline-none" />
-        <span className="text-gray-300 text-xs">—</span>
+        <span className="text-gray-300 text-xs">-</span>
         <input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)}
           className="border border-gray-200 rounded-lg px-2 py-1.5 text-xs text-gray-600 outline-none" />
       </div>
@@ -277,18 +277,18 @@ export default function ApprovalPage() {
                     </td>
                     {category === 'duty' && (
                       <td className="px-3 py-3 align-middle text-gray-600">
-                        {r.requested_shift_type ?? '—'}
+                        {r.requested_shift_type ?? '-'}
                       </td>
                     )}
                     <td className="px-3 py-3 align-middle text-gray-600">
-                      {r.reason ?? '—'}
+                      {r.reason ?? '-'}
                       {r.remark && <div className="text-[9px] text-gray-400">{r.remark}</div>}
                     </td>
                     {category === 'sick' && (
                       <td className="px-3 py-3 align-middle">
                         {r.document_url
                           ? <span className="flex items-center gap-1 text-[10px] text-blue-600">📄 {r.document_url}</span>
-                          : <span className="text-gray-300">—</span>}
+                          : <span className="text-gray-300">-</span>}
                       </td>
                     )}
                     <td className="px-3 py-3 align-middle">

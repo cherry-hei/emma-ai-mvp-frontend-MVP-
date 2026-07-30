@@ -55,7 +55,7 @@ export default function HomeScreen({ summary, onChange }: {
         <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
           <p className="text-xs text-gray-400">院舍人手比率</p>
           <p className="mt-2 text-2xl font-semibold text-gray-900">
-            {facility_ratio ? `${facility_ratio.pct}%` : '—'}
+            {facility_ratio ? `${facility_ratio.pct}%` : '-'}
           </p>
           <p className="mt-1 text-xs text-gray-500">
             {facility_ratio ? `${facility_ratio.passing}/${facility_ratio.total} 項合規` : '未有比率資料'}
@@ -112,7 +112,7 @@ export default function HomeScreen({ summary, onChange }: {
             <p className="text-sm font-medium text-gray-800">
               {attendance.clock_in_at
                 ? new Date(attendance.clock_in_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-                : '—'}
+                : '-'}
             </p>
           </div>
           <div className="rounded-xl bg-gray-50 px-3 py-3">

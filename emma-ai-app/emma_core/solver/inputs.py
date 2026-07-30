@@ -1,4 +1,4 @@
-"""DB-free frozen dataclasses of primitives — the CP-SAT solver's inputs.
+"""DB-free frozen dataclasses of primitives - the CP-SAT solver's inputs.
 
 Row mapping lives in ``emma_core.services.optimize``, never here.
 """
@@ -47,7 +47,7 @@ class DemandSlot:
     date: Date
     day_index: int                               # (date - period_start).days
     shift_type: str
-    # start/end/cross describe the OUTER envelope — the whole span the staff
+    # start/end/cross describe the OUTER envelope - the whole span the staff
     # member is unavailable, which is what overlap and rest checks need.
     start_min: int                               # minutes from midnight
     end_min: int
@@ -112,7 +112,7 @@ class AgencyLimitsInput:
 
 @dataclass(frozen=True, slots=True)
 class BaselineCell:
-    """A cell of the human (source) roster — drives the unmet-request proxy."""
+    """A cell of the human (source) roster - drives the unmet-request proxy."""
     staff_id: str
     date: Date
     shift_type: str

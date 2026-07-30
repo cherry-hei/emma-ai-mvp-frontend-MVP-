@@ -89,12 +89,12 @@ export default function MyShiftScreen() {
                   {dayLabel(day.date)}{day.date === today ? ' · 今日' : ''}
                 </p>
                 <p className="mt-1 text-sm text-gray-600">
-                  {day.unit_name ?? '—'}
+                  {day.unit_name ?? '-'}
                   {day.start_time && ` · ${day.start_time}–${day.end_time}`}
                 </p>
               </div>
               <div className={`inline-flex rounded-xl px-3 py-2 text-sm font-semibold ${shiftStyle(day.shift_type)}`}>
-                {day.shift_type ?? '—'}
+                {day.shift_type ?? '-'}
               </div>
             </div>
 

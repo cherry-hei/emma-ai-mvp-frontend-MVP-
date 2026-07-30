@@ -20,8 +20,8 @@ function mapApiStaff(rows: ApiStaff[]): StaffType[] {
     name: s.name,
     nameEn: s.name_en || s.name,
     role: s.rank,
-    ward: s.unit_name || '—',
-    floor: '—',
+    ward: s.unit_name || '-',
+    floor: '-',
     certs: s.certs ?? [],
     hoursWorked: Math.round(s.scheduled_hours ?? 0),
     hoursTotal: Math.round(s.contracted_period_hours || 160),
@@ -82,10 +82,10 @@ function ProfileModal({ staff, idx, onClose }: { staff: StaffType; idx: number; 
   // Real rostered shift history from the API (empty until the roster is loaded).
   const SHIFT_HISTORY = (detail?.shift_history ?? []).map(h => ({
     date: h.date,
-    shift: h.shift_type ?? '—',
-    time: h.start_time && h.end_time ? `${h.start_time} - ${h.end_time}` : '—',
+    shift: h.shift_type ?? '-',
+    time: h.start_time && h.end_time ? `${h.start_time} - ${h.end_time}` : '-',
     ward: staff.ward,
-    resident: h.tasks?.[0] ?? '—',
+    resident: h.tasks?.[0] ?? '-',
   }))
 
   const L = {
@@ -166,8 +166,8 @@ function ProfileModal({ staff, idx, onClose }: { staff: StaffType; idx: number; 
           <div className="grid grid-cols-3 gap-4 mb-6">
             {[
               { label: L.weekly_load,  value: `${staff.hoursWorked}h / ${staff.hoursTotal}h` },
-              { label: L.night_shifts, value: String(analysis?.activity.night_shifts ?? '—') },
-              { label: L.units,        value: String(analysis?.activity.distinct_units ?? '—') },
+              { label: L.night_shifts, value: String(analysis?.activity.night_shifts ?? '-') },
+              { label: L.units,        value: String(analysis?.activity.distinct_units ?? '-') },
             ].map(s => (
               <div key={s.label} className="bg-gray-50 p-4 rounded-2xl">
                 <div className="text-[10px] font-bold text-gray-400 uppercase mb-1">{s.label}</div>
@@ -324,7 +324,7 @@ function ProfileModal({ staff, idx, onClose }: { staff: StaffType; idx: number; 
                     {analysis.gaps.map(g => (
                       <div key={`${g.kind}-${g.skill}`} className="text-[10px] text-red-600 flex items-start gap-1 mb-1">
                         <span>⚠</span>
-                        <span>{g.skill}<span className="text-red-400"> — {g.detail}</span></span>
+                        <span>{g.skill}<span className="text-red-400"> - {g.detail}</span></span>
                       </div>
                     ))}
                   </div>
@@ -336,7 +336,7 @@ function ProfileModal({ staff, idx, onClose }: { staff: StaffType; idx: number; 
                     {analysis.recommended_training.map(t => (
                       <div key={t.title} className="text-[10px] text-emerald-700 flex items-start gap-1 mb-1">
                         <span>✓</span>
-                        <span>{t.title}<span className="text-emerald-600"> — {t.reason}</span></span>
+                        <span>{t.title}<span className="text-emerald-600"> - {t.reason}</span></span>
                       </div>
                     ))}
                   </div>

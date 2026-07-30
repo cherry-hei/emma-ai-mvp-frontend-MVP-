@@ -196,7 +196,7 @@ class LoginRequest(BaseModel):
 
 
 class SessionOut(BaseModel):
-    """Serializable auth session — never expose the live Supabase client."""
+    """Serializable auth session - never expose the live Supabase client."""
     access_token: str
     refresh_token: str | None = None
     token_type: str = "bearer"
@@ -378,7 +378,7 @@ class RuleDefinitionOut(RuleDefinitionCreate):
 
 
 # ── Phase 3 request bodies ──────────────────────────────────────────────────
-# Phase 3 responses are dicts assembled by the services — they are aggregates of
+# Phase 3 responses are dicts assembled by the services - they are aggregates of
 # many tables that change shape as screens evolve, and pinning a response_model
 # to each one buys nothing but drift. Request bodies stay typed: those are the
 # trust boundary.

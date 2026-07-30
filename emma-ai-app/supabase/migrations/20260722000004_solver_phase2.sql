@@ -1,5 +1,5 @@
 -- ============================================================================
--- Emma AI · Phase 2 — solver jobs, option scores, violation log (+ RLS)
+-- Emma AI · Phase 2 - solver jobs, option scores, violation log (+ RLS)
 -- Async job tracking + A/B/C option scores + hard-violation log for the CP-SAT
 -- rostering engine. All three tables carry facility_id and use the standard
 -- tenant RLS policy (see migration ...0002). Table-level grants are inherited

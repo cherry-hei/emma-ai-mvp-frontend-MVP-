@@ -1,7 +1,7 @@
 """KPI framework (spec 5.4 – 5.9).
 
-All six KPIs are computed from committed rows — violation_log, shift_assignments,
-manual_override_log, agency_assignments and the ratio engine — for the operative
+All six KPIs are computed from committed rows - violation_log, shift_assignments,
+manual_override_log, agency_assignments and the ratio engine - for the operative
 version of a roster period. Nothing is stored pre-aggregated, so a KPI can never
 disagree with the roster it claims to describe.
 """
@@ -37,7 +37,7 @@ def _roster_rows(client, version_id: str) -> tuple[dict[str, dict], list[dict]]:
 
 
 def gini(values: list[float]) -> float:
-    """SUM_i SUM_j |xi - xj| / (2 n² x̄) — 0 = perfectly even, 1 = one person has all."""
+    """SUM_i SUM_j |xi - xj| / (2 n² x̄) - 0 = perfectly even, 1 = one person has all."""
     n = len(values)
     if n < 2:
         return 0.0
@@ -213,7 +213,7 @@ def external_workforce(client, facility_id: str, period_id: str | None = None) -
         total += 1
         st = staff.get(a["staff_id"]) or {}
         is_external = bool(a.get("is_agency")) or st.get("employment_type") in EXTERNAL_TYPES
-        role = a.get("role") or st.get("rank") or "—"
+        role = a.get("role") or st.get("rank") or "-"
         slot = by_role.setdefault(role, {"role": role, "shifts": 0, "external": 0})
         slot["shifts"] += 1
         if is_external:
@@ -249,7 +249,7 @@ def external_workforce(client, facility_id: str, period_id: str | None = None) -
             and str(r["shift_assignment_id"]) in roster_assignment_ids
         ):
             continue
-        role = r.get("role") or "—"
+        role = r.get("role") or "-"
         slot = by_role.setdefault(role, {"role": role, "shifts": 0, "external": 0})
         slot["shifts"] += 1
         slot["external"] += 1
@@ -309,7 +309,7 @@ def staffing_ratio_compliance(client, facility_id: str,
 
 
 def overview(client, facility_id: str, period_id: str | None = None) -> dict:
-    """Every KPI in one call — what the ROI/KPI dashboard strip renders."""
+    """Every KPI in one call - what the ROI/KPI dashboard strip renders."""
     return {
         "conflict_rate": conflict_rate(client, facility_id, period_id),
         "an_gini": an_gini(client, facility_id, period_id),

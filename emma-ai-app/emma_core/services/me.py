@@ -1,7 +1,7 @@
 """Staff-app self-service reads (spec 4.1).
 
-Every function takes the caller's own staff_id — resolved from users_profile, not
-from a request parameter — so a staff token can only ever reach its own roster,
+Every function takes the caller's own staff_id - resolved from users_profile, not
+from a request parameter - so a staff token can only ever reach its own roster,
 tasks, leave and attendance. RLS enforces the same rule at the database.
 """
 from __future__ import annotations
@@ -80,7 +80,7 @@ def _my_shifts(client, facility_id: str, staff_id: str,
 def my_roster(client, facility_id: str, staff_id: str, *, days: int = 7,
               start: Date | None = None) -> dict:
     """A `days`-long window anchored on today, slid to stay inside the current
-    roster period — near the end of a cycle, showing 28 days forward from today
+    roster period - near the end of a cycle, showing 28 days forward from today
     would return one rostered day and 27 blanks."""
     if start is None:
         start = Date.today()
@@ -176,7 +176,7 @@ def summary(client, facility_id: str, staff_id: str) -> dict:
     #      where facility_id = :facility_id and staff_id = :staff_id
     #        and status <> 'read'
     # (count="exact" makes PostgREST return the count in the Content-Range header;
-    #  the selected `id` rows themselves are discarded — only .count is read.)
+    #  the selected `id` rows themselves are discarded - only .count is read.)
     unread = (client.table("notifications").select("id", count="exact")
               .eq("facility_id", facility_id).eq("staff_id", staff_id)
               .neq("status", "read").execute())
@@ -231,7 +231,7 @@ def my_leave(client, facility_id: str, staff_id: str) -> list[dict]:
 
 
 def colleagues_on(client, facility_id: str, on: Date) -> list[dict]:
-    """Who else is on duty today — shown on the staff app's shift screen."""
+    """Who else is on duty today - shown on the staff app's shift screen."""
     period = resolve_period(client, facility_id, None)
     if not period:
         return []

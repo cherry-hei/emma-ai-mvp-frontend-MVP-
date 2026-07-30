@@ -1,5 +1,5 @@
 -- ============================================================================
--- Emma AI · Phase 4 — task-based scheduling
+-- Emma AI · Phase 4 - task-based scheduling
 --
 -- 4.1 Task codes and eligibility
 -- 4.2 Event staffing overlays

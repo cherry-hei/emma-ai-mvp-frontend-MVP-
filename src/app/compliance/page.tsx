@@ -203,7 +203,7 @@ export default function CompliancePage() {
                   </tr>
                 ))}
                 {ratios.length === 0 && (
-                  <tr><td colSpan={5} className="px-3 py-6 text-center text-gray-400">—</td></tr>
+                  <tr><td colSpan={5} className="px-3 py-6 text-center text-gray-400">-</td></tr>
                 )}
               </tbody>
             </table>
@@ -229,7 +229,7 @@ export default function CompliancePage() {
                   className="text-xs px-3 py-1 rounded-lg text-white font-semibold" style={{ background: PINK }}>{T.save}</button>
               </div>
             ))}
-            {units.length === 0 && <div className="text-sm text-gray-400">—</div>}
+            {units.length === 0 && <div className="text-sm text-gray-400">-</div>}
           </div>
         </div>
       )}
@@ -253,8 +253,8 @@ export default function CompliancePage() {
                     <td className="px-3 py-2.5 font-semibold text-gray-800">{c.staff}
                       <span className="ml-1.5 text-[9px] font-bold text-gray-400">{c.rank}</span></td>
                     <td className="px-3 py-2.5 text-gray-600">{c.cert}</td>
-                    <td className="px-3 py-2.5 text-gray-600">{c.expiry ?? '—'}</td>
-                    <td className="px-3 py-2.5 font-bold tabular-nums" style={{ color: st.color }}>{c.days ?? '—'}</td>
+                    <td className="px-3 py-2.5 text-gray-600">{c.expiry ?? '-'}</td>
+                    <td className="px-3 py-2.5 font-bold tabular-nums" style={{ color: st.color }}>{c.days ?? '-'}</td>
                     <td className="px-3 py-2.5">
                       <span className="text-[10px] font-bold px-2 py-0.5 rounded-full" style={{ color: st.color, background: st.bg }}>
                         {stLabel(st.key)}

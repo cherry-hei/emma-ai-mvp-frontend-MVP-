@@ -2,7 +2,7 @@
 
 Split in two:
   • Offline (no DB): app wiring, OpenAPI surface, the bearer-token auth guard and
-    the JWT `sub` extractor — always run.
+    the JWT `sub` extractor - always run.
   • DB-backed: real login → token → RLS-scoped endpoint calls. These need the
     seeded local Supabase (`supabase start` + `scripts/seed.py`); they skip
     cleanly when it isn't reachable.
@@ -210,7 +210,7 @@ def test_optimize_sync_path(token):
         from emma_core.db import get_service_client
         # SQL: delete from optimization_jobs where id = :job_id
         get_service_client().table("optimization_jobs").delete().eq("id", data["job_id"]).execute()
-    except Exception:  # noqa: BLE001 — cleanup best-effort
+    except Exception:  # noqa: BLE001 - cleanup best-effort
         pass
 
 
@@ -238,7 +238,7 @@ def test_optimize_rejects_cross_facility_source_version(token):
     body = {
         "facility_id": "x",                       # overridden from the token
         "period_id": periods_a[0]["id"],          # a valid Home A period
-        "source_version_id": ver_b[0]["id"],      # a Home B version — the attack
+        "source_version_id": ver_b[0]["id"],      # a Home B version - the attack
         "plan_mode": "C",
         "writeback": {"persist": False},
     }

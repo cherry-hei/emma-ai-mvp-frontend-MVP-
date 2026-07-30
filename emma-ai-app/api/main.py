@@ -1,4 +1,4 @@
-"""Emma AI REST API — thin routers over emma_core.services, consumed by the Next.js app."""
+"""Emma AI REST API - thin routers over emma_core.services, consumed by the Next.js app."""
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -30,17 +30,33 @@ app.add_middleware(
 )
 
 
+# The Phase 5 compliance triggers enforce policy in the database, so they are the
+# authority on outcomes the caller can actually fix: an over-drawn leave balance
+# or a cross-tenant anchor is a rejected request, not a server fault. Map the
+# SQLSTATEs those triggers raise deliberately; anything else stays a 500.
+_DB_ERROR_STATUS = {
+    "23514": (422, "policy_violation"),      # check_violation - rule refused it
+    "22023": (422, "invalid_input"),         # invalid_parameter_value
+    "23503": (422, "invalid_reference"),     # foreign_key_violation
+    "23505": (409, "conflict"),              # unique_violation - e.g. re-publish
+    "42501": (403, "forbidden"),             # insufficient_privilege
+    "P0002": (404, "not_found"),             # no_data_found
+}
+
+
 @app.exception_handler(PostgrestAPIError)
 def _postgrest_error(_request: Request, exc: PostgrestAPIError) -> JSONResponse:
-    # Surface only the message — hint/details can leak schema internals.
+    # Surface only the message - hint/details can leak schema internals.
     message = getattr(exc, "message", None) or "database error"
-    return JSONResponse(status_code=500,
-                        content={"detail": {"code": "db_error", "message": message}})
+    status_code, code = _DB_ERROR_STATUS.get(
+        str(getattr(exc, "code", "") or ""), (500, "db_error"))
+    return JSONResponse(status_code=status_code,
+                        content={"detail": {"code": code, "message": message}})
 
 
 @app.exception_handler(ValueError)
 def _value_error(_request: Request, exc: ValueError) -> JSONResponse:
-    # Services raise ValueError for bad input — map to 422, not a 500 traceback.
+    # Services raise ValueError for bad input - map to 422, not a 500 traceback.
     return JSONResponse(status_code=422,
                         content={"detail": {"code": "invalid_input", "message": str(exc)}})
 

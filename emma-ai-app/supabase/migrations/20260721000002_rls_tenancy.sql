@@ -1,9 +1,9 @@
 -- ============================================================================
--- Emma AI · Phase 0 — Row Level Security (multi-tenancy)
+-- Emma AI · Phase 0 - Row Level Security (multi-tenancy)
 -- Home A must never see Home B data. Every tenant table is scoped by facility_id
 -- to the caller's facility, resolved from their auth.uid() via users_profile.
 --
--- - service_role key bypasses RLS (used for migrations/seed/admin) — by design.
+-- - service_role key bypasses RLS (used for migrations/seed/admin) - by design.
 -- - anon role gets no policies => no access until signed in.
 -- ============================================================================
 
@@ -101,7 +101,7 @@ create policy calendar_days_write on calendar_days for all to authenticated
     with check (facility_id = public.current_facility_id());
 
 -- users_profile: see profiles in your facility, plus always your own row.
--- Writes happen via service_role (admin provisioning) — no authenticated write policy.
+-- Writes happen via service_role (admin provisioning) - no authenticated write policy.
 alter table users_profile enable row level security;
 create policy users_profile_select on users_profile for select to authenticated
     using (facility_id = public.current_facility_id() or auth_user_id = auth.uid());

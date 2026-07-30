@@ -5,11 +5,11 @@ Those map DB<->dataclasses through an in-memory stub, so they pass even when the
 solver migration (``...0004_solver_phase2.sql``) was never applied to the running
 database. This test runs the optimizer against the *actual* Postgres and fails
 loudly if ``optimization_jobs`` / ``roster_option_scores`` / ``violation_log`` are
-missing — the exact regression the offline suite cannot see (found 2026-07-23).
+missing - the exact regression the offline suite cannot see (found 2026-07-23).
 
 Skips (does not fail) only when no local Supabase is reachable, so the offline
 suite still runs standalone. When the DB *is* up but the Phase 2 tables are
-absent, the tables-exist test fails — that is the point.
+absent, the tables-exist test fails - that is the point.
 """
 from __future__ import annotations
 
@@ -30,7 +30,7 @@ try:
     _sb = get_service_client()
     # SQL: select id from facilities limit 1   -- reachability probe, result unused
     _sb.table("facilities").select("id").limit(1).execute()
-except Exception:  # noqa: BLE001 — no DB to integrate against
+except Exception:  # noqa: BLE001 - no DB to integrate against
     _sb = None
 
 pytestmark = pytest.mark.skipif(_sb is None, reason="local Supabase not reachable")
@@ -64,7 +64,7 @@ def _cleanup(resp) -> None:
 
 def test_phase2_tables_exist():
     """The solver migration must be applied. A missing table raises PostgREST's
-    APIError here — catching the 'migration authored but never applied' gap."""
+    APIError here - catching the 'migration authored but never applied' gap."""
     for t in PHASE2_TABLES:
         # SQL: select * from <t> limit 1   -- existence probe; a missing table errors
         _sb.table(t).select("*").limit(1).execute()

@@ -15,7 +15,7 @@ import math
 from collections import defaultdict
 from dataclasses import dataclass, fields
 from datetime import date as Date, datetime as DateTime, time as Time, timedelta, timezone
-from typing import Iterable
+from typing import Iterable, Mapping
 
 from ..constants import can_cover_rank
 from ..shifttime import envelope, paid_minutes, to_minutes
@@ -1206,7 +1206,7 @@ def leave_request_policy_issues(
     existing_requests: Iterable[dict],
     active_staff: Iterable[dict] = (),
     calendar_days: Iterable[dict] = (),
-    assigned_night_dates: Iterable[Date | str] = (),
+    assigned_night_shifts: Mapping[Date | str, str] | None = None,
     submitted_on: Date | None = None,
     enforce_cutoff: bool = True,
     policy: dict | None = None,
@@ -1246,12 +1246,32 @@ def leave_request_policy_issues(
                 "submitted_on": submitted.isoformat(),
             })
 
-    locked_nights = {_as_date(value) for value in assigned_night_dates}
+    locked_nights = {
+        _as_date(day): str(shift_type or "").upper()
+        for day, shift_type in dict(assigned_night_shifts or {}).items()
+    }
+    overlapped_nights = {
+        day: shift_type
+        for day, shift_type in locked_nights.items()
+        if start <= day <= end
+    }
+    # A duty request naming the very night already rostered is fulfilled by that
+    # assignment, not in conflict with it - the anchor never moves.
+    requested_shift = str(request.get("requested_shift_type") or "").upper()
+    night_already_fulfilled = (
+        leave_type == "duty_request"
+        and bool(requested_shift)
+        and all(
+            shift_type == requested_shift
+            for shift_type in overlapped_nights.values()
+        )
+    )
     # A true swap is the documented escape hatch for a pre-assigned night.
     # A normal duty request must not be able to move that hard night anchor.
-    if leave_type != "shift_swap" and any(
-        start <= day <= end
-        for day in locked_nights
+    if (
+        leave_type != "shift_swap"
+        and overlapped_nights
+        and not night_already_fulfilled
     ):
         issues.append({
             "code": "preassigned_night_locked",
@@ -1492,15 +1512,13 @@ def evaluate_leave_rules(snapshot: RosterSnapshot) -> list[dict]:
         if row.get("status", "active") == "active"
     ]
     staff_by_id = {row["id"]: row for row in active_staff}
-    night_dates_by_staff: dict[str, set[Date]] = defaultdict(set)
+    night_shifts_by_staff: dict[str, dict[Date, str]] = defaultdict(dict)
     for _assignment, shift, staff in _active_assignments(
         snapshot, working_only=True
     ):
-        if (
-            staff
-            and str(shift.get("shift_type") or "").upper() in {"AN", "N", "7P"}
-        ):
-            night_dates_by_staff[staff["id"]].add(_as_date(shift["date"]))
+        shift_type = str(shift.get("shift_type") or "").upper()
+        if staff and shift_type in {"AN", "N", "7P"}:
+            night_shifts_by_staff[staff["id"]][_as_date(shift["date"])] = shift_type
 
     approved_requests = tuple(
         request for request in snapshot.leave_requests
@@ -1518,7 +1536,7 @@ def evaluate_leave_rules(snapshot: RosterSnapshot) -> list[dict]:
             existing_requests=approved_requests,
             active_staff=active_staff,
             calendar_days=snapshot.calendar_days,
-            assigned_night_dates=night_dates_by_staff.get(staff["id"], ()),
+            assigned_night_shifts=night_shifts_by_staff.get(staff["id"], {}),
             submitted_on=_as_date(created_at) if created_at else None,
             enforce_cutoff=bool(created_at),
             policy=policy,

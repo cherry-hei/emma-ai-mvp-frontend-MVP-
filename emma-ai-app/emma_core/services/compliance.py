@@ -2,10 +2,10 @@
 
 Two methods, both required by the Code of Practice reporting (spec 3.6 / 3.7):
 
-  compute_ratios   per-shift check — a staff member counts toward a window if
+  compute_ratios   per-shift check - a staff member counts toward a window if
                    their shift overlaps it at all. Cheap, and what the
                    Compliance page's pass/fail cards show.
-  minute_ratio     minute-level overlap — walks the window segment by segment and
+  minute_ratio     minute-level overlap - walks the window segment by segment and
                    counts only the minutes each person is actually on duty, so a
                    shift that covers half a statutory window can no longer pass
                    the whole window. This is the audit-grade number.
@@ -329,7 +329,7 @@ def _evaluate_day(
 
 def compute_ratios(client, facility_id: str, on_date, *,
                    roster_version_id: str | None = None) -> list[RatioResult]:
-    """Ratio check for a single day. Pass ``roster_version_id`` to scope the count to one version — otherwise A/B/C drafts sharing the same dates double-count staff and falsely pass."""
+    """Ratio check for a single day. Pass ``roster_version_id`` to scope the count to one version - otherwise A/B/C drafts sharing the same dates double-count staff and falsely pass."""
     d = str(on_date)
 
     # SQL: select unit_id, care_level, resident_count from daily_resident_counts
@@ -382,7 +382,7 @@ def _minute_eval(
     *,
     facility_id: str | None = None,
 ) -> list[dict]:
-    """Per-rule minute-level coverage for one day (pure — no DB access).
+    """Per-rule minute-level coverage for one day (pure - no DB access).
 
     Splits each statutory window where the weighted on-duty headcount is
     constant. The same person is counted once even if duplicate/overlapping
@@ -470,7 +470,7 @@ def minute_ratio(client, facility_id: str, on_date, *,
                  roster_version_id: str | None = None) -> list[dict]:
     """Minute-level coverage for a single day."""
     d = str(on_date)
-    # Same three reads as compute_ratios — only the evaluation differs (minute-level
+    # Same three reads as compute_ratios - only the evaluation differs (minute-level
     # rather than per-shift), so the SQL is identical.
     #
     # SQL: select unit_id, care_level, resident_count from daily_resident_counts
@@ -505,7 +505,7 @@ def minute_ratio(client, facility_id: str, on_date, *,
 
 def minute_ratio_series(client, facility_id: str, start: Date, end: Date, *,
                         roster_version_id: str | None = None) -> list[dict]:
-    """Minute-level coverage across a range, in a fixed number of queries — the
+    """Minute-level coverage across a range, in a fixed number of queries - the
     breach-minute source for the SWD compliance KPI and the statutory report."""
     rule_rows = _load_rule_rows(client, facility_id)
     if not rule_rows:
@@ -535,7 +535,7 @@ def minute_ratio_series(client, facility_id: str, start: Date, end: Date, *,
 def _load_range(client, facility_id: str, start: Date, end: Date,
                 roster_version_id: str | None):
     """(residents_by_date, shift_by_id, assignments_by_date) for a date range."""
-    # Three queries for the whole range, then bucketed by date in Python — this is
+    # Three queries for the whole range, then bucketed by date in Python - this is
     # what keeps ratio_series / minute_ratio_series off a per-day query loop.
     #
     # SQL: select date, unit_id, care_level, resident_count
@@ -614,7 +614,7 @@ def ratio_series(client, facility_id: str, start: Date, end: Date, *,
 
 # ── live threshold monitors (Reports page) ───────────────────────────────────
 # The escalation wording and legal references below are regulation, not facility
-# data — they stay in code. Every *number* is measured from the database.
+# data - they stay in code. Every *number* is measured from the database.
 def threshold_monitors(client, facility_id: str) -> list[dict]:
     from ._common import as_date, month_bounds, operative_version, resolve_period
 
@@ -719,9 +719,9 @@ def threshold_monitors(client, facility_id: str) -> list[dict]:
         "current_count": len(pt_breaches),
         "note_en": (f"{len(pt_breaches)} A/P shifts over the PT cap: "
                     + ", ".join(pt_breaches[:3]) if pt_breaches
-                    else "No triggers this month — A/P shifts within limit ✓"),
+                    else "No triggers this month - A/P shifts within limit ✓"),
         "note_zh": (f"{len(pt_breaches)} 個 A/P 更超出 PT 上限" if pt_breaches
-                    else "本月未觸發 — A/P更均在上限內 ✓"),
+                    else "本月未觸發 - A/P更均在上限內 ✓"),
         "levels": [{"label_en": "🔴 Immediate Block", "label_zh": "🔴 即時阻截",
                     "action_en": "Block roster confirmation + show Cap.459A s.11(3)",
                     "action_zh": "阻止排班確認 + 顯示 Cap.459A s.11(3)"}],

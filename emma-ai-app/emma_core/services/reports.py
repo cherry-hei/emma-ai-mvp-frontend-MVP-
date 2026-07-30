@@ -39,7 +39,7 @@ def list_event_triggers(client, facility_id: str, on: Date | None = None) -> lis
              .order("sort_order").execute().data)
     # SQL: select event_type, date, title from facility_events
     #      where facility_id = :facility_id and date >= :start and date <= :end
-    # (counted per event_type in Python and stitched onto the rules — in SQL this
+    # (counted per event_type in Python and stitched onto the rules - in SQL this
     #  would be a `left join lateral (... group by event_type)` on the rule code)
     events = (client.table("facility_events").select("event_type,date,title")
               .eq("facility_id", facility_id)
@@ -67,7 +67,7 @@ def list_reports(client, facility_id: str, *, limit: int = 20) -> list[dict]:
     #      where facility_id = :facility_id
     #      order by created_at desc
     #      limit :limit
-    # (payload_json is deliberately not selected — the list view never renders it)
+    # (payload_json is deliberately not selected - the list view never renders it)
     return (client.table("reports")
             .select("id,report_type,title,period_start,period_end,format,row_count,created_at")
             .eq("facility_id", facility_id)
@@ -120,7 +120,7 @@ def _cells_by_staff(shifts: dict, assigns: list[dict]) -> dict[str, list[dict]]:
 
 
 def _staff_label(st: dict) -> str:
-    return st.get("name_en") or st.get("name") or "—"
+    return st.get("name_en") or st.get("name") or "-"
 
 
 # ── generators ───────────────────────────────────────────────────────────────
@@ -321,10 +321,10 @@ def _staff_register(client, facility_id: str, params: dict) -> dict:
             else c["cert_type"])
     rows = [{
         "staff": _staff_label(st), "name_local": st.get("name"), "rank": st["rank"],
-        "unit": (st.get("unit") or {}).get("name") or "—",
+        "unit": (st.get("unit") or {}).get("name") or "-",
         "employment_type": st["employment_type"], "status": st["status"],
         "medication_audited": "Y" if st.get("is_audited_for_medication") else "N",
-        "certificates": "; ".join(certs.get(st["id"], [])) or "—",
+        "certificates": "; ".join(certs.get(st["id"], [])) or "-",
     } for st in staff]
     return {
         "columns": [
@@ -417,7 +417,7 @@ def _compliance_summary(client, facility_id: str, params: dict) -> dict:
 
 
 def _monthly_staffing_compliance(client, facility_id: str, params: dict) -> dict:
-    """The scheduled monthly report — the compliance summary plus workforce mix."""
+    """The scheduled monthly report - the compliance summary plus workforce mix."""
     from . import kpi as kpi_svc
 
     base = _compliance_summary(client, facility_id, params)
@@ -523,7 +523,7 @@ def to_csv(payload: dict) -> str:
 
 def run_schedule(client, facility_id: str, schedule_id: str,
                  profile_id: str | None = None) -> dict:
-    """Manual 'Generate Now' on a scheduled report — same code path the cron uses."""
+    """Manual 'Generate Now' on a scheduled report - same code path the cron uses."""
     # SQL: select * from report_schedules
     #      where facility_id = :facility_id and id = :schedule_id
     rows = (client.table("report_schedules").select("*")

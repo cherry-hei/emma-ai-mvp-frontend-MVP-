@@ -1,4 +1,4 @@
-"""/reports — generation plus the automated-report registry (spec 7.1 / 7.2)."""
+"""/reports - generation plus the automated-report registry (spec 7.1 / 7.2)."""
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, Query, Response
@@ -55,7 +55,7 @@ def generate(body: ReportGenerateRequest, ctx: AuthCtx = Depends(get_ctx)):
 @router.get("/reports/download/{report_type}.csv")
 def download(report_type: str, period_id: str | None = Query(default=None),
              ctx: AuthCtx = Depends(get_ctx)):
-    """Generate on demand and stream as CSV — what the Reports page's cards link to."""
+    """Generate on demand and stream as CSV - what the Reports page's cards link to."""
     params = {"period_id": period_id} if period_id else {}
     report = svc.generate(ctx.client, ctx.facility_id, report_type,
                           params=params, profile_id=ctx.profile_id, persist=False)

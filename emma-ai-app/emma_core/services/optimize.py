@@ -426,7 +426,7 @@ def load_inputs(client, facility_id: str, period_id: str, *, source_version_id=N
         )
     # SQL: select * from calendar_days
     #      where (facility_id = :facility_id or facility_id is null)
-    # (unbounded by date — the whole calendar is pulled, then indexed by date below)
+    # (unbounded by date - the whole calendar is pulled, then indexed by date below)
     calendar = (client.table("calendar_days").select("*")
                 .or_(f"facility_id.eq.{facility_id},facility_id.is.null")
                 .gte("date", str(period_start)).lte("date", str(period_end))
@@ -991,7 +991,7 @@ def _writeback_version(client, request, inputs, res) -> str:
 
     # one fresh shift per demand slot; keep source-slot -> new-shift id map
     #
-    # SQL (once per demand slot — an N-statement loop, not a single multi-row insert,
+    # SQL (once per demand slot - an N-statement loop, not a single multi-row insert,
     #      because each returned shift id has to be mapped back to its solver slot):
     #      insert into shifts
     #        (facility_id, roster_version_id, date, shift_type, start_time, end_time,
@@ -1180,7 +1180,7 @@ def _fail_job(client, job_id: str, exc: Exception) -> None:
             "error_json": {"type": type(exc).__name__, "message": str(exc)},
             "completed_at": _now(),
         }).eq("id", job_id).execute())
-    except Exception:  # noqa: BLE001 — never mask the original error
+    except Exception:  # noqa: BLE001 - never mask the original error
         pass
 
 

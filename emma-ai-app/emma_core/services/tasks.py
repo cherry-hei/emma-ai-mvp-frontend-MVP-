@@ -1,6 +1,6 @@
 """Task-code assignments and their completion state (spec 3.10).
 
-`shift_assignments.tasks` stays the planner-facing source of truth — it is what
+`shift_assignments.tasks` stays the planner-facing source of truth - it is what
 the roster editor writes. `task_assignments` is the execution record the staff
 app ticks off, materialised from that array on first read so the two can never
 drift out of sync: labels added in the roster appear, labels removed disappear,

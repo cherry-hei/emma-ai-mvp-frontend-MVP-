@@ -1,4 +1,4 @@
-"""/me/* — the staff mobile app (spec 4.1).
+"""/me/* - the staff mobile app (spec 4.1).
 
 Every route resolves the staff record from the caller's own profile, so there is
 no path where a staff token reads another person's roster, tasks or attendance.

@@ -100,8 +100,8 @@ export function RealRosterBoard() {
     validate: isZH ? '驗證' : 'Validate', saveDraft: isZH ? '儲存草稿' : 'Save draft',
     publish: isZH ? '發佈' : 'Publish', staff: isZH ? '員工' : 'Staff',
     empty: isZH ? '此週期尚無更表資料。點擊格子開始編輯。' : 'No shifts yet. Click a cell to start editing.',
-    noPeriods: isZH ? '尚無更表週期，請先建立一個。' : 'No roster periods yet — create one to begin.',
-    readonly: isZH ? '（唯讀 — 已發佈或 AI 方案）' : '(read-only — published or AI option)',
+    noPeriods: isZH ? '尚無更表週期，請先建立一個。' : 'No roster periods yet - create one to begin.',
+    readonly: isZH ? '（唯讀 - 已發佈或 AI 方案）' : '(read-only - published or AI option)',
     edit: isZH ? '編輯更次' : 'Edit shift', clear: isZH ? '清除' : 'Clear',
     save: isZH ? '儲存' : 'Save', cancel: isZH ? '取消' : 'Cancel', tasks: isZH ? '任務' : 'Tasks',
     passes: isZH ? '通過' : 'Passes', fails: isZH ? '不通過' : 'Fails',
@@ -394,7 +394,7 @@ export function RealRosterBoard() {
             ))}
             {validation.ratio_checks.filter((c) => !c.passes).slice(0, 4).map((c, i) => (
               <span key={`r${i}`} className="text-[10px] px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 border border-amber-100">
-                {c.label} — {c.actual}/{c.required}
+                {c.label} - {c.actual}/{c.required}
               </span>
             ))}
           </div>

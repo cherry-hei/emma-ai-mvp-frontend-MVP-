@@ -1,5 +1,5 @@
 -- ============================================================================
--- Emma AI · Phase 5 follow-up — atomic emergency-cover resolution
+-- Emma AI · Phase 5 follow-up - atomic emergency-cover resolution
 --
 -- Emergency cover is the only supported amendment to an operative roster.  It
 -- must therefore be narrower than a general service-role write: this RPC locks

@@ -1,4 +1,4 @@
-"""Staff directory reads enriched for the Staff Portfolio. Derived fields (scheduled_hours, contracted_period_hours, status, certs) are scoped to the current roster period — the one covering today, else the most recent — so a future period's blank roster never zeroes out the live directory."""
+"""Staff directory reads enriched for the Staff Portfolio. Derived fields (scheduled_hours, contracted_period_hours, status, certs) are scoped to the current roster period - the one covering today, else the most recent - so a future period's blank roster never zeroes out the live directory."""
 from __future__ import annotations
 
 from datetime import date as Date
@@ -9,7 +9,7 @@ LEAVE_CODES = {"AL", "SL", "DSL"}   # non-working leave shift codes
 
 
 def _duration(shift: dict) -> int:
-    """Paid shift minutes — segment-aware (see emma_core.shifttime), so a split
+    """Paid shift minutes - segment-aware (see emma_core.shifttime), so a split
     A/N shift counts its two duty windows, not the elapsed span between them."""
     return paid_minutes(shift)
 
@@ -19,20 +19,10 @@ def _iso(v) -> str:
 
 
 def _current_period(client, facility_id: str) -> dict | None:
-    """The period covering today, else the most recent by start date."""
-    # SQL: select * from roster_periods
-    #      where facility_id = :facility_id
-    #      order by period_start desc
-    periods = (client.table("roster_periods").select("*")
-               .eq("facility_id", facility_id)
-               .order("period_start", desc=True).execute().data)
-    if not periods:
-        return None
-    today = Date.today().isoformat()
-    for p in periods:                       # newest-first
-        if _iso(p["period_start"]) <= today <= _iso(p["period_end"]):
-            return p
-    return periods[0]
+    """The rostered period covering today - see ``_common.current_period``."""
+    from ._common import current_period
+
+    return current_period(client, facility_id)
 
 
 def _manual_version(client, facility_id: str, period_id: str) -> dict | None:
@@ -163,7 +153,7 @@ def list_staff(client, facility_id: str, *, search: str | None = None,
     #      left join facility_units u on u.id = s.primary_unit_id
     #      where s.facility_id = :facility_id
     #      order by s.created_at
-    # `search` and `rank` are NOT pushed down — they are applied in the Python loop
+    # `search` and `rank` are NOT pushed down - they are applied in the Python loop
     # below (a rank filter would be `and s.rank = :rank`, search an ilike on
     # s.name / s.name_en).
     rows = (client.table("staff").select("*, unit:facility_units(name)")

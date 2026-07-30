@@ -1,7 +1,7 @@
 // Single source of truth for the app's navigable routes.
 //
 // Sidebar and TopNav both read from here so the same screen can never be reached
-// by two different paths — that split (`/personnel` on the top bar vs `/staff` on
+// by two different paths - that split (`/personnel` on the top bar vs `/staff` on
 // the sidebar) is what left the two navs highlighting different things.
 
 export const ROUTES = {
@@ -28,7 +28,7 @@ export function isActiveRoute(pathname: string | null | undefined, path: string)
 }
 
 // The entry in `items` whose path matches `pathname`, or undefined when the
-// current screen isn't represented in that nav (then nothing is highlighted —
+// current screen isn't represented in that nav (then nothing is highlighted -
 // better than leaving a stale tab lit).
 export function activeItem<T extends { path: string }>(
   items: readonly T[],

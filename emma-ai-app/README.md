@@ -1,8 +1,8 @@
-# Emma AI — Python API service
+# Emma AI - Python API service
 
 Intelligent nurse/care-worker rostering for HK residential care homes. This
 package is the **FastAPI REST backend** (domain logic, Supabase data/auth, and
-the OR-Tools Roster A/B/C solver). It's the backend half of a monorepo — the
+the OR-Tools Roster A/B/C solver). It's the backend half of a monorepo - the
 **Next.js frontend lives at the repo root** ([`../`](..)) and consumes this API;
 there is no Python UI here.
 
@@ -12,7 +12,7 @@ there is no Python UI here.
 | REST API | **FastAPI** (uvicorn) |
 | Domain / AI | `emma_core` + **OR-Tools** CP-SAT + Phase 5 deterministic compliance |
 | Data + Auth | **Supabase** (Postgres + GoTrue + RLS) |
-| Frontend (separate repo) | **Next.js** — consumes this API |
+| Frontend (separate repo) | **Next.js** - consumes this API |
 
 ## Layout
 ```

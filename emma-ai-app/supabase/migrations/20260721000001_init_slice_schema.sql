@@ -1,5 +1,5 @@
 -- ============================================================================
--- Emma AI · Phase 0 foundation — slice schema
+-- Emma AI · Phase 0 foundation - slice schema
 -- Every core table carries facility_id (multi-tenancy; RLS added in next migration).
 -- Scope: only the tables the Phase 1 thin slice needs. More tables (leave, agency,
 -- rule builder, task codes, KPI, solver jobs) land in later phases.
@@ -52,7 +52,7 @@ create table staff (
 );
 create index idx_staff_facility on staff(facility_id);
 
--- ── staff_contracts (rest / hour rules — solver + compliance input) ──────────
+-- ── staff_contracts (rest / hour rules - solver + compliance input) ──────────
 create table staff_contracts (
     id                 uuid primary key default gen_random_uuid(),
     facility_id        uuid not null references facilities(id) on delete cascade,

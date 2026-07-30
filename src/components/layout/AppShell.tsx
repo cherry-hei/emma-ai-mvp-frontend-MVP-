@@ -21,7 +21,7 @@ function Splash() {
 }
 
 // Client shell: owns the auth gate. /login and the phone-sized /staff-app render
-// bare — both bring their own chrome, so wrapping them in the desktop sidebar +
+// bare - both bring their own chrome, so wrapping them in the desktop sidebar +
 // top bar would frame a mobile screen inside admin navigation. Every route other
 // than /login requires a signed-in session, else it redirects to /login.
 export function AppShell({ children }: { children: ReactNode }) {

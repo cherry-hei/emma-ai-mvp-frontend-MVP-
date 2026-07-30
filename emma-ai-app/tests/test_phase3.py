@@ -1,4 +1,4 @@
-"""Phase 3 tests — the operations layer (Approval, Alert, ROI, Reports, Staff App)
+"""Phase 3 tests - the operations layer (Approval, Alert, ROI, Reports, Staff App)
 and the Pareto optimizer.
 
 Split the same way as test_api.py:
@@ -89,7 +89,7 @@ def test_split_shift_is_off_duty_during_its_rest_gap():
 
     assert covers_window(AN_HOME_A, 420, 1200)     # 07:00–20:00, via the morning
     assert covers_window(AN_HOME_A, 1080, 420)     # 18:00–07:00, via the night
-    # 15:00–21:00 is the unpaid gap — counting it would overstate coverage
+    # 15:00–21:00 is the unpaid gap - counting it would overstate coverage
     assert not covers_window(AN_HOME_A, 900, 1260)
 
 
@@ -298,7 +298,7 @@ def test_leave_requests_split_by_group_and_category(token):
 
 
 def test_leave_decision_round_trip(token):
-    # Decide a request this test created rather than one from the seed — there is
+    # Decide a request this test created rather than one from the seed - there is
     # no API to put a row back to 'pending', so mutating seeded data would leave
     # the demo drifted after every run.
     staff = client.get("/staff", headers=_auth(token)).json()[0]
@@ -309,25 +309,35 @@ def test_leave_decision_round_trip(token):
     assert created.status_code == 201
     request_id = created.json()["id"]
 
-    listed = client.get("/leave-requests", params={"group": "pending"},
-                        headers=_auth(token)).json()
-    assert any(r["id"] == request_id for r in listed)
+    try:
+        listed = client.get("/leave-requests", params={"group": "pending"},
+                            headers=_auth(token)).json()
+        assert any(r["id"] == request_id for r in listed)
 
-    reviewed = client.patch(f"/leave-requests/{request_id}", json={"decision": "review"},
-                            headers=_auth(token))
-    assert reviewed.status_code == 200 and reviewed.json()["status"] == "reviewed"
+        reviewed = client.patch(f"/leave-requests/{request_id}", json={"decision": "review"},
+                                headers=_auth(token))
+        assert reviewed.status_code == 200 and reviewed.json()["status"] == "reviewed"
 
-    approved = client.patch(f"/leave-requests/{request_id}",
-                            json={"decision": "approve", "note": "pytest"},
-                            headers=_auth(token))
-    assert approved.status_code == 200
-    assert approved.json()["status"] == "approved"
-    assert approved.json()["decided_at"]
+        approved = client.patch(f"/leave-requests/{request_id}",
+                                json={"decision": "approve", "note": "pytest"},
+                                headers=_auth(token))
+        assert approved.status_code == 200
+        assert approved.json()["status"] == "approved"
+        assert approved.json()["decided_at"]
 
-    # it has left the pending queue and joined the decided one
-    still_pending = client.get("/leave-requests", params={"group": "pending"},
-                               headers=_auth(token)).json()
-    assert not any(r["id"] == request_id for r in still_pending)
+        # it has left the pending queue and joined the decided one
+        still_pending = client.get("/leave-requests", params={"group": "pending"},
+                                   headers=_auth(token)).json()
+        assert not any(r["id"] == request_id for r in still_pending)
+    finally:
+        # Approval spends AL against a finite configured balance, so the row has to
+        # go back or the entitlement drains 2 days per run until every later run
+        # fails on 'insufficient configured leave balance'. Deleting it releases the
+        # charge through the same trigger that made it.
+        from emma_core.db import get_service_client
+
+        (get_service_client().table("leave_requests")
+         .delete().eq("id", request_id).execute())
 
 
 def test_replacement_candidates_are_compliance_filtered(token):
@@ -347,7 +357,7 @@ def test_replacement_candidates_are_compliance_filtered(token):
 
     assert all(c["compliance_ok"] for c in clean)
     assert len(everyone) >= len(clean)
-    # a blocked candidate must say why — a silent exclusion is not auditable
+    # a blocked candidate must say why - a silent exclusion is not auditable
     for c in everyone:
         if not c["compliance_ok"]:
             assert c["blocked_reasons"]
@@ -479,9 +489,13 @@ def test_staff_app_roster_window(staff_token, token):
     body = client.get("/me/roster", params={"days": 7}, headers=_auth(staff_token)).json()
     assert len(body["days"]) == 7
 
-    period = client.get("/roster-periods", headers=_auth(token)).json()[0]
+    # Forward planning cycles carry leave entitlements ahead of the roster, so the
+    # newest period is not necessarily the rostered one the window clamps into.
+    periods = client.get("/roster-periods", headers=_auth(token)).json()
+    period = next((p for p in periods
+                   if p["period_start"] <= body["start"] <= p["period_end"]), None)
+    assert period, f'window {body["start"]}..{body["end"]} sits outside every period'
     # the window is clamped into the period rather than running off its end
-    assert body["start"] >= period["period_start"]
     assert body["end"] <= period["period_end"]
     if period["period_start"] <= date.today().isoformat() <= period["period_end"]:
         assert body["start"] <= date.today().isoformat() <= body["end"]
@@ -546,7 +560,7 @@ def test_seeded_an_shift_is_sixteen_hours(token):
     assert paid_minutes(an[0]) == 960
 
     # With A/N paid as 16h and the weekly patterns sized to contract, no one is
-    # over — so an hours alert now means a real rostering breach, not the defect.
+    # over - so an hours alert now means a real rostering breach, not the defect.
     alerts = client.get("/alerts", headers=_auth(token)).json()
     over = [a["detail"] for a in alerts if a["kind"] == "hours"]
     assert not over, f"unexpected hours-over-contract alerts: {over}"

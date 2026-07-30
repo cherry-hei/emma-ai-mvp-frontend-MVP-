@@ -1,4 +1,4 @@
-"""/dashboard, /roi, /kpi, /insights — the read-only analytics surface.
+"""/dashboard, /roi, /kpi, /insights - the read-only analytics surface.
 
 These are aggregates over many tables; each returns the exact shape its screen
 renders so a page paints from one round trip.

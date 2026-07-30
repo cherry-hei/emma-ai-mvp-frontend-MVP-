@@ -391,7 +391,7 @@ def get_incident(client, facility_id: str, incident_id: str) -> dict | None:
 
 
 def stats(client, facility_id: str, on: Date | None = None) -> dict:
-    """Month-to-date incident KPIs — the four cards on Dashboard and Alert."""
+    """Month-to-date incident KPIs - the four cards on Dashboard and Alert."""
     start, end = month_bounds(on)
     # SQL: select * from sl_incidents
     #      where facility_id = :facility_id
@@ -433,7 +433,7 @@ def stats(client, facility_id: str, on: Date | None = None) -> dict:
 # ── create ───────────────────────────────────────────────────────────────────
 def _find_shift_for(client, facility_id: str, staff_id: str, on_date: Date) -> dict | None:
     """The working shift this staff member was rostered on for `on_date`, in the
-    operative (published, else manual) version — the slot that now needs cover."""
+    operative (published, else manual) version - the slot that now needs cover."""
     period = resolve_period(client, facility_id, None)
     if not period:
         return None
@@ -522,7 +522,7 @@ def open_incident(client, facility_id: str, *, staff_id: str, incident_type: str
     refresh_candidates(client, facility_id, row["id"])
     notify.push(
         client, facility_id, event_type="cover_request",
-        title=f"{incident_type} reported — cover required",
+        title=f"{incident_type} reported - cover required",
         body=f'{iso(on_date)}' + (f' · {reason}' if reason else ""),
         related_type="sl_incident", related_id=row["id"],
     )
@@ -557,7 +557,7 @@ def _rest_conflict(candidate_shifts: list[dict], vacancy: dict, min_rest_min: in
 
 def build_candidates(client, facility_id: str, incident: dict) -> list[dict]:
     """Rank every other active staff member for the vacant shift. Never filters a
-    person out silently — blocked candidates come back with `blocked_reasons`."""
+    person out silently - blocked candidates come back with `blocked_reasons`."""
     shift_id = incident.get("shift_id")
     vacancy = None
     if shift_id:
@@ -607,7 +607,7 @@ def build_candidates(client, facility_id: str, incident: dict) -> list[dict]:
     staff_rows = (client.table("staff").select("*, unit:facility_units(name)")
                   .eq("facility_id", facility_id).eq("status", "active").execute().data)
     # SQL: select * from staff_contracts where facility_id = :facility_id
-    # (keyed by staff_id in Python — last row per staff wins, no effective-date filter)
+    # (keyed by staff_id in Python - last row per staff wins, no effective-date filter)
     contracts = {c["staff_id"]: c for c in (
         client.table("staff_contracts").select("*").eq("facility_id", facility_id).execute().data)}
 
@@ -1393,7 +1393,7 @@ def active_alerts(client, facility_id: str) -> list[dict]:
         alerts.append({
             "id": f'incident:{inc["id"]}',
             "kind": "cover", "urgent": True,
-            "title": f'{inc["incident_type"]} — cover required',
+            "title": f'{inc["incident_type"]} - cover required',
             "detail": (f'{inc["name_en"] or inc["name"]} ({inc["rank"]}) · '
                        f'{inc["shift_type"] or "shift"} {inc["shift_window"] or ""}').strip(),
             "unit_name": inc["unit_name"], "date": inc["date"],
@@ -1435,7 +1435,7 @@ def active_alerts(client, facility_id: str) -> list[dict]:
                 alerts.append({
                     "id": f'ratio:{r.label}',
                     "kind": "ratio", "urgent": True,
-                    "title": f'Staffing ratio below minimum — {r.label}',
+                    "title": f'Staffing ratio below minimum - {r.label}',
                     "detail": f'{r.actual} on duty, {r.required} required '
                               f'for {r.residents} residents',
                     "unit_name": None, "date": today.isoformat(),
@@ -1491,7 +1491,7 @@ def _hour_overruns(client, facility_id: str, period: dict | None) -> list[dict]:
         out.append({
             "id": f"hours:{sid}",
             "kind": "hours", "urgent": True,
-            "title": f'Hours over contract — {st.get("name_en") or st.get("name")}',
+            "title": f'Hours over contract - {st.get("name_en") or st.get("name")}',
             "detail": f'{round(minutes / 60)}h rostered vs {round(cap / 60)}h maximum '
                       f'this period',
             "unit_name": (st.get("unit") or {}).get("name"),

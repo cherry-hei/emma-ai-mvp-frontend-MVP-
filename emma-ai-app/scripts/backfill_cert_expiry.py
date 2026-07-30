@@ -1,6 +1,6 @@
 """One-off: backfill staff_certificates.expiry_date for the demo Home A certs.
 
-Non-destructive — only sets expiry_date on existing rows (matches seed.py values) so
+Non-destructive - only sets expiry_date on existing rows (matches seed.py values) so
 the Compliance "Certifications" expiry view has real data without a full reseed.
 Safe to delete after running.
 """
@@ -23,7 +23,7 @@ EXPIRY = {
 
 sb = get_service_client()
 # SQL: select id, cert_type, expiry_date from staff_certificates
-# (no facility filter — this is the service-role client, so RLS does not apply and
+# (no facility filter - this is the service-role client, so RLS does not apply and
 #  the backfill deliberately spans every home)
 rows = sb.table("staff_certificates").select("id,cert_type,expiry_date").execute().data
 n = 0

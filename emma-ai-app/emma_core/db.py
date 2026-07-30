@@ -16,7 +16,7 @@ chain. Conventions used in those comments:
   PostgREST performs, with the nested object it returns.
 - **Not shown, but always applied:** every statement issued through a user
   client (``get_user_client``) additionally gets the RLS predicate
-  ``facility_id = public.current_facility_id()`` ANDed on by Postgres — see
+  ``facility_id = public.current_facility_id()`` ANDed on by Postgres - see
   ``supabase/migrations/20260721000002_rls_tenancy.sql``. The service client
   bypasses that, which is why it is limited to seeding and migrations.
 """

@@ -12,32 +12,32 @@ The frontend consumes the backend's REST API and codegens its typed client from
 `http://localhost:8000/openapi.json`. See [`emma-ai-app/README.md`](emma-ai-app/README.md)
 and [`emma-ai-app/RUNBOOK.md`](emma-ai-app/RUNBOOK.md) for backend details.
 
-## Status — what's real
+## Status - what's real
 
-**Phases 1 through 5 are wired to the backend** — real data, RLS-scoped to the
+**Phases 1 through 5 are wired to the backend** - real data, RLS-scoped to the
 signed-in facility. There is no mock data left in the app; `src/lib/data.ts` and the
 fixture-backed `/api/*` route handlers were deleted.
 
 | Screen | Phase | Backing endpoints |
 |---|---|---|
 | **Login / account switch** | 1 | `/auth/login` · `/auth/refresh` · `/auth/me` |
-| **Roster** — grid, manual edit, publish | 1 | `/rosters`, `/shifts`, `/roster-versions` |
-| **Roster → AI Suggest** — A/B/C solver | 2 + 5 | `/optimize-roster`, `/optimization-jobs`, `/validate-roster` |
-| **Task scheduling** — eligibility, events, floor coverage | 4 | `/task-assignments`, `/facility-events`, `/validate-roster` |
-| **Compliance** — ratio, residents, certs | 1 + 5 | `/compliance/ratio`, `/compliance/minute-ratio`, `/compliance/rule-definitions`, `/resident-counts`, `/units`, `/staff` |
-| **Staff Portfolio** — directory + profile | 1 | `/staff`, `/staff/{id}` |
-| **Dashboard** — KPIs, incident mix, shift mix, alerts | 3 | `/dashboard/summary` |
-| **Approval Centre** — AL / duty / sick queues, approve & reject | 3 + 5 | `/leave-requests`, `/leave-requests/stats` |
-| **Alert Centre** — live alerts, cover flow, resolution | 3 | `/alerts`, `/sl-incidents`, `/replacement-candidates`, `/sl-incidents/{id}/resolve` |
-| **ROI** — A1 / A2 / agency, editable baseline | 3 | `/roi/summary`, `/roi/settings` |
-| **Reports** — generation, schedules, thresholds, regulatory sync | 3 | `/reports/*`, `/compliance/thresholds` |
-| **Staff App** — roster, tasks, clock in/out, profile | 3 | `/me/*` |
+| **Roster** - grid, manual edit, publish | 1 | `/rosters`, `/shifts`, `/roster-versions` |
+| **Roster → AI Suggest** - A/B/C solver | 2 + 5 | `/optimize-roster`, `/optimization-jobs`, `/validate-roster` |
+| **Task scheduling** - eligibility, events, floor coverage | 4 | `/task-assignments`, `/facility-events`, `/validate-roster` |
+| **Compliance** - ratio, residents, certs | 1 + 5 | `/compliance/ratio`, `/compliance/minute-ratio`, `/compliance/rule-definitions`, `/resident-counts`, `/units`, `/staff` |
+| **Staff Portfolio** - directory + profile | 1 | `/staff`, `/staff/{id}` |
+| **Dashboard** - KPIs, incident mix, shift mix, alerts | 3 | `/dashboard/summary` |
+| **Approval Centre** - AL / duty / sick queues, approve & reject | 3 + 5 | `/leave-requests`, `/leave-requests/stats` |
+| **Alert Centre** - live alerts, cover flow, resolution | 3 | `/alerts`, `/sl-incidents`, `/replacement-candidates`, `/sl-incidents/{id}/resolve` |
+| **ROI** - A1 / A2 / agency, editable baseline | 3 | `/roi/summary`, `/roi/settings` |
+| **Reports** - generation, schedules, thresholds, regulatory sync | 3 | `/reports/*`, `/compliance/thresholds` |
+| **Staff App** - roster, tasks, clock in/out, profile | 3 | `/me/*` |
 | **Staff profile → AI Analysis** | 3 | `/staff/{id}/ai-analysis` |
 
 Phase 5 makes deterministic compliance the source of truth for validation and
 publishing. Natural-language explanations remain a later phase.
 
-## Phase 5 — deterministic compliance
+## Phase 5 - deterministic compliance
 
 - **SWD ratios (5.1):** effective-dated, facility-over-global rules support
   unit denominators, combined ranks, equivalent-head weights, duplicate-person
@@ -59,7 +59,7 @@ publishing. Natural-language explanations remain a later phase.
   rechecked at approval time. Duty requests remain positive work preferences;
   pending requests cannot make an unchanged roster unpublishable.
 
-## Phase 4 — task-based scheduling
+## Phase 4 - task-based scheduling
 
 - **Task codes and eligibility (4.1):** rank/shift/unit rules, qualifications,
   medication-audit restrictions, mentor/new-staff controls, and the A3/P3-only
@@ -77,7 +77,7 @@ publishing. Natural-language explanations remain a later phase.
 
 ### Built on the backend, no UI yet
 
-- **Pareto roster options** (spec 9.1) — `POST /optimize-pareto` works and is
+- **Pareto roster options** (spec 9.1) - `POST /optimize-pareto` works and is
   tested, but the Roster page's *AI Roster Suggest* button still calls
   `/optimize-roster` (the fixed A/B/C presets). Pointing it at the Pareto
   endpoint is a one-line change; the response contract is identical.
@@ -85,7 +85,7 @@ publishing. Natural-language explanations remain a later phase.
 ### Registries, not yet automation
 
 These tables and screens are real and read live, but nothing executes them on a
-schedule — they are the data model and the manual trigger, not the daemon:
+schedule - they are the data model and the manual trigger, not the daemon:
 
 - `report_schedules` carries `next_run_at`, but no cron fires it. **Generate Now**
   works today.
@@ -99,14 +99,14 @@ schedule — they are the data model and the manual trigger, not the daemon:
 - Reports render as JSON and CSV. PDF/Excel export and `file_url` object storage
   (spec 7.1) are not built.
 
-## Phase 3 — operations layer
+## Phase 3 - operations layer
 
 Phase 3 turns the console from a planning tool into an operational one. The
 additions worth knowing about:
 
 - **Emergency cover is compliance-checked before it is suggested** (spec 3.8).
   `/replacement-candidates` ranks every other active staff member and returns each
-  one either clean or with the explicit reasons it is blocked — rest gap, max
+  one either clean or with the explicit reasons it is blocked - rest gap, max
   hours, approved leave, rank eligibility, medication audit. Resolving an incident
   re-rosters the shift, records the TOIL owed in `future_debt_ledger`, and stamps
   the response time that feeds the A2 ROI figure.
@@ -126,7 +126,7 @@ additions worth knowing about:
   byte-for-byte. Every generator also streams as CSV.
 - **Pareto roster options** (spec 9.1). `/optimize-pareto` re-solves the same hard
   model across 15 weight vectors, discards dominated candidates and returns the
-  cost extreme, the staff-satisfaction extreme and the knee — with the frontier in
+  cost extreme, the staff-satisfaction extreme and the knee - with the frontier in
   `result_json.pareto`.
 - **The staff app is self-scoped.** Every `/me/*` route resolves the staff record
   from the caller's own profile, and RLS additionally restricts a `staff` login to
@@ -135,17 +135,17 @@ additions worth knowing about:
 
 ## Split shifts (A/N)
 
-The Code of Practice A/N shift is **two disjoint duty windows**, not one long one —
+The Code of Practice A/N shift is **two disjoint duty windows**, not one long one -
 per the scheduling spec, Home A works 07:00–13:30 *and* 21:30–07:00 the next day
 (6.5h + 9.5h = **16h paid**); Home B works 07:00–14:30 *and* 21:15–07:15
 (**17.5h**). The unpaid rest gap between them is real.
 
 Three consumers need three different answers, so all shift-time maths lives in one
-place — [`emma_core/shifttime.py`](emma-ai-app/emma_core/shifttime.py):
+place - [`emma_core/shifttime.py`](emma-ai-app/emma_core/shifttime.py):
 
 | Question | Function | A/N answer |
 |---|---|---|
-| How many hours is this worth? | `paid_minutes()` | 16h — the sum of the segments |
+| How many hours is this worth? | `paid_minutes()` | 16h - the sum of the segments |
 | When is this person unavailable? | `envelope()` | 07:00 → 07:00 next day (24h), for rest + overlap checks |
 | When are they on the floor? | `duty_spans()` | the two windows separately, so they are *not* counted present during the afternoon gap |
 
@@ -157,7 +157,7 @@ shift cannot silently revert to its elapsed span.
 
 ## Getting started
 
-### One command (Windows) — runs both apps
+### One command (Windows) - runs both apps
 
 ```bash
 dev.cmd
@@ -175,7 +175,7 @@ npm install
 npm run dev
 ```
 
-Backend — see [`emma-ai-app/RUNBOOK.md`](emma-ai-app/RUNBOOK.md) for the full setup:
+Backend - see [`emma-ai-app/RUNBOOK.md`](emma-ai-app/RUNBOOK.md) for the full setup:
 
 ```bash
 cd emma-ai-app
@@ -197,7 +197,7 @@ means signing out and back in as that home's user.
   [`src/components/layout/AuthContext.tsx`](src/components/layout/AuthContext.tsx).
 - **Dev convenience:** in local `next dev`, the login form is prefilled and shows
   one-click **demo accounts** (Home A super/admin, Home B super). These are compiled
-  **out of production builds** — see the dev-login gate below.
+  **out of production builds** - see the dev-login gate below.
 
 ## Configuration
 
@@ -210,7 +210,7 @@ Frontend env lives in `.env.local` (gitignored):
 | `NEXT_PUBLIC_ENABLE_DEV_LOGIN` | Optional. Set `true` to keep the dev prefill + demo buttons on a **non-prod deployed demo**. Off by default; the dev UI is auto-enabled under `next dev` and auto-stripped from production builds regardless of this flag being unset. |
 
 > **Production:** run a real `next build` (`NODE_ENV=production`) and leave
-> `NEXT_PUBLIC_ENABLE_DEV_LOGIN` unset — the form ships bare, with no seed
+> `NEXT_PUBLIC_ENABLE_DEV_LOGIN` unset - the form ships bare, with no seed
 > credentials in the bundle. For a stricter posture, move auth to a server-side BFF
 > with httpOnly cookies (the token currently lives in `localStorage`).
 
@@ -223,7 +223,7 @@ is fully backend-driven and RLS-scoped to the signed-in facility:
 
 - **Period + version** selectors (create a period, switch between the manual draft
   and solver-generated A/B/C options; option tabs show their constraint score).
-- **Live grid** — real staff × day cells from `/rosters/{period}`; click a cell on
+- **Live grid** - real staff × day cells from `/rosters/{period}`; click a cell on
   the manual draft to assign/edit/clear a shift (`POST`/`PATCH`/`DELETE /shifts`).
 - **AI Roster Suggest** runs the OR-Tools CP-SAT solver (`/optimize-roster`, polled
   via `/optimization-jobs/{id}`) and shows three scored options with KPIs and
@@ -236,11 +236,11 @@ is fully backend-driven and RLS-scoped to the signed-in facility:
 The **Compliance** page ([`src/app/compliance/page.tsx`](src/app/compliance/page.tsx))
 is backend-driven, with a period + date selector and three tabs:
 
-- **Staffing Ratio** — per-window SWD checks from `/compliance/ratio` (residents,
+- **Staffing Ratio** - per-window SWD checks from `/compliance/ratio` (residents,
   required vs. actual, pass/fail), scoped to the manual roster version.
-- **Residents** — daily per-unit counts from `/resident-counts`, editable
+- **Residents** - daily per-unit counts from `/resident-counts`, editable
   (`POST /resident-counts`); they are the denominator for the ratio checks.
-- **Certifications** — real `staff_certificates` with expiry, sorted by urgency
+- **Certifications** - real `staff_certificates` with expiry, sorted by urgency
   (days-left → expired / expiring / valid).
 
 ## Frontend layout
@@ -254,7 +254,7 @@ src/lib/         api.ts (typed client), apiTypes.ts, types.ts, utils.ts
 
 Every page reads through `src/lib/api.ts`; there are no Next.js route handlers and
 no local fixtures. The staff app at `/staff-app` needs an account whose
-`users_profile.staff_id` is set — `staff_a@emma.local` in the seed.
+`users_profile.staff_id` is set - `staff_a@emma.local` in the seed.
 
 ## Scripts
 
@@ -269,11 +269,11 @@ no local fixtures. The staff app at `/staff-app` needs an account whose
 
 Three pieces, deployed in this order:
 
-1. **Database** — Supabase Cloud → [`SETUP_SUPABASE_DB.md`](SETUP_SUPABASE_DB.md)
-2. **API** — AWS ECS Express Mode, containerized via [`Dockerfile`](Dockerfile),
+1. **Database** - Supabase Cloud → [`SETUP_SUPABASE_DB.md`](SETUP_SUPABASE_DB.md)
+2. **API** - AWS ECS Express Mode, containerized via [`Dockerfile`](Dockerfile),
    auto-deployed by [`.github/workflows/deploy-api.yml`](.github/workflows/deploy-api.yml)
    → [`SETUP_BACKEND_AWS.md`](SETUP_BACKEND_AWS.md)
-3. **UI** — AWS Amplify Hosting → [`SETUP_UI_AWS.md`](SETUP_UI_AWS.md)
+3. **UI** - AWS Amplify Hosting → [`SETUP_UI_AWS.md`](SETUP_UI_AWS.md)
 
 Push to `develop` redeploys the API; push to the Amplify-connected branch
 redeploys the UI.

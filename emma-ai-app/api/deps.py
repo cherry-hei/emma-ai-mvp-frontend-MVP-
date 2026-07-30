@@ -23,7 +23,7 @@ def api_error(status_code: int, code: str, message: str) -> HTTPException:
 
 
 def _jwt_sub(token: str) -> str | None:
-    # 'sub' = Supabase auth user id. No signature check — Supabase verifies on every query.
+    # 'sub' = Supabase auth user id. No signature check - Supabase verifies on every query.
     try:
         payload = token.split(".")[1]
         payload += "=" * (-len(payload) % 4)

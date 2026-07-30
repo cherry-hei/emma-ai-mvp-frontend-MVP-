@@ -17,7 +17,7 @@ const QUICK_LINKS = [
   { key: 'ql_staff',      icon: '👤', path: '/staff'      },
 ]
 
-// Presentation only — which colour/icon each incident type gets in the chart.
+// Presentation only - which colour/icon each incident type gets in the chart.
 const INCIDENT_STYLE: Record<string, { icon: string; color: string }> = {
   SL:     { icon: '😷', color: PINK      },
   DSL:    { icon: '🏥', color: '#f59e0b' },
@@ -258,7 +258,7 @@ export default function DashboardPage() {
 
       </div>
 
-      {/* Emma AI summary — derived from this facility's own numbers */}
+      {/* Emma AI summary - derived from this facility's own numbers */}
       <div className="rounded-2xl p-5 text-white" style={{ background: 'linear-gradient(135deg, #1a1a2e, #2d2d5e)' }}>
         <div className="flex items-center gap-2 mb-3">
           <span className="text-xl">🤖</span>

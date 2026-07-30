@@ -1,5 +1,5 @@
 -- ============================================================================
--- Emma AI · Phase 5 — deterministic compliance engine
+-- Emma AI · Phase 5 - deterministic compliance engine
 --
 -- 5.1 Versioned SWD staffing-ratio configuration
 -- 5.2 Reproducible roster-validation runs and violation evidence

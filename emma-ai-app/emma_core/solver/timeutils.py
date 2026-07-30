@@ -1,4 +1,4 @@
-"""Minute-based, cross-midnight-aware time helpers — no DB or ortools deps, so
+"""Minute-based, cross-midnight-aware time helpers - no DB or ortools deps, so
 the model builder and loading service share one definition of on-duty/conflict.
 """
 from __future__ import annotations
@@ -24,7 +24,7 @@ def absolute_interval(day_index: int, start_min: int, end_min: int,
 
 def intervals_conflict(a: tuple[int, int], b: tuple[int, int], min_rest_min: int) -> bool:
     """True if two absolute intervals overlap or their rest gap is under
-    ``min_rest_min`` — hard #1 (overlap) and #5 (rest) in one predicate."""
+    ``min_rest_min`` - hard #1 (overlap) and #5 (rest) in one predicate."""
     (a_start, a_end), (b_start, b_end) = a, b
     if a_start < b_end and b_start < a_end:      # overlap
         return True

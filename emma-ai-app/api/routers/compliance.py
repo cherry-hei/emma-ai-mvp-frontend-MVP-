@@ -1,4 +1,4 @@
-"""/compliance — staffing-ratio checks and the live threshold monitors.
+"""/compliance - staffing-ratio checks and the live threshold monitors.
 
 Scope ratio reads with roster_version_id, else co-existing A/B/C drafts
 double-count staff and a failing roster looks compliant.
@@ -41,7 +41,7 @@ def ratio(on_date: Date = Query(..., alias="date"),
 def minute_level_ratio(on_date: Date = Query(..., alias="date"),
                        roster_version_id: str | None = Query(default=None),
                        ctx: AuthCtx = Depends(get_ctx)):
-    """Minute-level overlap between actual shifts and each statutory window —
+    """Minute-level overlap between actual shifts and each statutory window -
     the audit-grade check (spec 3.6). Reports breach minutes per rule."""
     return minute_ratio(ctx.client, ctx.facility_id, on_date,
                         roster_version_id=roster_version_id)
@@ -58,7 +58,7 @@ def ratio_days(date_from: Date = Query(...), date_to: Date = Query(...),
 @router.get("/compliance/thresholds")
 def thresholds(ctx: AuthCtx = Depends(get_ctx)):
     """Live threshold monitors: certificate expiry, PT cap, AN limit, RN-absent
-    shifts, CL accrual and occupancy — measured, not configured."""
+    shifts, CL accrual and occupancy - measured, not configured."""
     return threshold_monitors(ctx.client, ctx.facility_id)
 
 

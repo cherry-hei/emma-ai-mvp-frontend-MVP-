@@ -59,7 +59,7 @@ def _to_option_score_out(row: dict, *, with_violations: bool = True) -> OptionSc
 # ── generate (async) + poll ──────────────────────────────────────────────────
 def _authorize_optimize(req: OptimizeRequest, ctx: AuthCtx) -> None:
     """Stamp the tenant from the token and authorize caller-supplied ids under RLS
-    before the service-role solver touches them — else a foreign source_version_id
+    before the service-role solver touches them - else a foreign source_version_id
     would leak another facility's roster."""
     if str(ctx.profile.role) not in OPTIMIZE_WRITE_ROLES:
         raise api_error(
@@ -71,7 +71,7 @@ def _authorize_optimize(req: OptimizeRequest, ctx: AuthCtx) -> None:
     # Identity is always server-derived. A client-supplied UUID must never be
     # trusted as the author of generated versions or audit rows.
     req.created_by = ctx.profile_id
-    # Both probes run on ctx.client (RLS), so a foreign id comes back as zero rows —
+    # Both probes run on ctx.client (RLS), so a foreign id comes back as zero rows -
     # that empty result IS the authorization check, not just a existence check.
     #
     # SQL: select id from roster_periods where id = :period_id
@@ -129,7 +129,7 @@ def optimization_job(job_id: str, ctx: AuthCtx = Depends(get_ctx)):
         uuid.UUID(job_id)
     except ValueError:
         raise api_error(404, "not_found", "optimization job not found")
-    row = opt.get_job(ctx.client, job_id)   # RLS-scoped — only own-facility jobs
+    row = opt.get_job(ctx.client, job_id)   # RLS-scoped - only own-facility jobs
     if not row:
         raise api_error(404, "not_found", "optimization job not found")
     return JobView.model_validate(row)

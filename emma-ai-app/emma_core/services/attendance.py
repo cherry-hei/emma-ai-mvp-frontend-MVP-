@@ -2,7 +2,7 @@
 
 Worked time is derived by pairing each clock_in with the next clock_out, so an
 unpaired clock_in (still on shift) contributes nothing until the staff member
-clocks out — the month total never over-reports.
+clocks out - the month total never over-reports.
 """
 from __future__ import annotations
 

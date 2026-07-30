@@ -80,7 +80,7 @@ function ScaleCalculator({ data, isZH }: { data: RoiSummary; isZH: boolean }) {
   const annualSavings = monthlyTotal * 12
   const annualFee = staffCount * rate * 12
   const netAnnual = annualSavings - annualFee
-  const roiMultiple = annualFee > 0 ? (annualSavings / annualFee).toFixed(1) : '—'
+  const roiMultiple = annualFee > 0 ? (annualSavings / annualFee).toFixed(1) : '-'
   const paybackDays = annualSavings > 0 ? Math.round((annualFee / annualSavings) * 365) : 0
 
   return (
@@ -203,8 +203,8 @@ function ScaleCalculator({ data, isZH }: { data: RoiSummary; isZH: boolean }) {
                           <td className="px-2 py-2 text-slate-500 tabular-nums">{fmt(fee)}</td>
                           <td className="px-2 py-2 text-slate-400 tabular-nums">{fmt(Math.round(fee * 0.85))}</td>
                           <td className={`px-2 py-2 font-bold tabular-nums ${isChosen ? 'text-emerald-700' : 'text-pink-600'}`}>{fmt(net)}</td>
-                          <td className="px-2 py-2 font-bold text-blue-600">{fee ? (basisAnn / fee).toFixed(1) : '—'}x</td>
-                          <td className="px-2 py-2 text-slate-500">{basisAnn ? (fee / (basisAnn / 12)).toFixed(1) : '—'}mo</td>
+                          <td className="px-2 py-2 font-bold text-blue-600">{fee ? (basisAnn / fee).toFixed(1) : '-'}x</td>
+                          <td className="px-2 py-2 text-slate-500">{basisAnn ? (fee / (basisAnn / 12)).toFixed(1) : '-'}mo</td>
                         </tr>
                       )
                     })}
@@ -301,8 +301,8 @@ export default function ROIPage() {
     vacancies:  isZH ? '空缺' : 'Vacancies',
     totalStaff: isZH ? '總員工人數' : 'Total staff',
     ftpt:       isZH ? '全職 / 兼職' : 'Full-time / Part-time',
-    partA:      isZH ? 'Part A — 管理時間節省' : 'Part A — Admin Time Saving',
-    partB:      isZH ? 'Part B — 外購費用節省' : 'Part B — Agency Cost Saving',
+    partA:      isZH ? 'Part A - 管理時間節省' : 'Part A - Admin Time Saving',
+    partB:      isZH ? 'Part B - 外購費用節省' : 'Part B - Agency Cost Saving',
     a1:         isZH ? 'A1 · 排班時間節省' : 'A1 · Roster Scheduling Time Saving',
     a2:         isZH ? 'A2 · 緊急補更節省' : 'A2 · Emergency Cover Saving',
     incidents:  isZH ? '本月實際事件' : 'Incidents this month (actual)',
@@ -337,10 +337,10 @@ export default function ROIPage() {
         <div className="flex items-center gap-3">
           <div className="text-right">
             <div className="text-[10px] text-gray-400">{T.roiMult}</div>
-            <div className="text-2xl font-bold text-pink-500">{data.emma.roi_multiple ?? '—'}x</div>
+            <div className="text-2xl font-bold text-pink-500">{data.emma.roi_multiple ?? '-'}x</div>
           </div>
           <div className="w-12 h-12 rounded-full border-4 border-pink-400 flex items-center justify-center text-[10px] font-bold text-pink-500 text-center leading-tight px-1">
-            {data.emma.payback_months ?? '—'}{isZH ? '月' : 'mo'}
+            {data.emma.payback_months ?? '-'}{isZH ? '月' : 'mo'}
           </div>
         </div>
       </div>
@@ -408,7 +408,7 @@ export default function ROIPage() {
         </div>
       </div>
 
-      {/* Staff baseline — measured */}
+      {/* Staff baseline - measured */}
       <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
         <div className="mb-4 flex items-center gap-2">
           <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-pink-50 text-pink-500 text-sm">👥</div>
@@ -554,7 +554,7 @@ export default function ROIPage() {
               {data.agency.scenarios.map((s) => (
                 <tr key={s.pct} className={`border-b border-slate-100 ${s.adopted ? 'bg-pink-50' : ''}`}>
                   <td className={`px-3 py-2.5 font-semibold ${s.adopted ? 'text-pink-600' : 'text-slate-500'}`}>
-                    {s.key}{s.adopted ? ` — ${T.adopted}` : ''}
+                    {s.key}{s.adopted ? ` - ${T.adopted}` : ''}
                   </td>
                   <td className={`px-3 py-2.5 font-bold tabular-nums ${s.adopted ? 'text-pink-600' : 'text-slate-400'}`}>{s.pct}%</td>
                   <td className={`px-3 py-2.5 font-bold tabular-nums ${s.adopted ? 'text-pink-600' : 'text-slate-400'}`}>{fmt(s.saving)}</td>
@@ -627,12 +627,12 @@ export default function ROIPage() {
           </p>
           <div className="flex items-center justify-center gap-8">
             <div>
-              <p className="text-4xl font-bold text-pink-400 tabular-nums">{data.emma.roi_multiple ?? '—'}x</p>
+              <p className="text-4xl font-bold text-pink-400 tabular-nums">{data.emma.roi_multiple ?? '-'}x</p>
               <p className="text-[10px] text-white/50 mt-1">{T.roiMult}</p>
             </div>
             <div className="w-px h-12 bg-white/10" />
             <div>
-              <p className="text-4xl font-bold text-emerald-400 tabular-nums">{data.emma.payback_months ?? '—'}</p>
+              <p className="text-4xl font-bold text-emerald-400 tabular-nums">{data.emma.payback_months ?? '-'}</p>
               <p className="text-[10px] text-white/50 mt-1">{T.payback}</p>
             </div>
             <div className="w-px h-12 bg-white/10" />

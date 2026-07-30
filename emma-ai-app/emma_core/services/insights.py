@@ -32,7 +32,7 @@ def _cert_status(expiry: str | None, today: Date) -> tuple[str, int | None]:
 
 
 def _shift_history(client, facility_id: str, staff_id: str) -> list[dict]:
-    """Working cells from the manual/published rosters only — never A/B/C proposals."""
+    """Working cells from the manual/published rosters only - never A/B/C proposals."""
     # SQL: select a.id, a.tasks, a.status,
     #             jsonb_build_object(
     #               'date', sh.date, 'shift_type', sh.shift_type,
@@ -178,7 +178,7 @@ def staff_analysis(client, facility_id: str, staff_id: str) -> dict:
               .order("resolved_at", desc=True).limit(5).execute().data)
     events = [{
         "date": iso((c.get("shift") or {}).get("date") or c.get("resolved_at")),
-        "title": f'Emergency cover — {(c.get("shift") or {}).get("shift_type") or "shift"}',
+        "title": f'Emergency cover - {(c.get("shift") or {}).get("shift_type") or "shift"}',
         "detail": f'{c["incident_type"]} resolved in {c.get("resolution_minutes") or "?"} min',
         "skill": "Crisis response",
     } for c in covers]
@@ -250,7 +250,7 @@ def facility_highlights(client, facility_id: str) -> list[dict]:
             "key": "cover",
             "value": stats["resolved"],
             "text_en": (f'{stats["resolved"]} of {stats["total"]} cover cases closed this '
-                        f'month — about {hours_saved}h of manual coordination avoided'),
+                        f'month - about {hours_saved}h of manual coordination avoided'),
             "text_zh": (f'本月處理 {stats["resolved"]}/{stats["total"]} 宗補更，'
                         f'節省約 {hours_saved} 小時人手協調時間'),
         },

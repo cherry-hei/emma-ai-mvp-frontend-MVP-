@@ -6,7 +6,7 @@ Three request categories map to the Approval page's sub-tabs:
     sick  sick, urgent, lateness       (SL, DSL, urgent, late)
 
 A `sick` request for an imminent shift is also an operational emergency, so
-creating one opens an sl_incident (spec 4.3) — that is what puts the case on the
+creating one opens an sl_incident (spec 4.3) - that is what puts the case on the
 Alert centre and into the A2 ROI count.
 """
 from __future__ import annotations
@@ -125,7 +125,7 @@ def _policy_context(
         .eq("facility_id", facility_id).eq("staff_id", staff_id)
         .execute().data
     )
-    assigned_night_dates = []
+    assigned_night_shifts: dict[Date, str] = {}
     for assignment in assignment_rows:
         shift = assignment.get("shift") or {}
         version = shift.get("version") or {}
@@ -147,7 +147,8 @@ def _policy_context(
             continue
         shift_date = Date.fromisoformat(iso(shift.get("date")))
         if date_start <= shift_date <= date_end:
-            assigned_night_dates.append(shift_date)
+            assigned_night_shifts[shift_date] = str(
+                shift.get("shift_type") or "").upper()
 
     periods = (
         client.table("roster_periods").select("id,period_start,period_end")
@@ -190,7 +191,7 @@ def _policy_context(
         "active_staff": active_staff,
         "existing_requests": existing_requests,
         "calendar_days": calendar_days,
-        "assigned_night_dates": assigned_night_dates,
+        "assigned_night_shifts": assigned_night_shifts,
         "balances": balances,
         "balance_periods": periods,
         "leave_policy": leave_policy,
@@ -223,7 +224,7 @@ def _evaluate_request_policy(
         existing_requests=context["existing_requests"],
         active_staff=context["active_staff"],
         calendar_days=context["calendar_days"],
-        assigned_night_dates=context["assigned_night_dates"],
+        assigned_night_shifts=context["assigned_night_shifts"],
         submitted_on=submitted_on,
         policy=context["leave_policy"],
         policy_severity=context["leave_policy_severity"],
@@ -300,7 +301,7 @@ def list_requests(client, facility_id: str, *, group: str | None = None,
     #        [and date_end   >= :date_from]              -- overlap, not containment
     #        [and date_start <= :date_to]
     #      order by created_at desc
-    # `search` and `unit_id` are NOT pushed down — both need the staff row, so they
+    # `search` and `unit_id` are NOT pushed down - both need the staff row, so they
     # are applied in the Python loop below against staff_by_id().
     q = client.table("leave_requests").select("*").eq("facility_id", facility_id)
     if group == "pending":
@@ -498,7 +499,7 @@ def stats(client, facility_id: str, on: Date | None = None) -> dict:
 
 
 def approved_leave_dates(client, facility_id: str, start: Date, end: Date) -> set[tuple[str, str]]:
-    """{(staff_id, 'YYYY-MM-DD')} for approved leave overlapping [start, end] — the
+    """{(staff_id, 'YYYY-MM-DD')} for approved leave overlapping [start, end] - the
     availability filter used by roster edits and replacement suggestions."""
     # SQL: select staff_id, date_start, date_end from leave_requests
     #      where facility_id = :facility_id

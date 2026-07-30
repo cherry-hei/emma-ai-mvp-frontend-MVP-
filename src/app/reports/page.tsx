@@ -140,7 +140,7 @@ export default function ReportsPage() {
       : 'These actions fire when the matching event occurs. This month\'s counts come from the facility\'s own event log.',
     thresholdDesc: isZH
       ? '系統持續監控以下指標，所有數字均由現行更表、證書及負債帳實時計算。'
-      : 'Continuously monitored indicators — every number is computed live from the current roster, certificates and debt ledger.',
+      : 'Continuously monitored indicators - every number is computed live from the current roster, certificates and debt ledger.',
     lawsDesc: isZH
       ? 'Emma AI 追蹤以下法規文件版本，有變更時通知院長並更新合規引擎。'
       : 'Emma AI tracks the version of each regulatory document and notifies the Home Manager when one changes.',
@@ -298,8 +298,8 @@ export default function ReportsPage() {
                 </div>
               </div>
               <div className="flex gap-4 mt-3">
-                <div className="text-[10px] text-slate-400">{T.lastRun}<span className="font-semibold text-slate-600">{s.last_run_at ?? '—'}</span></div>
-                <div className="text-[10px] text-slate-400">{T.nextRun}<span className="font-semibold text-slate-600">{s.next_run_at ?? '—'}</span></div>
+                <div className="text-[10px] text-slate-400">{T.lastRun}<span className="font-semibold text-slate-600">{s.last_run_at ?? '-'}</span></div>
+                <div className="text-[10px] text-slate-400">{T.nextRun}<span className="font-semibold text-slate-600">{s.next_run_at ?? '-'}</span></div>
               </div>
             </div>
           ))}
@@ -423,7 +423,7 @@ export default function ReportsPage() {
                         {d.sync_status === 'synced' ? T.synced : d.sync_status}
                       </span>
                     </div>
-                    <p className="text-[9px] text-slate-400 mt-0.5">{T.lastUpdated}{d.last_synced_at ?? '—'}</p>
+                    <p className="text-[9px] text-slate-400 mt-0.5">{T.lastUpdated}{d.last_synced_at ?? '-'}</p>
                   </div>
                 </div>
               </div>

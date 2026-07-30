@@ -1,18 +1,18 @@
-# Setup 1 — Supabase database (on Supabase Cloud)
+# Setup 1 - Supabase database (on Supabase Cloud)
 
 How to stand up the Emma AI database on **Supabase Cloud** for the `test` and
 `production` environments: create the projects, apply the schema + RLS, seed demo
 data (test only), and verify the multi-tenancy boundary.
 
-> **Why Supabase (not raw RDS)?** The app is built on Supabase's managed layer —
+> **Why Supabase (not raw RDS)?** The app is built on Supabase's managed layer -
 > PostgREST (`client.table(...)`), GoTrue auth (`sign_in_with_password`), and
 > JWT-driven **RLS multi-tenancy** (Home A vs Home B isolation). Plain RDS gives
 > none of those, so it would mean rewriting the data layer, auth, and RLS.
-> Supabase Cloud keeps 100% of the code — switching environments is config only.
+> Supabase Cloud keeps 100% of the code - switching environments is config only.
 
 This is the database half of the deployment. It pairs with:
-- [`SETUP_BACKEND_AWS.md`](SETUP_BACKEND_AWS.md) — the API that talks to this DB.
-- [`SETUP_UI_AWS.md`](SETUP_UI_AWS.md) — the UI that talks to the API.
+- [`SETUP_BACKEND_AWS.md`](SETUP_BACKEND_AWS.md) - the API that talks to this DB.
+- [`SETUP_UI_AWS.md`](SETUP_UI_AWS.md) - the UI that talks to the API.
 
 ---
 
@@ -27,7 +27,7 @@ Two **isolated** cloud projects, one per environment (plus your local dev DB):
 | Production  | `production` | `.env.production` | `emma-prod`      |
 
 `emma_core/config.py` picks the env file from `APP_ENV` (falls back to `.env`).
-`.gitignore` blocks `.env` / `.env.*` — only `.env.example` is tracked.
+`.gitignore` blocks `.env` / `.env.*` - only `.env.example` is tracked.
 
 ---
 
@@ -46,10 +46,10 @@ cd E:\kuro\test\emma-ai\emma-ai-app
 
 ---
 
-## Step 1 — Create the two projects
+## Step 1 - Create the two projects
 
 In the Supabase dashboard, create **`emma-test`** and **`emma-prod`**, both in the
-**Singapore (`ap-southeast-1`)** region — closest to Hong Kong (Supabase has no HK
+**Singapore (`ap-southeast-1`)** region - closest to Hong Kong (Supabase has no HK
 region). Use the **same region for the API** so the API↔DB hop stays in-region.
 
 For each project, **save the database password** in a secrets manager (never in
@@ -68,7 +68,7 @@ this repo). You will also need, from each project's dashboard:
 
 ---
 
-## Step 2 — Fill the env files
+## Step 2 - Fill the env files
 
 Copy the template once per cloud environment and paste the four values above:
 
@@ -82,11 +82,11 @@ Each file needs: `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY
 
 ---
 
-## Step 3 — Push the schema + RLS to each project
+## Step 3 - Push the schema + RLS to each project
 
 This applies everything in `supabase/migrations/` (schema, RLS tenancy, grants,
 Phase 2 solver tables, staff certificates) to the remote. Do it **once per
-project** — link, push, repeat:
+project** - link, push, repeat:
 
 ```bash
 supabase login
@@ -111,15 +111,15 @@ Migrations applied (in order):
 | `20260726000006_staff_certificates.sql` | Staff certificates |
 
 > **Alternative (no CLI link):** paste each migration file, **in order**, into the
-> project's SQL Editor and run it. `supabase db push` is preferred — it tracks
+> project's SQL Editor and run it. `supabase db push` is preferred - it tracks
 > which migrations have already been applied.
 
 ---
 
-## Step 4 — Seed demo data (⚠ TEST ONLY)
+## Step 4 - Seed demo data (⚠ TEST ONLY)
 
 The seed creates the Home A / Home B demo facilities, staff, demo roster, ratio
-rules, and dev auth users. Run it against **test only** — never production.
+rules, and dev auth users. Run it against **test only** - never production.
 Production starts empty and gets real data through the app.
 
 ```powershell
@@ -139,9 +139,9 @@ Seeded dev logins (password `EmmaDev123!`):
 
 ---
 
-## Step 5 — Verify RLS isolation (against test)
+## Step 5 - Verify RLS isolation (against test)
 
-Prove the multi-tenancy boundary holds on the cloud project — a Home A token must
+Prove the multi-tenancy boundary holds on the cloud project - a Home A token must
 never see Home B data:
 
 ```powershell
@@ -153,7 +153,7 @@ app.
 
 ---
 
-## Step 6 — Sanity-check production is empty but healthy
+## Step 6 - Sanity-check production is empty but healthy
 
 ```powershell
 $env:APP_ENV = "production"; python -c "from emma_core.config import get_settings; print(get_settings().supabase_url)"
@@ -176,9 +176,9 @@ export APP_ENV=test          # or "production"; unset for local dev
 
 ## Security notes
 
-- **`SUPABASE_SERVICE_ROLE_KEY` bypasses RLS entirely** — it is effectively a root
+- **`SUPABASE_SERVICE_ROLE_KEY` bypasses RLS entirely** - it is effectively a root
   key over all tenants. Keep it only in the local (gitignored) env file and in
-  your deploy platform's secret store (AWS Secrets Manager — see
+  your deploy platform's secret store (AWS Secrets Manager - see
   [`SETUP_BACKEND_AWS.md`](SETUP_BACKEND_AWS.md)). Never commit it, never ship it to
   the browser/frontend.
 - Use **separate** service-role keys for test and prod (each project has its own).

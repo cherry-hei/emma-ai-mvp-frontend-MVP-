@@ -38,7 +38,7 @@ function ResolutionModal({ incidentId, onClose, onResolved, isZH }: {
     let cancelled = false
     Promise.all([
       api.incidents({ limit: 200 }).then((rows) => rows.find((r) => r.id === incidentId) ?? null),
-      // compliance_checked=false so blocked candidates come back with their reasons —
+      // compliance_checked=false so blocked candidates come back with their reasons -
       // hiding them would make the check invisible instead of auditable.
       api.replacementCandidates(incidentId, { complianceChecked: false, refresh: true }),
     ])
@@ -70,7 +70,7 @@ function ResolutionModal({ incidentId, onClose, onResolved, isZH }: {
     eligible: isZH ? '合規候選' : 'Compliance-clean candidates',
     blockedT: isZH ? '被規則排除' : 'Excluded by a rule',
     assign:   isZH ? '✓ 指派' : '✓ Assign',
-    noCands:  isZH ? '沒有合規候選 — 需外購人手' : 'No compliant internal candidate — agency cover required',
+    noCands:  isZH ? '沒有合規候選 - 需外購人手' : 'No compliant internal candidate - agency cover required',
     complianceOk: isZH ? '所有候選已通過休息時間、工時上限、假期及職級資格檢查'
                        : 'Every listed candidate passes rest-gap, max-hours, leave and rank-eligibility checks',
     resolvedT: isZH ? '✅ 已完成補更' : '✅ Cover assigned',
@@ -158,7 +158,7 @@ function ResolutionModal({ incidentId, onClose, onResolved, isZH }: {
                 <div className="bg-red-50 border border-red-100 rounded-xl p-4 space-y-1.5 text-[11px] text-gray-700">
                   <div><span className="text-gray-400">{L.staff}</span>{incident.name_en || incident.name} ({incident.rank})</div>
                   <div><span className="text-gray-400">{L.date}</span>{incident.date}</div>
-                  <div><span className="text-gray-400">{L.shift}</span>{incident.shift_type ?? '—'} {incident.shift_window ?? ''}</div>
+                  <div><span className="text-gray-400">{L.shift}</span>{incident.shift_type ?? '-'} {incident.shift_window ?? ''}</div>
                   <div><span className="text-gray-400">{L.reason}</span>{incident.reason ?? incident.incident_type}</div>
                   <div><span className="text-gray-400">{L.reported}</span>{new Date(incident.reported_at).toLocaleString()}</div>
                 </div>
@@ -186,7 +186,7 @@ function ResolutionModal({ incidentId, onClose, onResolved, isZH }: {
                     {blocked.slice(0, 5).map((c) => (
                       <div key={c.candidate_staff_id} className="text-[10px] text-gray-600">
                         <span className="font-semibold text-gray-800">{c.name_en || c.name}</span>
-                        {' — '}{c.blocked_reasons.join('; ')}
+                        {' - '}{c.blocked_reasons.join('; ')}
                       </div>
                     ))}
                   </div>
@@ -546,7 +546,7 @@ export default function AlertPage() {
                 {[a.unit_name, a.shift_type, a.shift_window].filter(Boolean).join(' · ')}
               </div>
               <div className="text-[10px] text-emerald-600 font-medium mt-0.5">
-                ✅ {L.resolvedBy} {a.replacement_name ?? '—'} · {a.resolution_minutes ?? '?'} {L.resolvedMin}
+                ✅ {L.resolvedBy} {a.replacement_name ?? '-'} · {a.resolution_minutes ?? '?'} {L.resolvedMin}
                 {a.auto_resolved && ' · Emma AI'}
               </div>
             </div>
