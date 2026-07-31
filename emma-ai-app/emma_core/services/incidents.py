@@ -16,6 +16,7 @@ from ..constants import can_cover_rank
 from . import notifications as notify, validation
 from ._common import (
     LEAVE_CODES, as_date, iso, month_bounds, now_iso, operative_version,
+    assignments_for_shifts,
     resolve_period, shift_minutes, staff_brief, staff_by_id, to_min,
 )
 from .compliance import compute_ratios
@@ -271,14 +272,8 @@ def _target_assignments(
     if not shifts:
         return {}
     by_id = {row["id"]: row for row in shifts}
-    assignments = (
-        client.table("shift_assignments")
-        .select("shift_id,staff_id,status")
-        .eq("facility_id", facility_id)
-        .in_("shift_id", list(by_id))
-        .execute()
-        .data
-    )
+    assignments = assignments_for_shifts(
+        client, by_id, select="shift_id,staff_id,status", facility_id=facility_id)
     out: dict[tuple[str, Date], list[dict]] = {}
     for assignment in assignments:
         if assignment.get("status") == "cancelled":
@@ -453,9 +448,8 @@ def _find_shift_for(client, facility_id: str, staff_id: str, on_date: Date) -> d
     by_id = {s["id"]: s for s in shifts}
     # SQL: select * from shift_assignments
     #      where shift_id = any(:shift_ids) and staff_id = :staff_id
-    assigns = (client.table("shift_assignments").select("*")
-               .eq("facility_id", facility_id)
-               .in_("shift_id", list(by_id)).eq("staff_id", staff_id).execute().data)
+    assigns = assignments_for_shifts(client, by_id, facility_id=facility_id,
+                                     staff_id=staff_id)
     for a in assigns:
         if a.get("status") != "cancelled":
             return by_id.get(a["shift_id"])
@@ -625,9 +619,9 @@ def build_candidates(client, facility_id: str, incident: dict) -> list[dict]:
         if by_id:
             # SQL: select shift_id, staff_id, status from shift_assignments
             #      where shift_id = any(:shift_ids)
-            assigns = (client.table("shift_assignments").select("shift_id,staff_id,status")
-                       .eq("facility_id", facility_id)
-                       .in_("shift_id", list(by_id)).execute().data)
+            assigns = assignments_for_shifts(
+                client, by_id, select="shift_id,staff_id,status",
+                facility_id=facility_id)
         for a in assigns:
             sid, sh = a.get("staff_id"), by_id.get(a["shift_id"])
             if not sid or not sh or a.get("status") == "cancelled":
@@ -1108,97 +1102,6 @@ def _record_cover_debts(
     return debts
 
 
-def _stored_resolution(
-    client,
-    facility_id: str,
-    incident: dict,
-) -> dict:
-    """Reconstruct a committed result for an idempotent offline-adapter retry."""
-    debts = (
-        client.table("future_debt_ledger")
-        .select("*")
-        .eq("facility_id", facility_id)
-        .eq("source_incident_id", incident["id"])
-        .order("created_at")
-        .execute()
-        .data
-    )
-    recovery_assignments = (
-        client.table("shift_assignments")
-        .select("*")
-        .eq("facility_id", facility_id)
-        .eq("source_incident_id", incident["id"])
-        .eq("incident_assignment_kind", "recovery")
-        .execute()
-        .data
-    )
-    shift_ids = [
-        row["shift_id"] for row in recovery_assignments if row.get("shift_id")
-    ]
-    shifts = []
-    if shift_ids:
-        shifts = (
-            client.table("shifts")
-            .select("*")
-            .eq("facility_id", facility_id)
-            .in_("id", shift_ids)
-            .execute()
-            .data
-        )
-    shifts_by_id = {row["id"]: row for row in shifts}
-    recovery = [{
-        "date": iso(shifts_by_id[row["shift_id"]]["date"]),
-        "shift_type": shifts_by_id[row["shift_id"]]["shift_type"],
-        "shift_id": row["shift_id"],
-        "shift_assignment_id": row["id"],
-    } for row in recovery_assignments if row.get("shift_id") in shifts_by_id]
-    recovery.sort(key=lambda row: (row["date"], row["shift_assignment_id"]))
-    return {
-        "incident": incident,
-        "future_debt": debts[0] if debts else None,
-        "future_debts": debts,
-        "night_recovery": recovery,
-        "resolution_minutes": incident.get("resolution_minutes"),
-        "idempotent_replay": True,
-    }
-
-
-def _atomic_resolution(
-    mutation_client,
-    *,
-    facility_id: str,
-    incident_id: str,
-    replacement_staff_id: str,
-    profile_id: str | None,
-    recovery_targets: list[_RecoveryTarget],
-    auto: bool,
-    note: str | None,
-) -> dict:
-    """Execute the production-only, transactional operative-roster amendment."""
-    response = mutation_client.rpc(
-        "resolve_roster_incident",
-        {
-            "p_facility_id": facility_id,
-            "p_incident_id": incident_id,
-            "p_replacement_staff_id": replacement_staff_id,
-            "p_actor_profile_id": profile_id,
-            "p_recovery_targets": [{
-                "date": target.day.isoformat(),
-                "shift_type": target.code,
-                "roster_version_id": target.version_id,
-            } for target in recovery_targets],
-            "p_auto": auto,
-            "p_note": note,
-        },
-    ).execute()
-    result = response.data
-    if isinstance(result, list):
-        result = result[0] if result else None
-    if not isinstance(result, dict):
-        raise RuntimeError("incident resolution returned no transaction result")
-    return result
-
-
 def resolve_incident(client, facility_id: str, incident_id: str, *,
                      replacement_staff_id: str, profile_id: str | None = None,
                      auto: bool = True, note: str | None = None) -> dict:
@@ -1464,8 +1367,8 @@ def _hour_overruns(client, facility_id: str, period: dict | None) -> list[dict]:
     by_id = {s["id"]: s for s in shifts}
     # SQL: select shift_id, staff_id, status from shift_assignments
     #      where shift_id = any(:shift_ids)
-    assigns = (client.table("shift_assignments").select("shift_id,staff_id,status")
-               .in_("shift_id", list(by_id)).execute().data)
+    assigns = assignments_for_shifts(client, by_id,
+                                     select="shift_id,staff_id,status")
     booked: dict[str, int] = {}
     for a in assigns:
         if not a.get("staff_id") or a.get("status") == "cancelled":

@@ -1,6 +1,8 @@
 """Multi-tenancy proof: a Home A user must never see Home B data (and vice versa).
 
-Requires local Supabase running and `scripts/seed.py` already run.
+Requires a reachable Supabase carrying either fixture - `scripts/seed.py` or
+`scripts/import_real_rosters.py`. The assertions are about scoping and
+disjointness, so they hold for any data volume.
 """
 import pytest
 from supabase import create_client
@@ -27,6 +29,20 @@ def home_b():
     return client_for("super_b@emma.local")
 
 
+def _own_facility(client) -> str:
+    """The facility id a signed-in client resolves to, read through RLS.
+
+    Taken from `facilities` rather than from a staff row: a home may hold no staff
+    yet, and the isolation being proved is about the facility boundary itself.
+
+    # SQL: select id from facilities limit 1
+    #      -- + RLS: and id = public.current_facility_id()
+    """
+    rows = client.table("facilities").select("id").limit(1).execute().data
+    assert rows, "a signed-in client must resolve to its own facility"
+    return rows[0]["id"]
+
+
 def test_each_home_sees_only_its_own_staff(home_a, home_b):
     # Both calls issue the SAME statement; only the JWT differs. What makes the
     # results disjoint is the RLS predicate Postgres ANDs on:
@@ -36,8 +52,9 @@ def test_each_home_sees_only_its_own_staff(home_a, home_b):
     a_staff = home_a.table("staff").select("id,facility_id").execute().data
     b_staff = home_b.table("staff").select("id,facility_id").execute().data
 
-    assert len(a_staff) == 7, "Home A should see its 7 seeded staff"
-    assert len(b_staff) == 3, "Home B should see its 3 seeded staff"
+    # Counts belong to whichever fixture is loaded; what isolation guarantees is
+    # that each home sees a non-empty set scoped to exactly its own facility.
+    assert a_staff and b_staff, "each home should see its own staff"
 
     a_facs = {s["facility_id"] for s in a_staff}
     b_facs = {s["facility_id"] for s in b_staff}
@@ -56,7 +73,7 @@ def test_facilities_scoped_to_own(home_a, home_b):
 
 def test_cross_facility_read_is_blocked(home_a, home_b):
     # SQL: select facility_id from staff limit 1
-    b_fac_id = home_b.table("staff").select("facility_id").limit(1).execute().data[0]["facility_id"]
+    b_fac_id = _own_facility(home_b)
     # Home A explicitly querying Home B's facility_id must get nothing.
     #
     # SQL: select id from staff where facility_id = :b_fac_id
@@ -67,8 +84,7 @@ def test_cross_facility_read_is_blocked(home_a, home_b):
 
 
 def test_cross_facility_write_is_blocked(home_a, home_b):
-    # SQL: select facility_id from staff limit 1
-    b_fac_id = home_b.table("staff").select("facility_id").limit(1).execute().data[0]["facility_id"]
+    b_fac_id = _own_facility(home_b)
     # Inserting a row tagged with Home B's facility_id must fail the WITH CHECK policy.
     #
     # SQL: insert into staff (facility_id, name, rank, employment_type)

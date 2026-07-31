@@ -4,6 +4,7 @@ from __future__ import annotations
 from datetime import date as Date
 
 from ..shifttime import paid_minutes
+from ._common import assignments_for_shifts
 
 LEAVE_CODES = {"AL", "SL", "DSL"}   # non-working leave shift codes
 
@@ -62,8 +63,8 @@ def _roster_stats(client, facility_id: str) -> dict:
     if shift_by:
         # SQL: select shift_id, staff_id from shift_assignments
         #      where shift_id = any(:shift_ids)
-        assigns = (client.table("shift_assignments").select("shift_id,staff_id")
-                   .in_("shift_id", list(shift_by)).execute().data)
+        assigns = assignments_for_shifts(client, shift_by,
+                                         select="shift_id,staff_id")
     for a in assigns:
         sh, sid = shift_by.get(a["shift_id"]), a.get("staff_id")
         if not sh or not sid:

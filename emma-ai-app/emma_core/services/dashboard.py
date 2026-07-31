@@ -9,7 +9,7 @@ from __future__ import annotations
 from datetime import date as Date
 
 from . import incidents as incident_svc
-from ._common import as_date, iso, operative_version, resolve_period
+from ._common import as_date, assignments_for_shifts, iso, operative_version, resolve_period
 from .compliance import ratio_series
 
 
@@ -92,8 +92,8 @@ def _today_shift_mix(client, version: dict | None, today: Date) -> list[dict]:
     # SQL: select shift_id, staff_id, status from shift_assignments
     #      where shift_id = any(:shift_ids)
     # (in SQL the tally below would be `group by shift_type` with `count(*)`)
-    assigns = (client.table("shift_assignments").select("shift_id,staff_id,status")
-               .in_("shift_id", list(by_id)).execute().data)
+    assigns = assignments_for_shifts(client, by_id,
+                                     select="shift_id,staff_id,status")
 
     counts: dict[str, int] = {}
     for a in assigns:

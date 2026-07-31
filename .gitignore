@@ -49,6 +49,9 @@ next-env.d.ts
 .idea/
 .vscode/
 
+# scratch dirs written by local tooling (a Postgres datadir once landed here)
+.codex-temp/
+
 # Python (backend has its own emma-ai-app/.gitignore too)
 __pycache__/
 *.pyc

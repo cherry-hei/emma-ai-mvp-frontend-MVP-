@@ -18,15 +18,24 @@ def _facility(code: str) -> str:
 
 
 def test_roster_grid_shape():
+    """The grid is a rectangle of staff x the period's days, with real cells in it.
+
+    Asserted as invariants rather than fixture counts: Home A's cycle is 28 days
+    under either fixture, but the number of staff and who works day 0 belong to
+    the data, not to the contract.
+    """
     grid = get_roster_grid(sb, _facility("A"))
     assert grid.version_id and grid.status == "draft"
-    assert len(grid.rows) == 7
-    assert len(grid.dates) == 28       # the 7-day pattern repeats across the period
-    rn = next(r for r in grid.rows if r.staff.rank == "RN")
-    en = next(r for r in grid.rows if r.staff.rank == "EN")
-    assert rn.cells[0].shift_type == "P" and rn.cells[0].is_working
-    assert en.cells[0].shift_type == "OFF" and not en.cells[0].is_working
-    assert rn.cells[0].tasks  # day-0 task labels present
+    assert grid.rows, "the grid should carry the facility's staff"
+    assert len(grid.dates) == 28                  # Home A rosters a 28-day cycle
+    # Every row is aligned to the same date axis - the UI indexes cells by column.
+    for row in grid.rows:
+        assert [c.date for c in row.cells] == grid.dates
+    working = [c for row in grid.rows for c in row.cells if c.is_working]
+    assert working, "a rostered period should contain working cells"
+    assert all(c.shift_type and c.assignment_id for c in working)
+    assert any(c.tasks for row in grid.rows for c in row.cells), (
+        "the roster should carry task labels on at least one cell")
 
 
 def test_shift_defs_present():

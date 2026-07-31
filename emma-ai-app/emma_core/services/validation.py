@@ -20,25 +20,8 @@ from typing import Iterable, Mapping
 from ..constants import can_cover_rank
 from ..shifttime import envelope, paid_minutes, to_minutes
 from . import compliance, scheduling
+from ._common import assignments_for_shifts
 
-
-PHASE5_RULE_CODES = frozenset({
-    "required_coverage",
-    "swd_ratio",
-    "one_staff_no_overlap",
-    "min_rest",
-    "max_hours",
-    "assignment_eligibility",
-    "approved_leave_unavailable",
-    "night_chain",
-    "night_monthly_limit",
-    "night_cooldown",
-    "agency_ban",
-    "agency_cap",
-    "part_time_restriction",
-    "leave_quota",
-    "leave_balance",
-})
 
 EXTERNAL_AGENCY_TYPES = frozenset({"agency", "outsource", "casual"})
 INTERNAL_FULL_TIME_TYPES = frozenset({"local_ft", "imported_labor"})
@@ -1529,6 +1512,13 @@ def evaluate_leave_rules(snapshot: RosterSnapshot) -> list[dict]:
         if not staff:
             continue
         created_at = request.get("created_at")
+        # A request cutoff can only be tested against a submission date that was
+        # actually recorded. A roster imported from a spreadsheet carries the leave
+        # that was taken but not the day it was asked for, and `created_at` is then
+        # the import timestamp - which would fail every historical row against a
+        # deadline that had already passed. The importer marks those rows.
+        policy_result = request.get("policy_result_json") or {}
+        submission_recorded = not policy_result.get("submitted_on_unknown")
         issues = leave_request_policy_issues(
             request=request,
             staff=staff,
@@ -1537,8 +1527,9 @@ def evaluate_leave_rules(snapshot: RosterSnapshot) -> list[dict]:
             active_staff=active_staff,
             calendar_days=snapshot.calendar_days,
             assigned_night_shifts=night_shifts_by_staff.get(staff["id"], {}),
-            submitted_on=_as_date(created_at) if created_at else None,
-            enforce_cutoff=bool(created_at),
+            submitted_on=(_as_date(created_at)
+                          if created_at and submission_recorded else None),
+            enforce_cutoff=bool(created_at) and submission_recorded,
             policy=policy,
             policy_severity=severity,
         )
@@ -1704,14 +1695,9 @@ def _load_prior_nights(
     )
     if not shifts:
         return []
-    assignments = (
-        client.table("shift_assignments")
-        .select("shift_id,staff_id,status")
-        .eq("facility_id", facility_id)
-        .in_("shift_id", [row["id"] for row in shifts])
-        .execute()
-        .data
-    )
+    assignments = assignments_for_shifts(
+        client, [row["id"] for row in shifts],
+        select="shift_id,staff_id,status", facility_id=facility_id)
     staff_ids = {row.get("staff_id") for row in assignments if row.get("staff_id")}
     staff = {}
     if staff_ids:
@@ -1784,14 +1770,8 @@ def load_snapshot(client, facility_id: str, roster_version_id: str) -> RosterSna
     )
     assignments = []
     if shifts:
-        assignments = (
-            client.table("shift_assignments")
-            .select("*")
-            .eq("facility_id", facility_id)
-            .in_("shift_id", [row["id"] for row in shifts])
-            .execute()
-            .data
-        )
+        assignments = assignments_for_shifts(
+            client, [row["id"] for row in shifts], facility_id=facility_id)
     staff = (
         client.table("staff")
         .select("*")

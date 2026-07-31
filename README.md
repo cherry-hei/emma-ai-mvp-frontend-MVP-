@@ -14,9 +14,19 @@ and [`emma-ai-app/RUNBOOK.md`](emma-ai-app/RUNBOOK.md) for backend details.
 
 ## Status - what's real
 
-**Phases 1 through 5 are wired to the backend** - real data, RLS-scoped to the
-signed-in facility. There is no mock data left in the app; `src/lib/data.ts` and the
-fixture-backed `/api/*` route handlers were deleted.
+**The MVP scope is complete** - Phase 0-4 plus Phase 7 reporting (data only) and
+the Staff App backend. See [`MVP_SCOPE.md`](MVP_SCOPE.md) for the item-by-item
+lock and [`ARCHITECTURE_DECISIONS.md`](ARCHITECTURE_DECISIONS.md) for ADR-0001.
+Phase 5 compliance landed ahead of that scope and is in use.
+
+**The database holds the homes' own rosters, not generated demo data.** Home A's
+March 2026 cycle (48 staff, before *and* after) and Home B's June and July 2026
+sheets were imported from the workbooks the homes actually plan on - see
+[Real data](#real-data-import).
+
+Everything is RLS-scoped to the signed-in facility. There is no mock data left in
+the app; `src/lib/data.ts` and the fixture-backed `/api/*` route handlers were
+deleted.
 
 | Screen | Phase | Backing endpoints |
 |---|---|---|
@@ -36,6 +46,71 @@ fixture-backed `/api/*` route handlers were deleted.
 
 Phase 5 makes deterministic compliance the source of truth for validation and
 publishing. Natural-language explanations remain a later phase.
+
+Endpoints added for the MVP foundation, with no UI yet:
+
+| Endpoint | Spec | What it does |
+|---|---|---|
+| `POST /imports/roster-excel` | 1.4 | Upload a roster workbook; validate or commit |
+| `GET /imports`, `/imports/{id}` | 1.4 | Import history with per-cell findings |
+| `GET/POST /calendar-days` | 1.5 | Public / statutory / special-pay day flags |
+| `GET/POST /facility-configs` | 2.2 | Versioned facility configuration |
+| `POST /shift-definitions` | 2.3 | Duty dictionary writes, split shifts included |
+| `GET /audit-logs` | 1.3 | Append-only before/after history |
+| `GET /architecture-decisions`, `/project-scope` | 0.1 / 0.2 | The Phase 0 records |
+| `GET /evidence-items`, `PATCH /evidence-items/{code}` | 1.6 | Submission checklist |
+| `POST /reports/compliance` · `/roster` · `/staffing-ratio` · `/evidence` | 7.1 / 7.2 | The named exports |
+
+## Real data import
+
+`emma_core/importers` reads the homes' own spreadsheets. Two dialects, because the
+two homes plan differently:
+
+| Home | Layout | Cycle | What the sheet carries |
+|---|---|---|---|
+| **A** | `員工工作時間表`, two rank sheets, `Before`/`after` pair | 28 days | Task codes written into the duty (`A2N` = A/N split whose morning half is task A2), staff-request markers, OT/CL adjustments, an events row |
+| **B** | `更期表`, one sheet, three floors | natural month | 12-hour `7A`/`7P` duties, a floor/standing-duty row under each staff member, a daily request quota, relief and outsourced pools |
+
+A cell is not a single code. `▲SR A5 + OT x 3 hrs` says five things at once, and
+`cells.py` documents the grammar that takes it apart. Anything it cannot resolve
+becomes an `import_issues` row naming the exact source cell - the validation
+summary spec 1.4 asks for - rather than being silently dropped.
+
+```bash
+python scripts/import_real_rosters.py --validate      # parse and report only
+```
+
+Home A's before/after pair maps onto roster versions: the plan is a draft, the
+as-worked sheet is the record for the period.
+
+### What the real data shows
+
+Importing the real rosters and validating them against the seeded rule profiles
+produces findings worth reading before the pilot. Neither as-worked roster passes,
+so both stayed drafts - the publish gate is not negotiable for historical data.
+
+| Rule | Home A | Home B | Reading |
+|---|---|---|---|
+| `min_rest` | 113 | 84 | **Genuine.** A P shift (ends 21:30) followed by an A shift (starts 07:00) is a 9.5-hour turnaround against an 11-hour contract minimum |
+| `night_chain` | 63 | 109 | **Calibration.** After A/N the homes give a sleeping day then `補休`/`法` (CL / statutory holiday); the seeded rule expects `DO`/`OFF` |
+| `part_time_restriction` | 181 | 16 | **Calibration.** The seeded fixed-PT pattern expects 5-6 work days a week; the real part-timers work 2-4 and are effectively relief staff |
+| `night_monthly_limit` | 22 | — | **Genuine.** Staff exceed 2 A/N per month |
+| `floor_coverage` | — | 42 | **Genuine.** Home B floor minimums |
+| `max_hours` | — | 15 | **Genuine.** Over contracted maximum |
+
+Two importer defects the real data caught and that are now fixed: task
+assignments were linking to *inactive* task definitions (reported as "Unknown
+task 'A7'" for a code the home writes daily), and `長A7` parsed as a plain `A`
+shift. A third finding is scoping rather than a defect - a roster records the
+leave that was taken but never the day it was requested, so imported leave is
+flagged `submitted_on_unknown` and the request-cutoff rule skips it instead of
+failing every historical row against a deadline that had already passed.
+
+**Not in a roster spreadsheet, and therefore absent for an imported facility:**
+resident counts (the denominator of every statutory ratio - the import reports how
+many days lack one instead of inventing it), certificates, SL incidents, agency
+invoices and clock-ins. The screens that read them are empty until the data is
+entered.
 
 ## Phase 5 - deterministic compliance
 
@@ -96,8 +171,8 @@ schedule - they are the data model and the manual trigger, not the daemon:
   documents to detect a change.
 - Notifications deliver **in-app only**. Email and WhatsApp rows are persisted
   with status `queued` for a delivery worker that does not exist yet.
-- Reports render as JSON and CSV. PDF/Excel export and `file_url` object storage
-  (spec 7.1) are not built.
+- Reports render as JSON and CSV - **"data only"**, which is the MVP scope for
+  Phase 7. PDF/Excel rendering and `file_url` object storage are deferred.
 
 ## Phase 3 - operations layer
 

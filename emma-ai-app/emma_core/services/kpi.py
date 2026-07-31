@@ -8,7 +8,7 @@ disagree with the roster it claims to describe.
 from __future__ import annotations
 
 from ..constants import PlanMode
-from ._common import as_date, operative_version, resolve_period
+from ._common import as_date, assignments_for_shifts, operative_version, resolve_period
 from .compliance import EXTERNAL_TYPES, minute_ratio_series, ratio_series
 
 DIFFICULT_SHIFTS = ("AN", "N", "7P", "P")   # fairness is reported for every type anyway
@@ -28,10 +28,8 @@ def _roster_rows(client, version_id: str) -> tuple[dict[str, dict], list[dict]]:
     if not shifts:
         return {}, []
     by_id = {s["id"]: s for s in shifts}
-    # SQL: select * from shift_assignments where shift_id = any(:shift_ids)
     # (the cancelled / unassigned filter runs in the comprehension, not the query)
-    assigns = [a for a in (client.table("shift_assignments").select("*")
-                           .in_("shift_id", list(by_id)).execute().data)
+    assigns = [a for a in assignments_for_shifts(client, by_id)
                if a.get("status") != "cancelled" and a.get("staff_id")]
     return by_id, assigns
 

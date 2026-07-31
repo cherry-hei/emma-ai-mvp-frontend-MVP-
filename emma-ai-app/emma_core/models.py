@@ -424,6 +424,37 @@ class LeaveDecisionRequest(BaseModel):
         return self
 
 
+class RecommendationRequest(BaseModel):
+    """A first-pass review by an R-grade role (spec 1.1).
+
+    `reason` is required and non-blank: the RBAC definition specifies
+    "suggest-approve/suggest-reject **with reason**", and a bare vote gives the
+    approver nothing to weigh when two reviewers disagree."""
+    model_config = ConfigDict(extra="forbid")
+
+    recommendation: str = Field(pattern="^(approve|reject)$")
+    reason: str = Field(min_length=1, max_length=2000)
+
+    @model_validator(mode="after")
+    def reason_is_not_whitespace(self):
+        if not self.reason.strip():
+            raise ValueError("reason cannot be blank")
+        return self
+
+
+class RevokeRequest(BaseModel):
+    """Withdrawing an approval already given. OWNER only."""
+    model_config = ConfigDict(extra="forbid")
+
+    reason: str = Field(min_length=1, max_length=2000)
+
+    @model_validator(mode="after")
+    def reason_is_not_whitespace(self):
+        if not self.reason.strip():
+            raise ValueError("reason cannot be blank")
+        return self
+
+
 class IncidentCreate(BaseModel):
     staff_id: str | None = None       # None => the caller's own staff record
     incident_type: str = "SL"         # SL|DSL|urgent|late
@@ -525,3 +556,55 @@ class ReportGenerateRequest(BaseModel):
     period_id: str | None = None
     date_from: Date | None = None
     date_to: Date | None = None
+
+
+class ReportRequest(BaseModel):
+    """Body of the named report endpoints, which fix the report_type themselves."""
+
+    period_id: str | None = None
+    date_from: Date | None = None
+    date_to: Date | None = None
+
+
+# ── MVP foundation request bodies (spec 1.4 / 1.5 / 1.6 / 2.2 / 2.3) ─────────
+class CalendarDayRequest(BaseModel):
+    day_date: Date
+    day_type: str = "public_holiday"       # normal|public_holiday|statutory_holiday|special_pay
+    holiday_name: str | None = None
+    is_agency_allowed: bool = True
+    agency_cost_multiplier: float = Field(default=1.0, ge=0)
+    staff_cost_multiplier: float = Field(default=1.0, ge=0)
+    notes: str | None = None
+
+
+class FacilityConfigRequest(BaseModel):
+    config_key: str = Field(min_length=1, max_length=64)
+    config_json: dict
+    description: str | None = None
+    effective_from: Date | None = None
+
+
+class ShiftSegmentIn(BaseModel):
+    start: str = Field(pattern=r"^\d{2}:\d{2}(:\d{2})?$")
+    end: str = Field(pattern=r"^\d{2}:\d{2}(:\d{2})?$")
+
+
+class ShiftDefinitionRequest(BaseModel):
+    """A duty code. `segments` carries a split shift's two windows (A/N, A+P)."""
+
+    shift_type: str = Field(min_length=1, max_length=16)
+    label: str | None = None
+    start_time: str | None = Field(default=None, pattern=r"^\d{2}:\d{2}(:\d{2})?$")
+    end_time: str | None = Field(default=None, pattern=r"^\d{2}:\d{2}(:\d{2})?$")
+    segments: list[ShiftSegmentIn] | None = None
+    is_working: bool = True
+    weighting_factor: float = Field(default=1.0, ge=0)
+    paid_minutes: int | None = Field(default=None, ge=0)
+    source_note: str | None = None
+
+
+class EvidenceStatusRequest(BaseModel):
+    status: str                            # pending|pass|fail|not_applicable
+    sample_output: str | None = None
+    notes: str | None = None
+    checked_on: Date | None = None

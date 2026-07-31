@@ -16,6 +16,7 @@ python-dotenv>=1.0
 pydantic>=2.7
 pydantic-settings>=2.3
 pandas>=2.2
+openpyxl>=3.1                 # reads the homes' roster workbooks (emma_core/importers)
 
 # CP-SAT rostering solver (Phase 2 - Roster A/B/C engine)
 ortools>=9.11,<10

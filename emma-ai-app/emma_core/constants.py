@@ -29,6 +29,27 @@ class EmploymentType(StrEnum):
 
 
 class Role(StrEnum):
+    """Accepted values of `profiles.role`.
+
+    Two generations coexist on purpose. The canonical seven are Cherry's RBAC
+    definition of 30 Jul 2026 and are what new accounts get; the lower-case set
+    is what seeded and existing accounts still hold. `permissions.normalise_role`
+    folds the legacy values onto the canonical ones, so authorization is decided
+    in one vocabulary regardless of which spelling a row carries. Retiring the
+    legacy members is a data migration, not an enum edit - RLS policies name
+    these strings in SQL (see `current_role_name()`).
+    """
+
+    # canonical - emma_core.permissions.SystemRole
+    OWNER = "OWNER"
+    NURSE_MGR = "NURSE_MGR"
+    ALLIED_HEALTH = "ALLIED_HEALTH"
+    ADMIN_CLERK = "ADMIN_CLERK"
+    SCHEDULER_C = "SCHEDULER"
+    FRONTLINE = "FRONTLINE"
+    HR_AUDITOR = "HR_AUDITOR"
+
+    # legacy - still in the database and the demo seed
     SUPERINTENDENT = "superintendent"
     ADMIN = "admin"
     STAFF = "staff"

@@ -2,7 +2,7 @@
 import { usePathname, useRouter } from 'next/navigation'
 import { useLang } from '@/components/layout/LanguageContext'
 import { useAuth, roleLabel } from '@/components/layout/AuthContext'
-import { ROUTES, isActiveRoute } from '@/components/layout/navRoutes'
+import { ROUTES, ROUTE_FEATURE, canOpenRoute, isActiveRoute } from '@/components/layout/navRoutes'
 
 const PINK       = '#E8187A'
 const PINK_HOVER = '#c9156a'
@@ -10,6 +10,7 @@ const PINK_HOVER = '#c9156a'
 const NAV = [
   { key: 'nav_dashboard',   icon: '🏠',  path: ROUTES.dashboard  },
   { key: 'nav_roster',      icon: '📅',  path: ROUTES.roster     },
+  { key: 'nav_scheduling',  icon: '🗂️',  path: ROUTES.scheduling },
   { key: 'nav_compliance',  icon: '✅',  path: ROUTES.compliance },
   { key: 'nav_approval',    icon: '👥✓', path: ROUTES.approval   },
   { key: 'nav_personnel',   icon: '👤',  path: ROUTES.staff      },
@@ -24,15 +25,21 @@ export function Sidebar() {
   const { t, lang }    = useLang()
   const { user }       = useAuth()
 
+  // Menu filtered by the RBAC matrix (spec 1.1). Before this every role was shown
+  // all eight items, so a care worker saw the superintendent's sidebar including
+  // ROI and could open /roi with the home's financials.
+  const nav = NAV.filter(({ path }) => canOpenRoute(user?.role, ROUTE_FEATURE[path]))
+
   const FALLBACK: Record<string, { zh: string; en: string }> = {
     nav_dashboard:  { zh: '主頁',       en: 'Dashboard'     },
     nav_roster:     { zh: '更表',       en: 'Roster'        },
+    nav_scheduling: { zh: '任務排程',   en: 'Task Scheduling'},
     nav_compliance: { zh: '合規',       en: 'Compliance'    },
     nav_approval:   { zh: '審批',       en: 'Approval'      },
     nav_personnel:  { zh: '員工檔案',   en: 'Staff Portfolio'},
-    nav_roi:        { zh: 'ROI',        en: 'ROI'           },
+    nav_roi:        { zh: '投資回報',   en: 'ROI'           },
     nav_reports:    { zh: '報告',       en: 'Reports'       },
-    nav_alert:      { zh: '警報',       en: 'Alert'         },
+    nav_alert:      { zh: '警報中心',   en: 'Alert Centre'  },
     urgent_alert:   { zh: '🚨 緊急警報', en: '🚨 Urgent Alert' },
     staff_shortage: { zh: 'P更人手不足 - F3', en: 'P-shift understaffed - F3' },
     new_request:    { zh: '+ 新增請求', en: '+ New Request'  },
@@ -74,7 +81,7 @@ export function Sidebar() {
 
       {/* Nav */}
       <nav className="flex-1 px-2 py-2 space-y-0.5">
-        {NAV.map(({ key, icon, path, badge }) => {
+        {nav.map(({ key, icon, path, badge }) => {
           const active = isActiveRoute(pathname, path)
           return (
             <button

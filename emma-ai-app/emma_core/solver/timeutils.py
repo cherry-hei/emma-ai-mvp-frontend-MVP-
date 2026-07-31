@@ -30,25 +30,3 @@ def intervals_conflict(a: tuple[int, int], b: tuple[int, int], min_rest_min: int
         return True
     gap = (b_start - a_end) if b_start >= a_end else (a_start - b_end)
     return gap < min_rest_min
-
-
-def _spans(start: int, end: int, cross: bool) -> list[tuple[int, int]]:
-    """Split a (possibly midnight-wrapping) window into same-day sub-intervals."""
-    if cross or end <= start:
-        spans = [(start, 1440)]
-        if end > 0:
-            spans.append((0, end))
-        return spans
-    return [(start, end)]
-
-
-def window_overlap(slot_start: int, slot_end: int, slot_cross: bool,
-                   win_start: int, win_end: int) -> bool:
-    """Does a shift overlap a ratio window? Either side may wrap midnight, so
-    both are split into same-day sub-intervals before comparing."""
-    win_cross = win_end <= win_start
-    for a, b in _spans(slot_start, slot_end, slot_cross):
-        for c, d in _spans(win_start, win_end, win_cross):
-            if a < d and c < b:
-                return True
-    return False

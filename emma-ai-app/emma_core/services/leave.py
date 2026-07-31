@@ -472,6 +472,40 @@ def decide(client, facility_id: str, request_id: str, *, decision: str,
     return row
 
 
+def revoke(client, facility_id: str, request_id: str, *, profile_id: str | None,
+           reason: str) -> dict:
+    """Withdraw an approval already given (spec 1.1: "APPROVE may be REVOKED").
+
+    The original `decided_by` / `decided_at` / `decision_note` are left in place.
+    Revocation is additive, so "approved on the 3rd, withdrawn on the 5th because
+    the cover fell through" stays readable - overwriting the decision would erase
+    the fact that it was ever made, which is the part an auditor asks about.
+    """
+    rows = (client.table("leave_requests").select("*")
+            .eq("facility_id", facility_id).eq("id", request_id).execute().data)
+    if not rows:
+        raise ValueError("leave request not found")
+    if rows[0].get("status") != "approved":
+        raise ValueError(
+            f"only an approved request can be revoked (this one is "
+            f"{rows[0].get('status')!r})")
+
+    row = (client.table("leave_requests").update({
+        "status": "revoked",
+        "revoked_by": profile_id,
+        "revoked_at": now_iso(),
+        "revoke_reason": reason.strip(),
+    }).eq("facility_id", facility_id).eq("id", request_id).execute().data[0])
+
+    notify.push(
+        client, facility_id, staff_id=row["staff_id"], event_type="leave_revoked",
+        title=f'{row["leave_type"]} approval withdrawn',
+        body=f'{iso(row["date_start"])} – {iso(row["date_end"])} · {reason.strip()}',
+        related_type="leave_request", related_id=row["id"],
+    )
+    return row
+
+
 def stats(client, facility_id: str, on: Date | None = None) -> dict:
     """Approval Centre header numbers for the calendar month containing `on`."""
     start, end = month_bounds(on)

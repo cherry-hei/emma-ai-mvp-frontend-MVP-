@@ -20,6 +20,7 @@ from datetime import date as Date, timedelta
 
 from ..models import RatioResult
 from ..shifttime import covers_window, day_spans, duty_spans, to_minutes
+from ._common import assignments_for_shifts
 
 CERT_WARN_DAYS = 90
 AN_MONTHLY_LIMIT = 2          # facility policy: at most 2 AN shifts per staff per month
@@ -358,10 +359,9 @@ def compute_ratios(client, facility_id: str, on_date, *,
         #      from shift_assignments
         #      where shift_id = any(:shift_ids)
         # (cancelled rows are dropped by the comprehension, not by the query)
-        assigns = [a for a in (client.table("shift_assignments")
-                               .select("id,shift_id,role,staff_id,is_agency,status")
-                               .in_("shift_id", list(shift_by)).execute().data)
-                   if a.get("status") != "cancelled"]
+        assigns = [a for a in assignments_for_shifts(
+            client, shift_by, select="id,shift_id,role,staff_id,is_agency,status")
+            if a.get("status") != "cancelled"]
 
     return _evaluate_day(
         rules, residents, shift_by, assigns, facility_id=facility_id, on_date=d)
@@ -495,10 +495,9 @@ def minute_ratio(client, facility_id: str, on_date, *,
         # SQL: select id, shift_id, role, staff_id, is_agency, status
         #      from shift_assignments
         #      where shift_id = any(:shift_ids)
-        assigns = [a for a in (client.table("shift_assignments")
-                               .select("id,shift_id,role,staff_id,is_agency,status")
-                               .in_("shift_id", list(shift_by)).execute().data)
-                   if a.get("status") != "cancelled"]
+        assigns = [a for a in assignments_for_shifts(
+            client, shift_by, select="id,shift_id,role,staff_id,is_agency,status")
+            if a.get("status") != "cancelled"]
     return _minute_eval(
         rules, residents, shift_by, assigns, d, facility_id=facility_id)
 
@@ -566,10 +565,9 @@ def _load_range(client, facility_id: str, start: Date, end: Date,
         # SQL: select id, shift_id, role, staff_id, is_agency, status
         #      from shift_assignments
         #      where shift_id = any(:shift_ids)
-        assigns = [a for a in (client.table("shift_assignments")
-                               .select("id,shift_id,role,staff_id,is_agency,status")
-                               .in_("shift_id", list(shift_by)).execute().data)
-                   if a.get("status") != "cancelled"]
+        assigns = [a for a in assignments_for_shifts(
+            client, shift_by, select="id,shift_id,role,staff_id,is_agency,status")
+            if a.get("status") != "cancelled"]
     by_date: dict[str, list[dict]] = {}
     for a in assigns:
         sh = shift_by.get(a["shift_id"])
@@ -680,9 +678,8 @@ def threshold_monitors(client, facility_id: str) -> list[dict]:
             # SQL: select shift_id, staff_id, role, is_agency, status
             #      from shift_assignments
             #      where shift_id = any(:shift_ids)
-            assigns = (client.table("shift_assignments")
-                       .select("shift_id,staff_id,role,is_agency,status")
-                       .in_("shift_id", list(by_id)).execute().data)
+            assigns = assignments_for_shifts(
+                client, by_id, select="shift_id,staff_id,role,is_agency,status")
             # SQL: select id, employment_type, gender, name, name_en from staff
             #      where facility_id = :facility_id
             staff_rows = {s["id"]: s for s in (

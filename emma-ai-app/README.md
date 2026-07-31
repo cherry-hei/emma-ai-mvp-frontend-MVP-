@@ -16,12 +16,31 @@ there is no Python UI here.
 
 ## Layout
 ```
-emma_core/   shared domain: config, db, models, services, scheduling rules, solver/
-api/         FastAPI app + thin routers, including task/event scheduling
-supabase/    migrations + seed
-scripts/     seed.py
-tests/       pytest (offline solver/service tests + HTTP router tests)
+emma_core/             shared domain: config, db, models, services, rules
+emma_core/importers/   reads the homes' real roster workbooks (spec 1.4)
+emma_core/solver/      OR-Tools CP-SAT Roster A/B/C engine
+api/                   FastAPI app + thin routers
+supabase/              migrations + seed
+scripts/               seed.py (demo data) · import_real_rosters.py (real data)
+tests/                 pytest (offline parser/solver/service tests + HTTP tests)
 ```
+
+Two ways to fill the database, and they are alternatives:
+
+```bash
+python scripts/seed.py                                  # generated demo fixture
+python scripts/import_real_rosters.py --validate        # parse the real rosters
+python scripts/import_real_rosters.py --commit --replace-demo-data
+```
+
+The importer records an `import_jobs` row with the file's digest, every
+unresolved cell in `import_issues`, and an `audit_logs` entry - the same trail an
+upload through `POST /imports/roster-excel` leaves, because both go through
+`emma_core/services/imports.py`.
+
+DB-backed tests state the data they need and skip when the database holds the
+other fixture (see `tests/_dbstate.py`); a roster spreadsheet carries no
+certificates, incidents, agency invoices or clock-ins.
 
 ## Dev setup
 See **[RUNBOOK.md](RUNBOOK.md)** for the full step-by-step. Quick version

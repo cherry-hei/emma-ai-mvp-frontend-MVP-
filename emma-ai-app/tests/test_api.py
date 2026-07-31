@@ -15,6 +15,7 @@ from fastapi.testclient import TestClient
 
 from api.deps import _jwt_sub
 from api.main import app
+from tests._dbstate import require
 
 # raise_server_exceptions=False → unexpected server errors come back as real 500
 # responses (as over HTTP), instead of re-raising into the test process.
@@ -151,9 +152,11 @@ def test_staff_directory(token):
 
 def test_staff_exposes_cert_expiry(token):
     # Certifications compliance view relies on cert_type + expiry_date per staff.
+    # A roster spreadsheet does not record credentials, so an imported facility has
+    # none until they are entered.
     rows = client.get("/staff", headers=_auth(token)).json()
-    certs = [c for s in rows for c in s.get("certificates", [])]
-    assert certs, "expected seeded certificates"
+    certs = require([c for s in rows for c in s.get("certificates", [])],
+                    "staff certificates")
     assert all("cert_type" in c for c in certs)
     assert any(c.get("expiry_date") for c in certs), "expected at least one cert with an expiry date"
 

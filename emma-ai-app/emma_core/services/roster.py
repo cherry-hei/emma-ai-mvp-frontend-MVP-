@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 
 from ..constants import AssignmentStatus, OverrideAction, PublishEvent, RosterStatus
 from ..models import RosterCell, RosterGrid, RosterRow, ShiftDef, StaffLite
+from ._common import assignments_for_shifts
 
 
 def _now() -> str:
@@ -70,9 +71,7 @@ def get_roster_grid(client, facility_id: str, period_id: str | None = None, *,
 
     assigns = []
     if shift_ids:
-        # SQL: select * from shift_assignments where shift_id = any(:shift_ids)
-        assigns = (client.table("shift_assignments").select("*")
-                   .in_("shift_id", shift_ids).execute().data)
+        assigns = assignments_for_shifts(client, shift_ids)
 
     # SQL: select s.*, jsonb_build_object('name', u.name) as unit
     #      from staff s
@@ -218,9 +217,8 @@ def set_cell(client, *, facility_id, roster_version_id, staff_id, date, shift_ty
     if existing_shift_ids:
         # SQL: select * from shift_assignments
         #      where shift_id = any(:existing_shift_ids) and staff_id = :staff_id
-        found = (client.table("shift_assignments").select("*")
-                 .in_("shift_id", existing_shift_ids).eq("staff_id", staff_id)
-                 .execute().data)
+        found = assignments_for_shifts(client, existing_shift_ids,
+                                       staff_id=staff_id)
         old = found[0] if found else None
         for a in found:  # clear any prior cell for this staff/day
             # SQL: delete from shift_assignments where id = :assignment_id
@@ -286,8 +284,7 @@ def clear_cell(client, *, facility_id, roster_version_id, staff_id, date, change
         return
     # SQL: select * from shift_assignments
     #      where shift_id = any(:shift_ids) and staff_id = :staff_id
-    found = (client.table("shift_assignments").select("*")
-             .in_("shift_id", ids).eq("staff_id", staff_id).execute().data)
+    found = assignments_for_shifts(client, ids, staff_id=staff_id)
     for a in found:
         # SQL: delete from shift_assignments where id = :assignment_id
         client.table("shift_assignments").delete().eq("id", a["id"]).execute()

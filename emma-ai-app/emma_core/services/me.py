@@ -12,6 +12,7 @@ from . import attendance as att
 from . import tasks as task_svc
 from ._common import (
     as_date, iso, operative_version, resolve_period, shift_minutes, staff_by_id,
+    assignments_for_shifts,
 )
 from .compliance import compute_ratios
 
@@ -56,8 +57,7 @@ def _my_shifts(client, facility_id: str, staff_id: str,
     by_id = {s["id"]: s for s in shifts}
     # SQL: select * from shift_assignments
     #      where shift_id = any(:shift_ids) and staff_id = :staff_id
-    assigns = (client.table("shift_assignments").select("*")
-               .in_("shift_id", list(by_id)).eq("staff_id", staff_id).execute().data)
+    assigns = assignments_for_shifts(client, by_id, staff_id=staff_id)
 
     out = []
     for a in assigns:
@@ -251,8 +251,8 @@ def colleagues_on(client, facility_id: str, on: Date) -> list[dict]:
     # SQL: select shift_id, staff_id, status from shift_assignments
     #      where shift_id = any(:shift_ids)
     # (cancelled rows are dropped in the Python loop, not by the query)
-    assigns = (client.table("shift_assignments").select("shift_id,staff_id,status")
-               .in_("shift_id", list(by_id)).execute().data)
+    assigns = assignments_for_shifts(client, by_id,
+                                     select="shift_id,staff_id,status")
     staff = staff_by_id(client, facility_id)
     out = []
     for a in assigns:

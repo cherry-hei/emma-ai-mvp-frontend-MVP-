@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { api } from '@/lib/api'
 import type { RoiSettings, RoiSummary } from '@/lib/apiTypes'
 import { useLang } from '@/components/layout/LanguageContext'
+import { rankLabel, rankShort } from '@/lib/vocab'
 
 const PINK = '#E8187A'
 
@@ -429,8 +430,13 @@ export default function ROIPage() {
             <thead>
               <tr className="text-left text-[10px] uppercase text-slate-400">
                 <th className="py-1.5 pr-4">{isZH ? '職級' : 'Rank'}</th>
+                {/* Rank codes carry a zh label so a Chinese reader never sees a
+                    bare Latin abbreviation - "HCA" alone is what the browser's
+                    auto-translate turned into 氫氯噻嗪 (a diuretic). */}
                 {data.staff.by_rank.map((r) => (
-                  <th key={r.rank} className="py-1.5 px-2 text-center">{r.rank}</th>
+                  <th key={r.rank} className="py-1.5 px-2 text-center" title={rankLabel(r.rank, lang)}>
+                    {rankShort(r.rank, lang)}
+                  </th>
                 ))}
               </tr>
             </thead>

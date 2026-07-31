@@ -8,7 +8,11 @@ from emma_core.config import settings
 
 from api.routers import analytics as _analytics
 from api.routers import auth as _auth
+from api.routers import calendar as _calendar
 from api.routers import compliance as _compliance
+from api.routers import configs as _configs
+from api.routers import governance as _governance
+from api.routers import imports as _imports
 from api.routers import incidents as _incidents
 from api.routers import leave as _leave
 from api.routers import me as _me
@@ -19,7 +23,7 @@ from api.routers import roster as _roster
 from api.routers import scheduling as _scheduling
 from api.routers import staff as _staff
 
-app = FastAPI(title="Emma AI API", version="0.5.0")
+app = FastAPI(title="Emma AI API", version="0.6.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -61,7 +65,8 @@ def _value_error(_request: Request, exc: ValueError) -> JSONResponse:
                         content={"detail": {"code": "invalid_input", "message": str(exc)}})
 
 for _module in (_auth, _roster, _residents, _compliance, _staff, _optimize,
-                _leave, _incidents, _me, _analytics, _reports, _scheduling):
+                _leave, _incidents, _me, _analytics, _reports, _scheduling,
+                _imports, _calendar, _configs, _governance):
     app.include_router(_module.router)
 
 

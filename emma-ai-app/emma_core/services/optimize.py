@@ -32,6 +32,7 @@ from ..solver.inputs import AgencyLimitsInput, PreferenceInput
 from ..shifttime import duty_segments, envelope, paid_minutes
 from ..solver.timeutils import to_minutes
 from . import compliance, validation
+from ._common import assignments_for_shifts
 
 _AUDIT_RANKS = {"RN", "EN", "HW"}      # slots of these ranks involve medication duty
 _LEAVE_TYPES = {"AL"}                  # source cells meaning hard unavailability
@@ -288,12 +289,8 @@ def _prior_night_history(client, facility_id: str, period_start: Date,
     ]
     if not shifts:
         return Counter(), Counter(), set()
-    assignments = (
-        client.table("shift_assignments").select("*")
-        .eq("facility_id", facility_id)
-        .in_("shift_id", [row["id"] for row in shifts])
-        .execute().data
-    )
+    assignments = assignments_for_shifts(
+        client, [row["id"] for row in shifts], facility_id=facility_id)
     shift_by_id = {row["id"]: row for row in shifts}
     an_counts, night_counts, staff_ids = Counter(), Counter(), set()
     for assignment in assignments:
@@ -366,9 +363,7 @@ def load_inputs(client, facility_id: str, period_id: str, *, source_version_id=N
     shift_ids = [s["id"] for s in shifts]
     assigns = []
     if shift_ids:
-        # SQL: select * from shift_assignments where shift_id = any(:shift_ids)
-        assigns = (client.table("shift_assignments").select("*")
-                   .in_("shift_id", shift_ids).execute().data)
+        assigns = assignments_for_shifts(client, shift_ids)
 
     # SQL: select * from staff where facility_id = :facility_id and status = 'active'
     staff_rows = (client.table("staff").select("*")

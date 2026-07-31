@@ -19,6 +19,7 @@ from uuid import UUID
 
 from ..constants import can_cover_rank
 from ..shifttime import day_spans, duty_spans, to_minutes
+from ._common import assignments_for_shifts
 
 PHASE4_RULE_CODES = ("task_eligibility", "event_staffing", "floor_coverage")
 TASK_SOURCE_TYPES = {"manual", "event", "solver", "legacy_cell"}
@@ -87,12 +88,44 @@ def _persisted_task_assignment_id(value: object) -> str | None:
 
 
 def task_rank_matches(actual_rank: str | None, required_rank: str | None) -> bool:
-    """Task codes are profession-specific; CW and HCA are the care-worker alias."""
+    """Task codes are profession-specific; CW and HCA are the care-worker alias.
+
+    Deliberately *not* the seniority ladder used for emergency cover. ``A1`` is a
+    different duty for a health worker than for a care worker - the codes are two
+    separate series that happen to share names, which is why the definition table
+    is unique on (facility, code, rank). A rank that performs a code the facility
+    has not defined for it needs its own definition row, not a borrowed one.
+    """
     if not required_rank:
         return True
     if actual_rank == required_rank:
         return True
     return {actual_rank, required_rank} == {"CW", "HCA"}
+
+
+# A split or extended duty contains the ordinary windows it is built from, so a
+# task written for the A shift is satisfied by the A half of an A/N shift.
+_SHIFT_CONTAINS: dict[str, frozenset[str]] = {
+    "AN": frozenset({"A", "N"}),          # A/N split: morning A + night N
+    "AP": frozenset({"A", "P"}),          # A+P double duty
+    "LA": frozenset({"A"}),               # 長A - the long A duty
+    "LP": frozenset({"P"}),               # 長P
+    "7A": frozenset({"A"}),               # 12-hour day duty
+    "7P": frozenset({"P", "N"}),          # 12-hour night duty
+    "9A": frozenset({"A"}),
+    "9P": frozenset({"P", "N"}),
+}
+
+
+def task_shift_matches(actual_shift: str | None, required_shift: str | None) -> bool:
+    """Does the rostered duty include the window the task is written for?"""
+    if not required_shift:
+        return True
+    actual = str(actual_shift or "").upper()
+    required = required_shift.upper()
+    if actual == required:
+        return True
+    return required in _SHIFT_CONTAINS.get(actual, frozenset())
 
 
 def normalise_event_type(value: str) -> str:
@@ -599,7 +632,7 @@ def task_assignment_issues(
     issues = task_eligibility_issues(task, staff, qualifications)
     required_shift = task.get("shift_type")
     actual_shift = shift.get("shift_type")
-    if required_shift and required_shift != actual_shift:
+    if not task_shift_matches(actual_shift, required_shift):
         issues.append({
             "reason": "shift_type",
             "required": required_shift,
@@ -656,7 +689,7 @@ def validate_task_labels(
             continue
         compatible = [
             task for task in candidates
-            if (not task.get("shift_type") or task["shift_type"] == shift_type)
+            if task_shift_matches(shift_type, task.get("shift_type"))
             and task_rank_matches(staff.get("rank"), task.get("required_rank"))
         ]
         task = (compatible or candidates)[0]
@@ -1055,10 +1088,7 @@ def _task_definitions_by_label(
     for task in task_definitions:
         matches_context = (
             task_rank_matches(staff.get("rank"), task.get("required_rank"))
-            and (
-                not task.get("shift_type")
-                or task["shift_type"] == shift.get("shift_type")
-            )
+            and task_shift_matches(shift.get("shift_type"), task.get("shift_type"))
         )
         for label in (task.get("task_name"), task.get("task_code")):
             if label and (label not in task_by_label or matches_context):
@@ -1200,9 +1230,8 @@ def validate_roster_rules(
     shifts_by_id = {row["id"]: row for row in shifts}
     assignments = []
     if shifts_by_id:
-        assignments = (client.table("shift_assignments").select("*")
-                       .eq("facility_id", facility_id)
-                       .in_("shift_id", list(shifts_by_id)).execute().data)
+        assignments = assignments_for_shifts(client, shifts_by_id,
+                                             facility_id=facility_id)
     staff = (client.table("staff").select("*")
              .eq("facility_id", facility_id).execute().data)
     staff_by_id = {row["id"]: row for row in staff}

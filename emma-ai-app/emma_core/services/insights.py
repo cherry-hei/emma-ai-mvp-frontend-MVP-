@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from datetime import date as Date
 
-from ._common import as_date, iso, operative_version, resolve_period, shift_minutes
+from ._common import as_date, iso, resolve_period, shift_minutes
 
 CERT_WARN_DAYS = 90
 NIGHT_CODES = {"N", "AN", "7P"}

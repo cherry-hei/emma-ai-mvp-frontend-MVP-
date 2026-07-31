@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from datetime import date as Date
 
-from ._common import now_iso, to_min
+from ._common import assignments_for_shifts, now_iso, to_min
 
 # Task labels the facility considers time-critical; drives the staff app's HIGH tag.
 HIGH_PRIORITY_HINTS = ("med", "medication", "wound", "vital", "aom", "icp")
@@ -131,8 +131,7 @@ def for_staff_date(client, facility_id: str, staff_id: str, on: Date) -> list[di
     by_id = {s["id"]: s for s in shifts}
     # SQL: select * from shift_assignments
     #      where shift_id = any(:shift_ids) and staff_id = :staff_id
-    assigns = (client.table("shift_assignments").select("*")
-               .in_("shift_id", list(by_id)).eq("staff_id", staff_id).execute().data)
+    assigns = assignments_for_shifts(client, by_id, staff_id=staff_id)
 
     defs = task_definitions_by_label(client, facility_id)
     out: list[dict] = []

@@ -11,7 +11,7 @@ from api.main import app
 def test_openapi_documents_phase5_compliance_surface():
     document = TestClient(app).get("/openapi.json").json()
 
-    assert document["info"]["version"] == "0.5.0"
+    assert document["info"]["version"] == "0.6.0"
     assert "/compliance/minute-ratio" in document["paths"]
     assert "/compliance/rule-definitions" in document["paths"]
     assert "/validate-roster" in document["paths"]
