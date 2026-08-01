@@ -21,6 +21,49 @@ def _priority(label: str) -> str:
     return "high" if any(h in low for h in HIGH_PRIORITY_HINTS) else "normal"
 
 
+def _tell_the_floor_managers(client, facility_id: str, *, event_type: str,
+                             title: str, body: str | None,
+                             task_assignment_id: str) -> None:
+    """Put a task event on the manager dashboard's stream (spec SA.3).
+
+    SA.3's acceptance criterion is "status syncs to the manager dashboard in real
+    time". The dashboard learns about changes from `GET /notifications/stream`,
+    so a tick that writes nothing to `notifications` reaches nobody, however
+    correctly it updates the row.
+
+    Which events earn a notification is a judgement, and the wrong answer in
+    either direction is bad:
+
+    * every tick - a 60-bed home ticks hundreds of routine tasks a shift. A feed
+      at that volume is muted within a week, and the mute takes the exceptions
+      with it.
+    * exceptions only - the manager is then told when a medication round fails
+      and never when it succeeds, so "has the 08:00 drug round happened?" still
+      has to be asked out loud.
+
+    So: every exception, plus completion of the tasks already tagged
+    `priority = 'high'` - medication, wound care, vitals, ICP. Routine tasks
+    change the roster cell and stay off the feed. Flagged to Cherry on the SA.3
+    ticket for confirmation; the rule lives here, in one function, so changing
+    her mind is a one-line change.
+
+    Failure is swallowed for the same reason `audit.record`'s is: a care worker
+    who ticked a task off at the bedside must not see it fail because a
+    notification row could not be written.
+    """
+    from ..permissions import Feature                 # local: avoids a cycle
+    from . import notifications as notify
+
+    try:
+        notify.push_to_responders(
+            client, facility_id, Feature.TASK_CODES,
+            event_type=event_type, title=title, body=body,
+            related_type="task_assignment", related_id=task_assignment_id,
+        )
+    except Exception:  # noqa: BLE001 - see docstring
+        pass
+
+
 def sync_assignment_tasks(client, facility_id: str, assignment: dict,
                           shift: dict, task_defs: dict[str, dict] | None = None) -> list[dict]:
     """Reconcile task_assignments for one shift assignment against its `tasks` array."""
@@ -114,7 +157,37 @@ def set_status(client, facility_id: str, task_assignment_id: str, *, status: str
     }).eq("facility_id", facility_id).eq("id", task_assignment_id).execute().data)
     if not rows:
         raise ValueError("task assignment not found")
-    return rows[0]
+
+    row = rows[0]
+    if done and row.get("priority") == "high":
+        _tell_the_floor_managers(
+            client, facility_id,
+            event_type="task_completed",
+            title=f'{row.get("task_label") or "Task"} done',
+            body=_who(client, facility_id, row.get("staff_id") or staff_id),
+            task_assignment_id=task_assignment_id,
+        )
+    return row
+
+
+def _who(client, facility_id: str, staff_id: str | None) -> str | None:
+    """The staff member's name for a notification body, or None.
+
+    A notification that cannot name the person is still worth sending - the
+    manager can open the task - so every failure here returns None rather than
+    raising into the tick.
+    """
+    if not staff_id:
+        return None
+    try:
+        rows = (client.table("staff").select("name,name_en")
+                .eq("facility_id", facility_id).eq("id", staff_id)
+                .execute().data or [])
+    except Exception:  # noqa: BLE001 - see docstring
+        return None
+    if not rows:
+        return None
+    return rows[0].get("name") or rows[0].get("name_en")
 
 
 # The closed list the staff app offers. Mirrors the check constraint on
@@ -175,6 +248,17 @@ def report_exception(client, facility_id: str, task_assignment_id: str, *,
                   .update({"task_status": "exception"})
                   .eq("facility_id", facility_id)
                   .eq("id", task_assignment_id).execute().data[0])
+
+    reported_by = _who(client, facility_id, staff_id or assignment.get("staff_id"))
+    _tell_the_floor_managers(
+        client, facility_id,
+        event_type="task_exception",
+        title=f'{assignment.get("task_label") or "Task"} not done',
+        body=" · ".join(part for part in (
+            reported_by, reason_code.replace("_", " "), (note or "").strip(),
+        ) if part),
+        task_assignment_id=task_assignment_id,
+    )
     return {"task_assignment": assignment, "exception": exception_row}
 
 

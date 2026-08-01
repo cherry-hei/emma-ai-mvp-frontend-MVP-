@@ -33,6 +33,13 @@ def push(client, facility_id: str, *, event_type: str, title: str,
     }).execute().data[0]
 
 
+def _profiles_where(client, facility_id: str, predicate) -> list[dict]:
+    # SQL: select id, role from users_profile where facility_id = :facility_id
+    rows = (client.table("users_profile").select("id,role")
+            .eq("facility_id", facility_id).execute().data)
+    return [r for r in rows if predicate(r.get("role"))]
+
+
 def approver_profiles(client, facility_id: str, feature) -> list[dict]:
     """Profiles in this facility whose role may act on `feature`.
 
@@ -44,10 +51,25 @@ def approver_profiles(client, facility_id: str, feature) -> list[dict]:
     """
     from ..permissions import can_recommend           # local: avoids a cycle
 
-    # SQL: select id, role from users_profile where facility_id = :facility_id
-    rows = (client.table("users_profile").select("id,role")
-            .eq("facility_id", facility_id).execute().data)
-    return [r for r in rows if can_recommend(r.get("role"), feature)]
+    return _profiles_where(client, facility_id,
+                           lambda role: can_recommend(role, feature))
+
+
+def responder_profiles(client, facility_id: str, feature) -> list[dict]:
+    """Profiles who can *act on* `feature` - the F and E grades.
+
+    Distinct from `approver_profiles`, which is F and R. The difference matters
+    for anything that is work rather than a decision: nobody "recommends" a
+    response to a missed medication round. On `task_codes` the recommend set is
+    OWNER alone, while the people who would actually re-assign the task are the
+    nursing officer and the clerk - both E. Fanning operational alerts out
+    through the approval predicate would deliver them to exactly one person, and
+    not the one holding the ward.
+    """
+    from ..permissions import can_write               # local: avoids a cycle
+
+    return _profiles_where(client, facility_id,
+                           lambda role: can_write(role, feature))
 
 
 def push_to_approvers(client, facility_id: str, feature, *, event_type: str,
@@ -60,10 +82,27 @@ def push_to_approvers(client, facility_id: str, feature, *, event_type: str,
     makes first-pass review a real step, and a reviewer who is never told a
     request arrived cannot perform it.
     """
+    return _fan_out(client, facility_id,
+                    approver_profiles(client, facility_id, feature),
+                    event_type=event_type, title=title, body=body,
+                    related_type=related_type, related_id=related_id)
+
+
+def push_to_responders(client, facility_id: str, feature, *, event_type: str,
+                       title: str, body: str | None = None,
+                       related_type: str | None = None,
+                       related_id: str | None = None) -> list[dict]:
+    """Fan one operational event out to everyone who can act on it (spec SA.3)."""
+    return _fan_out(client, facility_id,
+                    responder_profiles(client, facility_id, feature),
+                    event_type=event_type, title=title, body=body,
+                    related_type=related_type, related_id=related_id)
+
+
+def _fan_out(client, facility_id: str, profiles: list[dict], **kwargs) -> list[dict]:
     return [
-        push(client, facility_id, profile_id=profile["id"], event_type=event_type,
-             title=title, body=body, related_type=related_type, related_id=related_id)
-        for profile in approver_profiles(client, facility_id, feature)
+        push(client, facility_id, profile_id=profile["id"], **kwargs)
+        for profile in profiles
     ]
 
 

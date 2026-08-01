@@ -70,6 +70,62 @@ EVENT_DEFAULT_REQUIREMENTS: dict[str, tuple[dict, ...]] = {
 }
 
 
+# Display names, so the picker and the validator cannot disagree about either
+# the code or what it is called. Traditional Chinese is the working language of
+# both homes; the English is the second line, not the primary.
+EVENT_TYPE_LABELS: dict[str, tuple[str, str]] = {
+    "hair_cutting": ("剪髮", "Hair cutting"),
+    "cgat": ("CGAT 評估", "CGAT assessment"),
+    "pgt": ("PGT", "PGT"),
+    "medication_board_checking": ("藥板核對", "Medication board checking"),
+    "medication_record_checking": ("藥物紀錄核對", "Medication record checking"),
+    "podiatry": ("足部護理", "Podiatry"),
+    "monthly_weighing": ("每月磅重", "Monthly weighing"),
+    "visiting": ("探訪", "Visiting"),
+    "meeting_training": ("會議 / 培訓", "Meeting / training"),
+}
+
+
+def event_type_catalogue() -> list[dict]:
+    """The event types the API accepts, with labels and their staffing template.
+
+    Cherry, 1 Aug 2026, on 4.2: "I don't want the frontend hardcoding a list that
+    drifts from your validation. One endpoint, single source of truth."
+
+    The drift she was guarding against had already happened twice by the time she
+    asked - `scheduling/page.tsx` carried its own nine-row copy, and
+    `CreateEventModal.tsx` offered `haircut`, an alias rather than the canonical
+    code. Both were accepted by the server, which is why neither showed up as a
+    bug: the aliases quietly absorbed the difference until someone read the two
+    lists side by side.
+
+    `aliases` is published rather than hidden because the importer writes them -
+    a roster workbook saying 剪髮 arrives as `haircut` - so a UI that has to
+    render an existing event needs to know the spellings map to the same thing.
+
+    `templated` is the flag the modal actually needs: a templated type fills its
+    own staffing requirements, and an untemplated one (visiting, meetings, PGT)
+    is manager-assessed and must not be silently saved with a guessed headcount.
+    """
+    aliases: dict[str, list[str]] = {}
+    for alias, canonical in EVENT_TYPE_ALIASES.items():
+        aliases.setdefault(canonical, []).append(alias)
+
+    out = []
+    for code in EVENT_TYPE_LABELS:
+        requirements = event_requirements_for(code)
+        zh, en = EVENT_TYPE_LABELS[code]
+        out.append({
+            "code": code,
+            "label_zh": zh,
+            "label_en": en,
+            "aliases": sorted(aliases.get(code, [])),
+            "templated": bool(requirements),
+            "default_requirements": requirements,
+        })
+    return out
+
+
 def _normalise_code(value: str) -> str:
     return value.strip().lower().replace("-", "_").replace(" ", "_")
 

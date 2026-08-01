@@ -442,6 +442,68 @@ def _monthly_staffing_compliance(client, facility_id: str, params: dict) -> dict
     return base
 
 
+def _event_overlays(client, facility_id: str, period: dict) -> dict[str, list[dict]]:
+    """The special events on each day of the period, with the staffing they add.
+
+    Cherry, 1 Aug 2026, on 7.2: "include events/overlays on the exported roster
+    grid - a printed roster without special events is incomplete."
+
+    The export used to carry the event's title alone, which is incomplete in two
+    ways that matter on a printed sheet:
+
+    * the title does not say what the event costs. '剪髮' on a Tuesday reads as a
+      note; '剪髮 (+1 CW/HCA)' reads as the reason the ward is one body short if
+      nobody was added. The additive requirements are the overlay - the rest is
+      a diary entry.
+    * an event booked for one floor was printed against every floor. Keying by
+      date alone put 3/F's CGAT on the 1/F rows, so a manager checking cover for
+      1/F saw a demand that was never theirs.
+
+    Returned keyed by date; each entry carries `unit_id` so the caller can drop
+    the ones that belong to another floor.
+    """
+    from .scheduling import EVENT_TYPE_LABELS, normalise_event_type
+
+    # SQL: select id, date, title, event_type, unit_id from facility_events
+    #      where facility_id = :facility_id
+    #        and date >= :period_start and date <= :period_end
+    rows = (client.table("facility_events")
+            .select("id,date,title,event_type,unit_id")
+            .eq("facility_id", facility_id)
+            .gte("date", iso(period["period_start"]))
+            .lte("date", iso(period["period_end"])).execute().data or [])
+    if not rows:
+        return {}
+
+    # SQL: select event_id, rank, count, is_additive from event_staffing_requirements
+    #      where facility_id = :facility_id and event_id = any(:event_ids)
+    extra: dict[str, list[str]] = {}
+    try:
+        for req in (client.table("event_staffing_requirements")
+                    .select("event_id,rank,count,is_additive")
+                    .eq("facility_id", facility_id)
+                    .in_("event_id", [r["id"] for r in rows]).execute().data or []):
+            if req.get("is_additive"):
+                extra.setdefault(req["event_id"], []).append(
+                    f'+{int(req.get("count") or 1)} {req.get("rank") or ""}'.strip())
+    except Exception:  # noqa: BLE001
+        # A missing requirements table degrades the overlay to a plain title,
+        # which is what this export printed before. It must not lose the roster.
+        extra = {}
+
+    out: dict[str, list[dict]] = {}
+    for row in rows:
+        code = normalise_event_type(row.get("event_type") or "")
+        zh = EVENT_TYPE_LABELS.get(code, ("", ""))[0]
+        label = row.get("title") or zh or code or "event"
+        added = extra.get(row["id"]) or []
+        out.setdefault(iso(row["date"]), []).append({
+            "label": f'{label} ({", ".join(added)})' if added else label,
+            "unit_id": row.get("unit_id"),
+        })
+    return out
+
+
 def _roster_export(client, facility_id: str, params: dict) -> dict:
     """The published roster itself: one row per staff × day (spec 7.2).
 
@@ -458,16 +520,7 @@ def _roster_export(client, facility_id: str, params: dict) -> dict:
         units = {u["id"]: u["name"] for u in (
             client.table("facility_units").select("id,name")
             .eq("facility_id", facility_id).execute().data)}
-    events: dict[str, list[str]] = {}
-    if version:
-        # SQL: select date, title from facility_events
-        #      where facility_id = :facility_id
-        #        and date >= :period_start and date <= :period_end
-        for event in (client.table("facility_events").select("date,title")
-                      .eq("facility_id", facility_id)
-                      .gte("date", iso(period["period_start"]))
-                      .lte("date", iso(period["period_end"])).execute().data):
-            events.setdefault(iso(event["date"]), []).append(event["title"] or "")
+    events = _event_overlays(client, facility_id, period) if version else {}
 
     by_shift = {a["shift_id"]: a for a in assigns}
     rows = []
@@ -488,7 +541,13 @@ def _roster_export(client, facility_id: str, params: dict) -> dict:
             "unit": units.get(shift.get("unit_id") or "", ""),
             "tasks": ", ".join((assignment or {}).get("tasks") or []),
             "is_agency": bool((assignment or {}).get("is_agency")),
-            "events": "; ".join(events.get(iso(shift["date"]), [])),
+            # A facility-wide event prints on every row; a unit-scoped one only
+            # on the rows for that unit.
+            "events": "; ".join(
+                overlay["label"]
+                for overlay in events.get(iso(shift["date"]), [])
+                if not overlay["unit_id"] or overlay["unit_id"] == shift.get("unit_id")
+            ),
         })
     rows.sort(key=lambda r: (r["date"], r["staff"]))
     working = [r for r in rows if r["paid_hours"]]

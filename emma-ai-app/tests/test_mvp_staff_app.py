@@ -637,3 +637,93 @@ def test_the_stream_replays_only_this_manager_s_events(monkeypatch):
     # The closing cursor lets EventSource resume exactly where it stopped.
     assert "event: reconnect" in body
     assert "2026-07-31T10:00:01Z" in body
+
+
+# ── SA.3 · the manager actually gets told ───────────────────────────────────
+# "Status syncs to manager dashboard in real time" is the acceptance criterion,
+# and the dashboard learns about changes from the notification stream. A tick
+# that writes nothing to `notifications` satisfies the code and not the ticket.
+
+def _floor(**tables) -> _Fake:
+    """A home with one nursing officer, one clerk, one care worker."""
+    return _Fake(
+        users_profile=[
+            {"id": "p-owner", "facility_id": "f1", "role": "superintendent"},
+            {"id": "p-nurse", "facility_id": "f1", "role": "NURSE_MGR"},
+            {"id": "p-allied", "facility_id": "f1", "role": "ALLIED_HEALTH"},
+            {"id": "p-clerk", "facility_id": "f1", "role": "ADMIN_CLERK"},
+            {"id": "p-staff", "facility_id": "f1", "role": "FRONTLINE"},
+            {"id": "p-other", "facility_id": "f2", "role": "superintendent"},
+        ],
+        staff=[{"id": "s1", "facility_id": "f1", "name": "陳大文"}],
+        **tables,
+    )
+
+
+def _notified(db: _Fake) -> list[dict]:
+    return db.rows.get("notifications", [])
+
+
+def test_an_exception_reaches_the_people_who_can_act_on_it():
+    db = _floor(task_assignments=[{"id": "ta-1", "facility_id": "f1", "staff_id": "s1",
+                                   "task_label": "Medication round",
+                                   "task_status": "pending"}])
+    task_svc.report_exception(db, "f1", "ta-1", reason_code="resident_refused",
+                              staff_id="s1")
+
+    sent = _notified(db)
+    # F and E on `task_codes` - the people who can re-assign the task. The clerk
+    # holds V there and the care worker S, so neither is paged. Fanning this out
+    # through the *approval* predicate would have reached the owner alone.
+    assert {n["profile_id"] for n in sent} == {"p-owner", "p-nurse", "p-allied"}
+    assert all(n["event_type"] == "task_exception" for n in sent)
+    assert "Medication round" in sent[0]["title"]
+    # The manager should not have to open the task to learn who and why.
+    assert "陳大文" in sent[0]["body"] and "resident refused" in sent[0]["body"]
+    assert sent[0]["related_id"] == "ta-1"
+
+
+def test_an_exception_in_another_home_is_not_announced_in_this_one():
+    db = _floor(task_assignments=[{"id": "ta-1", "facility_id": "f1", "staff_id": "s1",
+                                   "task_label": "Wound care", "task_status": "pending"}])
+    task_svc.report_exception(db, "f1", "ta-1", reason_code="clinical_hold")
+    assert all(n["facility_id"] == "f1" for n in _notified(db))
+    assert "p-other" not in {n["profile_id"] for n in _notified(db)}
+
+
+def test_finishing_a_high_priority_task_is_announced():
+    db = _floor(task_assignments=[{"id": "ta-1", "facility_id": "f1", "staff_id": "s1",
+                                   "task_label": "Medication round", "priority": "high",
+                                   "task_status": "pending"}])
+    task_svc.set_status(db, "f1", "ta-1", status="done", staff_id="s1")
+    sent = _notified(db)
+    assert sent and sent[0]["event_type"] == "task_completed"
+
+
+def test_finishing_a_routine_task_is_not():
+    """A 60-bed home ticks hundreds of routine tasks a shift. A feed at that
+    volume gets muted, and the mute takes the exceptions with it."""
+    db = _floor(task_assignments=[{"id": "ta-1", "facility_id": "f1", "staff_id": "s1",
+                                   "task_label": "Bed making", "priority": "normal",
+                                   "task_status": "pending"}])
+    task_svc.set_status(db, "f1", "ta-1", status="done", staff_id="s1")
+    assert _notified(db) == []
+
+
+def test_a_broken_notification_table_does_not_break_the_bedside_tick():
+    """The care worker ticked the task off. Losing that because a notification
+    row could not be written is the worse failure of the two."""
+    class _Unreachable(_Fake):
+        def table(self, name):
+            if name == "notifications":
+                raise RuntimeError("notifications is unreachable")
+            return super().table(name)
+
+    db = _Unreachable(
+        users_profile=[{"id": "p-nurse", "facility_id": "f1", "role": "NURSE_MGR"}],
+        task_assignments=[{"id": "ta-1", "facility_id": "f1", "staff_id": "s1",
+                           "task_label": "Medication round", "task_status": "pending"}],
+    )
+    out = task_svc.report_exception(db, "f1", "ta-1", reason_code="resident_absent")
+    assert out["task_assignment"]["task_status"] == "exception"
+    assert out["exception"]["reason_code"] == "resident_absent"

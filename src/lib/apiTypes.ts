@@ -486,6 +486,42 @@ export interface Highlight {
   text_zh: string
 }
 
+/** 5.6 — how much of the roster is worked by part-time, agency or outsourced staff. */
+export interface KpiExternalWorkforce {
+  period_id?: string | null
+  roster_version_id?: string | null
+  total_shifts: number
+  external_shifts: number
+  agency_shifts: number
+  dependency_pct: number
+  agency_cost: number
+  by_role: { role: string; shifts: number; external: number; dependency_pct: number }[]
+}
+
+/** 5.7 — SWD staffing-ratio compliance across the period. */
+export interface KpiStaffingRatioCompliance {
+  period_id?: string | null
+  checks?: number
+  passed?: number
+  pass_rate_pct: number
+  breach_days: number
+  breach_minutes: number
+  publishable?: boolean
+  days?: { date: string; checks: number; passed: number; failed: number; pass_rate: number }[]
+  by_rule?: { label: string; rank?: string | null; breach_minutes: number; breach_days: number }[]
+}
+
+/** Every KPI screen in one call. The four this app does not render yet are
+ *  typed loosely on purpose - narrowing them here would be a guess. */
+export interface KpiOverview {
+  conflict_rate: Record<string, unknown>
+  an_gini: Record<string, unknown>
+  shift_fairness: Record<string, unknown>
+  ai_acceptance: Record<string, unknown>
+  external_workforce: KpiExternalWorkforce
+  staffing_ratio_compliance: KpiStaffingRatioCompliance
+}
+
 export interface DashboardSummary {
   facility: { id?: string; code?: string | null; name?: string | null; capacity?: number | null }
   period: { id: string; start: string; end: string; status?: string | null } | null

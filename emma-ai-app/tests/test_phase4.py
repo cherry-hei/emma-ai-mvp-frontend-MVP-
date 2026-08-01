@@ -8,9 +8,12 @@ from fastapi.testclient import TestClient
 
 from api.main import app
 from emma_core.services.scheduling import (
+    EVENT_DEFAULT_REQUIREMENTS,
     evaluate_event_staffing,
     evaluate_floor_coverage,
     event_requirements_for,
+    event_type_catalogue,
+    normalise_event_type,
     task_assignment_issues,
     task_eligibility_issues,
 )
@@ -210,3 +213,45 @@ def test_event_staffing_violation_carries_event_evidence():
     )
     assert violations[0]["event_id"] == "e1"
     assert violations[0]["rule_code"] == "event_staffing"
+
+
+# ── 4.2 · the event-type catalogue (Cherry, 1 Aug 2026) ─────────────────────
+def test_event_type_catalogue_is_the_only_list_the_ui_needs():
+    """One endpoint, one list. The picker must not be able to offer a type the
+    server would reject, nor miss one it accepts."""
+    catalogue = event_type_catalogue()
+    codes = [row["code"] for row in catalogue]
+
+    assert codes, "the catalogue must not be empty"
+    assert len(codes) == len(set(codes)), "duplicate codes in the catalogue"
+    for row in catalogue:
+        assert row["label_zh"] and row["label_en"], f"{row['code']} has no label"
+        # Every code the catalogue publishes must survive its own normaliser -
+        # otherwise the modal sends back something validation rewrites.
+        assert normalise_event_type(row["code"]) == row["code"]
+        assert row["templated"] == bool(row["default_requirements"])
+
+
+def test_every_templated_event_type_is_published():
+    """A type with a staffing template that the picker cannot offer is a rule
+    nobody can trigger."""
+    published = {row["code"] for row in event_type_catalogue()}
+    templated = {code for code, reqs in EVENT_DEFAULT_REQUIREMENTS.items() if reqs}
+    assert templated <= published, f"missing from the catalogue: {templated - published}"
+
+
+def test_catalogue_publishes_the_aliases_the_importer_writes():
+    """The workbook importer maps 剪髮 to `haircut`, so events already in the
+    database carry alias spellings. A UI that has to render one needs to know it
+    is the same type."""
+    by_code = {row["code"]: row for row in event_type_catalogue()}
+    assert "haircut" in by_code["hair_cutting"]["aliases"]
+    for row in by_code.values():
+        for alias in row["aliases"]:
+            assert normalise_event_type(alias) == row["code"]
+
+
+def test_event_types_endpoint_is_declared_before_the_id_route():
+    """`/facility-events/types` must not be matched as an event id."""
+    paths = client.get("/openapi.json").json()["paths"]
+    assert "/facility-events/types" in paths

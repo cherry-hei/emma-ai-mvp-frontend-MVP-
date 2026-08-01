@@ -11,7 +11,7 @@
 import type {
   AlertItem, ApiError, ApiStaff, CompareOptionsResponse, CreatePeriodResponse,
   DashboardSummary, EventTrigger, FacilityEvent, FutureDebtRow, GeneratedReport, Incident,
-  IncidentStats, JobView, LeaveCategory, LeaveGroup, LeaveRequest, LeaveStats,
+  IncidentStats, JobView, KpiOverview, LeaveCategory, LeaveGroup, LeaveRequest, LeaveStats,
   MyAttendance, MyProfile, MyRoster, MySummary, MyTask, OptimizeResponse, PeriodOut,
   FloorRule, Profile, RatioResult, RegulatoryDoc, ReplacementCandidate, ReportRow,
   RuleDefinition, RuleDefinitionCreate,
@@ -468,6 +468,10 @@ export const api = {
 
   // ── Phase 3 · dashboard, ROI, compliance monitors ───────────────────────────
   dashboard: () => apiFetch<DashboardSummary>('/dashboard/summary'),
+
+  /** Every KPI screen in one round trip - the strip renders three of them. */
+  kpiOverview: (periodId?: string) =>
+    apiFetch<KpiOverview>(`/kpi/overview${periodId ? `?period_id=${periodId}` : ''}`),
 
   roiSummary: () => apiFetch<RoiSummary>('/roi/summary'),
   roiSettings: () => apiFetch<RoiSettings>('/roi/settings'),

@@ -344,3 +344,101 @@ def test_a_draft_download_is_named_draft(monkeypatch):
 def test_a_published_download_is_not(monkeypatch):
     response = _client(monkeypatch).get("/reports/download/roster_hours.pdf")
     assert "DRAFT" not in response.headers["content-disposition"]
+
+
+# ── 7.2 · the events overlay on the exported roster (Cherry, 1 Aug 2026) ────
+# "A printed roster without special events is incomplete." Two things have to be
+# true for the printed sheet to be usable: the event says what it costs, and it
+# appears against the floor it was booked for and no other.
+
+class _EventsClient:
+    """Answers `facility_events` and `event_staffing_requirements` only."""
+
+    def __init__(self, events, requirements):
+        self.data = {"facility_events": events,
+                     "event_staffing_requirements": requirements}
+        self.name = None
+
+    def table(self, name):
+        self.name = name
+        return self
+
+    def select(self, *_a, **_k):
+        return self
+
+    def eq(self, *_a, **_k):
+        return self
+
+    def gte(self, *_a, **_k):
+        return self
+
+    def lte(self, *_a, **_k):
+        return self
+
+    def in_(self, *_a, **_k):
+        return self
+
+    def execute(self):
+        return type("R", (), {"data": list(self.data.get(self.name, []))})()
+
+
+PERIOD = {"period_start": "2026-08-01", "period_end": "2026-08-28"}
+
+
+def test_an_overlay_states_the_staff_the_event_adds():
+    from emma_core.services.reports import _event_overlays
+
+    client = _EventsClient(
+        events=[{"id": "e1", "date": "2026-08-04", "title": None,
+                 "event_type": "haircut", "unit_id": None}],
+        requirements=[{"event_id": "e1", "rank": "CW|HCA", "count": 1,
+                       "is_additive": True}],
+    )
+    overlays = _event_overlays(client, "f1", PERIOD)
+    label = overlays["2026-08-04"][0]["label"]
+    # The alias the importer writes resolves to the canonical type's label.
+    assert "剪髮" in label
+    assert "+1 CW|HCA" in label, "the printed roster must say what the event costs"
+
+
+def test_a_concurrent_duty_is_not_advertised_as_an_extra_body():
+    """Podiatry is covered by staff already rostered. Printing '+1 HW' beside it
+    would have the manager rostering a head the rule never asked for."""
+    from emma_core.services.reports import _event_overlays
+
+    client = _EventsClient(
+        events=[{"id": "e1", "date": "2026-08-04", "title": "足部護理",
+                 "event_type": "podiatry", "unit_id": None}],
+        requirements=[{"event_id": "e1", "rank": "HW", "count": 1,
+                       "is_additive": False}],
+    )
+    assert _event_overlays(client, "f1", PERIOD)["2026-08-04"][0]["label"] == "足部護理"
+
+
+def test_an_overlay_remembers_which_floor_booked_it():
+    from emma_core.services.reports import _event_overlays
+
+    client = _EventsClient(
+        events=[{"id": "e1", "date": "2026-08-04", "title": "CGAT",
+                 "event_type": "cgat", "unit_id": "unit-3f"}],
+        requirements=[],
+    )
+    assert _event_overlays(client, "f1", PERIOD)["2026-08-04"][0]["unit_id"] == "unit-3f"
+
+
+def test_missing_requirements_degrade_to_a_plain_title():
+    """Losing the overlay detail is a defect; losing the roster is an outage."""
+    from emma_core.services.reports import _event_overlays
+
+    class _NoRequirements(_EventsClient):
+        def execute(self):
+            if self.name == "event_staffing_requirements":
+                raise RuntimeError("table is unreachable")
+            return super().execute()
+
+    client = _NoRequirements(
+        events=[{"id": "e1", "date": "2026-08-04", "title": "剪髮",
+                 "event_type": "hair_cutting", "unit_id": None}],
+        requirements=[],
+    )
+    assert _event_overlays(client, "f1", PERIOD)["2026-08-04"][0]["label"] == "剪髮"

@@ -149,6 +149,17 @@ def escorts_on_date(
     return escort_svc.escorts_on_date(ctx.client, ctx.facility_id, on)
 
 
+@router.get("/facility-events/types")
+def facility_event_types(ctx: AuthCtx = Depends(get_ctx)):
+    """The event types the create-event modal may offer (spec 4.2).
+
+    Declared before `/facility-events/{event_id}` so `types` is never read as an
+    event id. Authenticated but not role-gated: it is a dictionary, and anyone
+    who can open the roster can see the picker.
+    """
+    return {"event_types": svc.event_type_catalogue()}
+
+
 @router.get("/facility-events", response_model=list[FacilityEventOut])
 def facility_events(
     date_from: Date | None = Query(default=None),

@@ -346,3 +346,82 @@ def test_the_endpoint_returns_403_not_500(recdb, as_role):
         assert allowed.status_code == 201
     finally:
         app.dependency_overrides.pop(get_ctx, None)
+
+
+# ── the approver has to see who said it (Cherry, 1 Aug 2026) ────────────────
+class _Directory:
+    """A stub that answers per table, so profiles and staff can differ."""
+
+    def __init__(self, **tables):
+        self.tables = tables
+        self.name = None
+
+    def table(self, name):
+        self.name = name
+        return self
+
+    def select(self, *_a, **_k):
+        return self
+
+    def eq(self, *_a, **_k):
+        return self
+
+    def in_(self, *_a, **_k):
+        return self
+
+    def is_(self, *_a, **_k):
+        return self
+
+    def execute(self):
+        return type("R", (), {"data": list(self.tables.get(self.name, []))})()
+
+
+def _directory(recommendations):
+    return _Directory(
+        request_recommendations=recommendations,
+        users_profile=[
+            {"id": "p-nurse", "email": "no@naac.hk", "staff_id": "s-nurse"},
+            {"id": "p-clerk", "email": "clerk@naac.hk", "staff_id": None},
+        ],
+        staff=[{"id": "s-nurse", "name": "李美玲", "name_en": "Li Mei Ling"}],
+    )
+
+
+def test_each_recommendation_names_its_reviewer():
+    """Two nursing officers who disagree must not render as two identical
+    'NURSE_MGR' rows - the OWNER is being asked to weigh people, not job titles."""
+    rows = [{**_rec("p-nurse", "approve"), "leave_request_id": "r1",
+             "recommended_role": "NURSE_MGR", "reason": "cover is fine"},
+            {**_rec("p-clerk", "reject"), "leave_request_id": "r1",
+             "recommended_role": "ADMIN_CLERK", "reason": "quota is spent"}]
+    out = rec_svc.attach(_directory(rows), "f1", [{"id": "r1"}])
+    names = {r["recommended_by"]: r["recommended_by_name"]
+             for r in out[0]["recommendations"]}
+    assert names["p-nurse"] == "李美玲"
+    # No staff record: the email's local part beats showing a bare uuid.
+    assert names["p-clerk"] == "clerk"
+    assert out[0]["recommendation_summary"]["split"] is True
+
+
+def test_an_unnameable_reviewer_still_appears():
+    """A missing name renders as the role. Dropping the row, or 500ing the
+    queue, would hide a review the approver is required to weigh."""
+    rows = [{**_rec("p-ghost", "reject"), "leave_request_id": "r1",
+             "recommended_role": "NURSE_MGR", "reason": "no"}]
+    out = rec_svc.attach(_directory(rows), "f1", [{"id": "r1"}])
+    assert out[0]["recommendations"][0]["recommended_by_name"] is None
+    assert out[0]["recommendations"][0]["recommendation"] == "reject"
+
+
+def test_names_survive_an_unreachable_directory():
+    class _NoDirectory(_Directory):
+        def execute(self):
+            if self.name in ("users_profile", "staff"):
+                raise RuntimeError("unreachable")
+            return super().execute()
+
+    db = _NoDirectory(request_recommendations=[
+        {**_rec("p-nurse", "approve"), "leave_request_id": "r1"}])
+    out = rec_svc.attach(db, "f1", [{"id": "r1"}])
+    assert len(out[0]["recommendations"]) == 1
+    assert out[0]["recommendations"][0]["recommended_by_name"] is None

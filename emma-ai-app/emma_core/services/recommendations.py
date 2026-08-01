@@ -142,6 +142,59 @@ def withdraw_own(client, facility_id: str, request_id: str, *,
     return len(rows)
 
 
+def _reviewer_names(client, facility_id: str,
+                    profile_ids: list[str]) -> dict[str, str]:
+    """profile_id -> a human name, in two round trips for the whole queue.
+
+    Cherry's approval screen (1 Aug 2026) is "each recommendation as its own row
+    showing recommender name, their verdict and their reason". Only the name was
+    missing: the row carries `recommended_by`, a uuid, and `recommended_role`,
+    which is a job function and not a person. Two nursing officers disagreeing
+    would have rendered as two identical 'NURSE_MGR' rows.
+
+    The name lives on the staff record the profile points at; an account with no
+    staff row falls back to the local part of its email, and then to nothing.
+    Returning a partial map is deliberate - a missing name renders as the role,
+    which is worse than a name and much better than a 500 on the queue.
+    """
+    ids = [pid for pid in {str(p) for p in profile_ids if p}]
+    if not ids:
+        return {}
+    try:
+        profiles = (client.table("users_profile").select("id,email,staff_id")
+                    .eq("facility_id", facility_id).in_("id", ids)
+                    .execute().data or [])
+    except Exception:  # noqa: BLE001 - see docstring
+        return {}
+
+    staff_ids = [p["staff_id"] for p in profiles if p.get("staff_id")]
+    by_staff: dict[str, dict] = {}
+    if staff_ids:
+        try:
+            by_staff = {row["id"]: row for row in
+                        (client.table("staff").select("id,name,name_en")
+                         .eq("facility_id", facility_id).in_("id", staff_ids)
+                         .execute().data or [])}
+        except Exception:  # noqa: BLE001
+            by_staff = {}
+
+    out: dict[str, str] = {}
+    for profile in profiles:
+        staff = by_staff.get(profile.get("staff_id")) or {}
+        name = (staff.get("name") or staff.get("name_en")
+                or str(profile.get("email") or "").split("@")[0])
+        if name and profile.get("id"):
+            out[str(profile["id"])] = name
+    return out
+
+
+def _with_names(client, facility_id: str, rows: list[dict]) -> list[dict]:
+    names = _reviewer_names(client, facility_id,
+                            [r.get("recommended_by") for r in rows])
+    return [{**r, "recommended_by_name": names.get(str(r.get("recommended_by")))}
+            for r in rows]
+
+
 def for_request(client, facility_id: str, request_id: str, *,
                 include_withdrawn: bool = False) -> list[dict]:
     q = (client.table("request_recommendations").select("*")
@@ -149,7 +202,8 @@ def for_request(client, facility_id: str, request_id: str, *,
     if not include_withdrawn:
         q = q.is_("withdrawn_at", "null")
     rows = q.execute().data or []
-    return sorted(rows, key=lambda r: str(r.get("created_at") or ""))
+    rows = sorted(rows, key=lambda r: str(r.get("created_at") or ""))
+    return _with_names(client, facility_id, rows)
 
 
 def summarise(rows: list[dict]) -> dict:
@@ -191,6 +245,7 @@ def attach(client, facility_id: str, requests: list[dict]) -> list[dict]:
         # queue is an outage. The absent `recommendations` key is the signal.
         return requests
 
+    rows = _with_names(client, facility_id, rows)
     by_request: dict[str, list[dict]] = {}
     for row in rows:
         by_request.setdefault(row["leave_request_id"], []).append(row)
