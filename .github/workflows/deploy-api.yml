@@ -148,23 +148,40 @@ jobs:
           # The COMPLETE set of env vars and secrets. Never remove an entry to
           # "keep the old value" - anything absent is dropped from the new task
           # definition (see SETUP_BACKEND_AWS.md -> Changing configuration later).
-          ENVIRONMENT=$(cat <<EOF
-          [
-            {"name": "APP_ENV", "value": "${APP_ENV}"},
-            {"name": "SUPABASE_URL", "value": "${SUPABASE_URL}"},
-            {"name": "SUPABASE_ANON_KEY", "value": "${SUPABASE_ANON_KEY}"},
-            {"name": "CORS_ORIGINS", "value": "${CORS_ORIGINS}"},
-            {"name": "PORT", "value": "8080"}
-          ]
-          EOF
-          )
-          SECRETS=$(cat <<EOF
-          [
-            {"name": "SUPABASE_SERVICE_ROLE_KEY", "valueFrom": "${SECRET_ARN_SERVICE_ROLE_KEY}"},
-            {"name": "DATABASE_URL", "valueFrom": "${SECRET_ARN_DATABASE_URL}"}
-          ]
-          EOF
-          )
+          #
+          # Built with jq, not a heredoc. A repository variable pasted through the
+          # GitHub UI can carry a trailing newline, and interpolating one into a
+          # hand-written JSON string produces a literal control character inside
+          # the quotes: `aws` then rejects the whole --primary-container with
+          # "Invalid control character", after the image has already been pushed.
+          # That is exactly how the 1 Aug deploy failed on CORS_ORIGINS. jq quotes
+          # and escapes every value, and `tr -d '\r\n'` strips the stray newline
+          # rather than escaping it into the container's environment.
+          clean() { printf '%s' "${1-}" | tr -d '\r\n'; }
+
+          ENVIRONMENT=$(jq -cn \
+            --arg app_env      "$(clean "$APP_ENV")" \
+            --arg supabase_url "$(clean "$SUPABASE_URL")" \
+            --arg anon_key     "$(clean "$SUPABASE_ANON_KEY")" \
+            --arg cors         "$(clean "$CORS_ORIGINS")" \
+            '[{name: "APP_ENV",           value: $app_env},
+              {name: "SUPABASE_URL",      value: $supabase_url},
+              {name: "SUPABASE_ANON_KEY", value: $anon_key},
+              {name: "CORS_ORIGINS",      value: $cors},
+              {name: "PORT",              value: "8080"}]')
+
+          SECRETS=$(jq -cn \
+            --arg service_role "$(clean "$SECRET_ARN_SERVICE_ROLE_KEY")" \
+            --arg database_url "$(clean "$SECRET_ARN_DATABASE_URL")" \
+            '[{name: "SUPABASE_SERVICE_ROLE_KEY", valueFrom: $service_role},
+              {name: "DATABASE_URL",              valueFrom: $database_url}]')
+
+          PRIMARY_CONTAINER=$(jq -cn \
+            --arg image "$(clean "$IMAGE_URI")" \
+            --argjson environment "$ENVIRONMENT" \
+            --argjson secrets "$SECRETS" \
+            '{image: $image, containerPort: 8080,
+              environment: $environment, secrets: $secrets}')
 
           if aws ecs describe-express-gateway-service \
                --service-arn "$SERVICE_ARN" --region "$AWS_REGION" \
@@ -173,12 +190,7 @@ jobs:
             aws ecs update-express-gateway-service \
               --service-arn "$SERVICE_ARN" \
               --region "$AWS_REGION" \
-              --primary-container "{
-                \"image\": \"${IMAGE_URI}\",
-                \"containerPort\": 8080,
-                \"environment\": ${ENVIRONMENT},
-                \"secrets\": ${SECRETS}
-              }" \
+              --primary-container "$PRIMARY_CONTAINER" \
               --execution-role-arn "$EXEC_ROLE_ARN" \
               --health-check-path /health \
               --scaling-target '{"minTaskCount": 1, "maxTaskCount": 1}'
@@ -188,12 +200,7 @@ jobs:
               --service-name "$ECS_SERVICE" \
               --cluster "$ECS_CLUSTER" \
               --region "$AWS_REGION" \
-              --primary-container "{
-                \"image\": \"${IMAGE_URI}\",
-                \"containerPort\": 8080,
-                \"environment\": ${ENVIRONMENT},
-                \"secrets\": ${SECRETS}
-              }" \
+              --primary-container "$PRIMARY_CONTAINER" \
               --execution-role-arn "$EXEC_ROLE_ARN" \
               --infrastructure-role-arn "$INFRA_ROLE_ARN" \
               --health-check-path /health \
