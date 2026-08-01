@@ -727,3 +727,58 @@ def test_a_broken_notification_table_does_not_break_the_bedside_tick():
     out = task_svc.report_exception(db, "f1", "ta-1", reason_code="resident_absent")
     assert out["task_assignment"]["task_status"] == "exception"
     assert out["exception"]["reason_code"] == "resident_absent"
+
+
+# ── the production 500 Cherry reported ──────────────────────────────────────
+# "/me/profile and /me/summary return 500 for staff_a and staff_hw_a - whole
+# Staff App unusable." A 500 is the same symptom for three different causes, so
+# it told nobody which one it was. These pin the answer being diagnosable.
+
+def _staff_app_client(db, staff_id="staff-1"):
+    from fastapi.testclient import TestClient
+
+    from api.deps import AuthCtx, get_ctx
+    from api.main import app
+    from emma_core.models import Profile
+
+    ctx = AuthCtx(token="t", client=db,
+                  profile=Profile(id="p-1", facility_id="f1", role="FRONTLINE",
+                                  staff_id=staff_id))
+    app.dependency_overrides[get_ctx] = lambda: ctx
+    return TestClient(app, raise_server_exceptions=False), app, get_ctx
+
+
+def test_an_unreadable_staff_row_is_a_404_that_says_which_id():
+    """The account is linked to a staff_id no visible row matches - deleted,
+    wrong facility, or hidden by RLS. All three used to be a bare 500."""
+    http, app, get_ctx = _staff_app_client(_Fake(staff=[]))
+    try:
+        response = http.get("/me/profile")
+    finally:
+        app.dependency_overrides.pop(get_ctx, None)
+
+    assert response.status_code == 404
+    body = response.json()["detail"]
+    assert body["code"] == "staff_record_unavailable"
+    assert "staff-1" in body["message"], "the message must name the id to look up"
+
+
+def test_the_same_is_true_of_summary():
+    http, app, get_ctx = _staff_app_client(_Fake(staff=[]))
+    try:
+        response = http.get("/me/summary")
+    finally:
+        app.dependency_overrides.pop(get_ctx, None)
+    assert response.status_code == 404
+
+
+def test_an_account_with_no_staff_link_is_a_409_not_a_404():
+    """A different failure and it must not be confused with the one above: the
+    profile has no staff_id at all, so there is nothing to look up."""
+    http, app, get_ctx = _staff_app_client(_Fake(staff=[]), staff_id=None)
+    try:
+        response = http.get("/me/profile")
+    finally:
+        app.dependency_overrides.pop(get_ctx, None)
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == "no_staff_record"

@@ -34,22 +34,49 @@ def _staff_id(ctx: AuthCtx) -> str:
         raise api_error(409, "no_staff_record", str(exc)) from exc
 
 
+def _readable(ctx: AuthCtx, call):
+    """Run a staff-app read, and answer a missing staff row with a reason.
+
+    `_staff_row` raises ValueError when the account's `staff_id` resolves to no
+    visible row - the record was deleted, the profile points at a staff_id from
+    another facility, or RLS hides it from this token. Nothing caught it, so all
+    three arrived as a bare 500.
+
+    That is what made Cherry's production report undiagnosable: "/me/profile and
+    /me/summary return 500 for staff_a and staff_hw_a" is the same symptom for
+    three unrelated causes, and a 500 carries no information about which. 404
+    with the staff_id in the message says what to go and look at.
+    """
+    try:
+        return call()
+    except ValueError as exc:
+        raise api_error(
+            404, "staff_record_unavailable",
+            f"{exc}. The account is linked to staff_id "
+            f"{svc.resolve_staff_id(ctx.profile)!r}, and no staff row with that "
+            f"id is readable in this facility.",
+        ) from exc
+
+
 @router.get("/me/summary")
 def my_summary(ctx: AuthCtx = Depends(get_ctx)):
-    return svc.summary(ctx.client, ctx.facility_id, _staff_id(ctx))
+    staff_id = _staff_id(ctx)
+    return _readable(ctx, lambda: svc.summary(ctx.client, ctx.facility_id, staff_id))
 
 
 @router.get("/me/roster")
 def my_roster(days: int = Query(default=7, ge=1, le=42),
               start: Date | None = Query(default=None),
               ctx: AuthCtx = Depends(get_ctx)):
-    return svc.my_roster(ctx.client, ctx.facility_id, _staff_id(ctx),
-                         days=days, start=start)
+    staff_id = _staff_id(ctx)
+    return _readable(ctx, lambda: svc.my_roster(
+        ctx.client, ctx.facility_id, staff_id, days=days, start=start))
 
 
 @router.get("/me/profile")
 def my_profile(ctx: AuthCtx = Depends(get_ctx)):
-    return svc.profile(ctx.client, ctx.facility_id, _staff_id(ctx))
+    staff_id = _staff_id(ctx)
+    return _readable(ctx, lambda: svc.profile(ctx.client, ctx.facility_id, staff_id))
 
 
 @router.get("/me/tasks")
