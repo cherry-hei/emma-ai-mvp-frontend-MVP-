@@ -17,6 +17,7 @@ const NAV = [
   { key: 'nav_roi',         icon: '📈',  path: ROUTES.roi        },
   { key: 'nav_reports',     icon: '📊',  path: ROUTES.reports    },
   { key: 'nav_alert',       icon: '🔔',  path: ROUTES.alert, badge: '3' },
+  { key: 'nav_ai',          icon: '🤖',  path: ROUTES.insights   },
 ]
 
 export function Sidebar() {

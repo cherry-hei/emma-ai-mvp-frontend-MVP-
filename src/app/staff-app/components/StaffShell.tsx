@@ -7,9 +7,10 @@ import BottomNav from './BottomNav'
 import HomeScreen from './screens/HomeScreen'
 import TasksScreen from './screens/TasksScreen'
 import MyShiftScreen from './screens/MyShiftScreen'
+import ClockInScreen from './screens/ClockInScreen'
 import ProfileScreen from './screens/ProfileScreen'
 
-export type TabKey = 'home' | 'tasks' | 'shift' | 'profile'
+export type TabKey = 'home' | 'tasks' | 'shift' | 'clockin' | 'profile'
 
 export default function StaffShell() {
   const [activeTab, setActiveTab] = useState<TabKey>('home')
@@ -79,6 +80,7 @@ export default function StaffShell() {
               {activeTab === 'home' && <HomeScreen summary={summary} onChange={reload} />}
               {activeTab === 'tasks' && <TasksScreen summary={summary} onChange={reload} />}
               {activeTab === 'shift' && <MyShiftScreen />}
+              {activeTab === 'clockin' && <ClockInScreen />}
               {activeTab === 'profile' && <ProfileScreen />}
             </>
           )}

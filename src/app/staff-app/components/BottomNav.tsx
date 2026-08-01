@@ -2,7 +2,7 @@
 
 import type { ReactNode } from 'react'
 
-export type TabKey = 'home' | 'tasks' | 'shift' | 'profile'
+export type TabKey = 'home' | 'tasks' | 'shift' | 'clockin' | 'profile'
 
 interface BottomNavProps {
   activeTab: TabKey
@@ -13,6 +13,7 @@ const tabs: { key: TabKey; label: string; icon: ReactNode }[] = [
   { key: 'home', label: '首頁', icon: <span className="text-base">🏠</span> },
   { key: 'tasks', label: '工作', icon: <span className="text-base">📝</span> },
   { key: 'shift', label: '更表', icon: <span className="text-base">📅</span> },
+  { key: 'clockin', label: '打卡', icon: <span className="text-base">⏰</span> },
   { key: 'profile', label: '我的', icon: <span className="text-base">👤</span> },
 ]
 

@@ -17,7 +17,8 @@ const TYPE_COLOR: Record<string, string> = {
   SL: PINK, DSL: '#f59e0b', urgent: '#8b5cf6', late: '#6b7280',
 }
 
-type Step = 1 | 2 | 3 | 4
+type Step = 1 | 2 | 3 | 4 | 5
+type ChatMsg = { from: 'system' | 'staff'; text: string }
 
 /* ─── Resolution flow ─────────────────────────────────────────────────────── */
 function ResolutionModal({ incidentId, onClose, onResolved, isZH }: {
@@ -33,6 +34,8 @@ function ResolutionModal({ incidentId, onClose, onResolved, isZH }: {
   const [busy, setBusy] = useState('')
   const [error, setError] = useState('')
   const [outcome, setOutcome] = useState<{ minutes: number; toil: number; name: string } | null>(null)
+  const [chatMsgs, setChatMsgs] = useState<ChatMsg[]>([])
+  const [chatPhase, setChatPhase] = useState(0)
 
   useEffect(() => {
     let cancelled = false
@@ -58,8 +61,8 @@ function ResolutionModal({ incidentId, onClose, onResolved, isZH }: {
   const L = {
     title:    isZH ? '補更處理流程' : 'Resolution Flow: Cover Shift',
     steps:    isZH
-      ? ['確認請假資料', '核查合規影響', 'AI 推薦候選', '完成處理']
-      : ['Confirm Leave Details', 'Compliance Impact Check', 'AI Recommended Cover', 'Resolved'],
+      ? ['確認請假資料', '核查合規影響', 'AI 推薦候選', '發送通知', '完成處理']
+      : ['Confirm Leave Details', 'Compliance Impact Check', 'AI Recommended Cover', 'Send Notification', 'Resolved'],
     staff:    isZH ? '員工：' : 'Staff: ',
     date:     isZH ? '日期：' : 'Date: ',
     shift:    isZH ? '更次：' : 'Shift: ',
@@ -82,6 +85,19 @@ function ResolutionModal({ incidentId, onClose, onResolved, isZH }: {
     close:    isZH ? '關閉' : 'Close',
     loading:  isZH ? '載入中…' : 'Loading…',
     score:    isZH ? '分' : 'pts',
+    assignedSaved: isZH ? '✓ 已指派並儲存至更表' : '✓ Assignment saved to the roster',
+    chatPreviewNote: isZH
+      ? '以下為 WhatsApp 通知預覽（模擬） - 實際通知現時透過應用內發送'
+      : 'Preview of the WhatsApp notification (simulated) - the real notification is sent in-app today',
+    chatSystem: (shiftLabel: string) => isZH
+      ? `緊急補更通知\n${shiftLabel} 有更次需要接更\n請問你今日有空接更嗎？`
+      : `Urgent Cover Request\n${shiftLabel} needs cover\nAre you available to cover today?`,
+    chatReply: isZH ? '我可以接更 ✓' : 'I can cover ✓',
+    chatConfirm: isZH
+      ? '✅ 收到！已確認接更，更表同步更新中'
+      : '✅ Confirmed! Cover accepted, roster syncing',
+    staffReplyBtn: isZH ? '模擬員工接受（點此模擬回覆）✓' : 'Simulate staff acceptance (click to simulate) ✓',
+    online: isZH ? '在線' : 'Online',
   }
 
   async function assign(staffId: string, name: string) {
@@ -94,6 +110,11 @@ function ResolutionModal({ incidentId, onClose, onResolved, isZH }: {
         toil: res.future_debt?.quantity ?? 0,
         name,
       })
+      setChatMsgs([{
+        from: 'system',
+        text: L.chatSystem(incident ? `${incident.shift_type ?? ''} ${incident.shift_window ?? ''}`.trim() : ''),
+      }])
+      setChatPhase(1)
       setStep(4)
       onResolved()
     } catch (e) {
@@ -101,6 +122,17 @@ function ResolutionModal({ incidentId, onClose, onResolved, isZH }: {
     } finally {
       setBusy('')
     }
+  }
+
+  function handleStaffReply() {
+    if (chatPhase !== 1) return
+    setChatMsgs((m) => [...m, { from: 'staff', text: L.chatReply }])
+    setChatPhase(2)
+    setTimeout(() => {
+      setChatMsgs((m) => [...m, { from: 'system', text: L.chatConfirm }])
+      setChatPhase(3)
+      setStep(5)
+    }, 800)
   }
 
   return (
@@ -244,6 +276,51 @@ function ResolutionModal({ incidentId, onClose, onResolved, isZH }: {
             {!loading && step === 4 && outcome && (
               <div className="space-y-3">
                 <div className="text-sm font-bold text-gray-900">{L.steps[3]}</div>
+                <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-4 text-[11px] text-emerald-800">
+                  {L.assignedSaved} - {L.assignedTo}{outcome.name}
+                </div>
+                <div className="bg-blue-50 border border-blue-100 rounded-xl p-4 text-[11px] text-blue-800 space-y-1">
+                  <div>{L.notify}</div>
+                  <div className="text-[10px] text-blue-500">{L.chatPreviewNote}</div>
+                </div>
+                <div className="border border-gray-200 rounded-xl overflow-hidden">
+                  <div className="px-3 py-2 border-b border-gray-100 flex items-center gap-2 bg-gray-50">
+                    <div className="w-6 h-6 rounded-full flex items-center justify-center text-[10px] text-white font-bold flex-shrink-0" style={{ background: PINK }}>
+                      {outcome.name[0]}
+                    </div>
+                    <div>
+                      <div className="text-[10px] font-semibold text-gray-800">{outcome.name}</div>
+                      <div className="text-[8px] text-green-500">● {L.online}</div>
+                    </div>
+                  </div>
+                  <div className="p-2.5 space-y-2 min-h-[80px]">
+                    {chatMsgs.map((m, i) => (
+                      <div key={i} className={`flex ${m.from === 'staff' ? 'justify-end' : 'justify-start'}`}>
+                        <div className="max-w-[85%] px-2.5 py-1.5 rounded-xl text-[10px] leading-relaxed whitespace-pre-line"
+                          style={{
+                            background: m.from === 'system' ? '#f3f4f6' : PINK,
+                            color: m.from === 'system' ? '#374151' : '#fff',
+                            borderRadius: m.from === 'system' ? '4px 12px 12px 12px' : '12px 4px 12px 12px',
+                          }}>
+                          {m.text}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                  {chatPhase === 1 && (
+                    <div className="p-2 border-t border-gray-100">
+                      <button onClick={handleStaffReply} className="w-full py-1.5 text-[10px] rounded-lg text-white font-medium" style={{ background: '#10B981' }}>
+                        {L.staffReplyBtn}
+                      </button>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {!loading && step === 5 && outcome && (
+              <div className="space-y-3">
+                <div className="text-sm font-bold text-gray-900">{L.steps[4]}</div>
                 <div className="bg-green-50 border border-green-200 rounded-xl p-4 space-y-1.5 text-[11px] text-green-800">
                   <div className="font-semibold text-green-700">{L.resolvedT}</div>
                   <div>{L.assignedTo}{outcome.name}</div>
@@ -361,13 +438,18 @@ export default function AlertPage() {
   const [alerts, setAlerts] = useState<AlertItem[]>([])
   const [stats, setStats] = useState<IncidentStats | null>(null)
   const [resolved, setResolved] = useState<Incident[]>([])
+  const [complianceRatePct, setComplianceRatePct] = useState<number | null>(null)
   const [handling, setHandling] = useState<string>('')
   const [creating, setCreating] = useState(false)
   const [error, setError] = useState('')
 
   const load = useCallback(() => {
-    Promise.all([api.alerts(), api.incidentStats(), api.incidents({ status: 'resolved', limit: 6 })])
-      .then(([a, s, r]) => { setAlerts(a); setStats(s); setResolved(r); setError('') })
+    Promise.all([
+      api.alerts(), api.incidentStats(), api.incidents({ status: 'resolved', limit: 6 }), api.dashboard(),
+    ])
+      .then(([a, s, r, d]) => {
+        setAlerts(a); setStats(s); setResolved(r); setComplianceRatePct(d.kpis.compliance_rate_pct); setError('')
+      })
       .catch((e) => setError(e instanceof Error ? e.message : 'Failed to load alerts'))
   }, [])
 
@@ -396,6 +478,15 @@ export default function AlertPage() {
     ],
     subtitle: (n: number, m: string) =>
       isZH ? `${n} 個實時警報 · ${m} 實時監控中` : `${n} active alerts · ${m} live monitoring`,
+    aiSummaryTitle: isZH ? 'Emma AI · 本月 Alert 分析' : 'Emma AI · This Month\'s Alert Analysis',
+    aiResponse: isZH ? '平均響應時間' : 'Avg Response Time',
+    aiResponseBefore: isZH ? '人手處理 45 min' : 'Manual: 45 min',
+    aiCheck: isZH ? '合規核查' : 'Compliance Check',
+    aiCheckBefore: isZH ? '人手核查' : 'Manual Check',
+    aiCheckAfter: isZH ? 'AI 即時核查' : 'AI Instant Check',
+    aiCompliance: isZH ? 'SWD 合規率' : 'SWD Compliance',
+    aiComplianceBefore: isZH ? '人手追蹤' : 'Manual Tracking',
+    aiComplianceAfter: isZH ? 'AI 自動監控' : 'AI Auto-monitoring',
   }
 
   const kpiCards = stats ? [
@@ -557,6 +648,42 @@ export default function AlertPage() {
           </div>
         ))}
       </div>
+
+      {/* Emma AI Summary */}
+      {stats && (
+        <div className="rounded-2xl p-5 text-white" style={{ background: 'linear-gradient(135deg, #1a1a2e, #2d2d5e)' }}>
+          <div className="flex items-center gap-2 mb-4">
+            <span className="text-xl">🤖</span>
+            <span className="text-sm font-bold">{L.aiSummaryTitle}</span>
+          </div>
+          <div className="grid grid-cols-3 gap-3">
+            <div className="rounded-xl p-3" style={{ background: 'rgba(255,255,255,0.08)' }}>
+              <div className="text-[9px] text-gray-400 tracking-wider mb-1.5">{L.aiResponse}</div>
+              <div className="text-[10px] text-gray-300 line-through mb-0.5">{L.aiResponseBefore}</div>
+              <div className="text-xs font-bold text-white">{stats.avg_response_minutes} min (AI)</div>
+              <div className="text-[10px] font-semibold mt-1" style={{ color: '#34d399' }}>
+                ↓ {Math.max(0, Math.round((45 - stats.avg_response_minutes) / 45 * 100))}%
+              </div>
+            </div>
+            <div className="rounded-xl p-3" style={{ background: 'rgba(255,255,255,0.08)' }}>
+              <div className="text-[9px] text-gray-400 tracking-wider mb-1.5">{L.aiCheck}</div>
+              <div className="text-[10px] text-gray-300 line-through mb-0.5">{L.aiCheckBefore}</div>
+              <div className="text-xs font-bold text-white">{L.aiCheckAfter}</div>
+              <div className="text-[10px] font-semibold mt-1" style={{ color: '#34d399' }}>
+                {stats.auto_resolved_pct}% {isZH ? '自動解決' : 'auto-resolved'}
+              </div>
+            </div>
+            <div className="rounded-xl p-3" style={{ background: 'rgba(255,255,255,0.08)' }}>
+              <div className="text-[9px] text-gray-400 tracking-wider mb-1.5">{L.aiCompliance}</div>
+              <div className="text-[10px] text-gray-300 line-through mb-0.5">{L.aiComplianceBefore}</div>
+              <div className="text-xs font-bold text-white">{L.aiComplianceAfter}</div>
+              <div className="text-[10px] font-semibold mt-1" style={{ color: '#34d399' }}>
+                {complianceRatePct !== null ? `${complianceRatePct}%` : '-'} {isZH ? '達標率' : 'compliance rate'}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

@@ -2,12 +2,27 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { api } from '@/lib/api'
-import type { ApiStaff, PeriodOut, RatioResult, Unit } from '@/lib/apiTypes'
+import type { ApiStaff, PeriodOut, RatioResult, Unit, ViolationOut } from '@/lib/apiTypes'
 import { useLang } from '@/components/layout/LanguageContext'
 
 const PINK = '#E8187A'
 
-type Tab = 'ratio' | 'residents' | 'certs'
+type Tab = 'ratio' | 'residents' | 'certs' | 'agency' | 'audit'
+
+// Employment types the backend treats as external cover (emma_core.services.compliance.EXTERNAL_TYPES).
+const EXTERNAL_EMPLOYMENT_TYPES = new Set(['local_pt', 'agency', 'outsource', 'casual'])
+
+function AuditBadge({ s }: { s: 'ok' | 'warn' | 'over' }) {
+  const cls: Record<string, string> = {
+    ok: 'bg-emerald-50 text-emerald-700 border-emerald-200',
+    warn: 'bg-amber-50 text-amber-700 border-amber-200',
+    over: 'bg-red-50 text-red-700 border-red-200',
+  }
+  const sym: Record<string, string> = { ok: '✓', warn: '⚠', over: '✗' }
+  return (
+    <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${cls[s]}`}>{sym[s]}</span>
+  )
+}
 
 function daysUntil(iso: string | null | undefined): number | null {
   if (!iso) return null
@@ -39,6 +54,7 @@ export default function CompliancePage() {
   const [units, setUnits] = useState<Unit[]>([])
   const [draftCounts, setDraftCounts] = useState<Record<string, number>>({})
   const [staff, setStaff] = useState<ApiStaff[]>([])
+  const [violations, setViolations] = useState<ViolationOut[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
@@ -59,7 +75,17 @@ export default function CompliancePage() {
     noCerts: isZH ? '尚無證書資料' : 'No certificate records',
     st_unknown: isZH ? '未設定' : 'No expiry', st_expired: isZH ? '已過期' : 'Expired',
     st_expiring: isZH ? '即將到期' : 'Expiring', st_soon: isZH ? '注意' : 'Soon', st_ok: isZH ? '有效' : 'Valid',
+    tabAgency: isZH ? '外判規則' : 'Agency Rules', tabAudit: isZH ? '審計核對' : 'Audit Checklist',
+    ptCapTitle: isZH ? 'PT/外判人手上限 (≤FT/2)' : 'PT/Agency Cap (≤FT/2)',
+    colRole: isZH ? '職位' : 'Role', colFt: isZH ? '長工 (FT)' : 'Full-time (FT)',
+    colOutsourced: isZH ? '外判/兼職' : 'Outsourced/PT', colTotal: isZH ? '總數' : 'Total',
+    colPtCap: isZH ? 'PT上限 (≤FT/2)' : 'PT Cap (≤FT/2)',
+    auditOk: isZH ? '通過' : 'Pass', auditWarn: isZH ? '待處理' : 'Pending', auditOver: isZH ? '違規' : 'Breach',
+    colCategory: isZH ? '類別' : 'Category', colIssue: isZH ? '問題' : 'Issue', colFreq: isZH ? '頻次' : 'Freq',
+    noAuditItems: isZH ? '本週期尚無審計項目' : 'No audit items for this period',
+    catRatio: isZH ? '人手比例' : 'Staffing ratio', catCert: isZH ? '員工證書' : 'Certification',
   }
+  const certExpiringDetail = (n: number) => (isZH ? `${n} 張證書於30天內到期` : `${n} certificate(s) expiring within 30 days`)
   const stLabel = (k: string) => (T as Record<string, string>)[`st_${k}`] ?? k
 
   // periods → default current → manual version + default date
@@ -98,6 +124,11 @@ export default function CompliancePage() {
 
   useEffect(() => { if (date) loadDay(date, versionId) }, [date, versionId, loadDay])
 
+  useEffect(() => {
+    if (!versionId) { setViolations([]); return }
+    api.validateRoster(versionId).then((v) => setViolations(v.violations)).catch(() => setViolations([]))
+  }, [versionId])
+
   const ratioSummary = useMemo(() => ({
     pass: ratios.filter((r) => r.passes).length, fail: ratios.filter((r) => !r.passes).length,
   }), [ratios])
@@ -123,8 +154,81 @@ export default function CompliancePage() {
     [staff],
   )
 
+  // Full-time vs outsourced/part-time headcount per rank, so a PT/agency cap
+  // (≤ FT/2, Cap.459A s.113) can be checked against the real roster composition.
+  const ptCapRows = useMemo(() => {
+    const byRank = new Map<string, { ft: number; pt: number }>()
+    staff.forEach((s) => {
+      const row = byRank.get(s.rank) ?? { ft: 0, pt: 0 }
+      if (EXTERNAL_EMPLOYMENT_TYPES.has(s.employment_type)) row.pt += 1
+      else row.ft += 1
+      byRank.set(s.rank, row)
+    })
+    return Array.from(byRank.entries()).map(([rank, { ft, pt }]) => {
+      const cap = Math.floor(ft / 2)
+      return { rank, ft, pt, total: ft + pt, cap, ok: pt <= cap }
+    }).sort((a, b) => a.rank.localeCompare(b.rank))
+  }, [staff])
+
+  const expiringCertCount = useMemo(
+    () => certRows.filter((c) => c.days !== null && c.days <= 30).length,
+    [certRows],
+  )
+
+  const auditRows = useMemo(() => {
+    const rows: { category: string; issue: string; freq: number; status: 'ok' | 'warn' | 'over' }[] = []
+    ratios.forEach((r) => rows.push({
+      category: r.label, issue: `${r.actual}/${r.required}`, freq: 1,
+      status: r.passes ? 'ok' : 'over',
+    }))
+    // The full validation run repeats the same rule violation once per affected
+    // day/window, so group by (rule, message) and show the occurrence count
+    // instead of dumping every row — Cap.459A checklist reads as a summary.
+    const byViolation = new Map<string, { status: 'warn' | 'over'; freq: number }>()
+    violations.forEach((v) => {
+      const key = `${v.rule_code}::${v.message ?? ''}`
+      const entry = byViolation.get(key)
+      if (entry) entry.freq += 1
+      else byViolation.set(key, { status: v.severity === 'hard' ? 'over' : 'warn', freq: 1 })
+    })
+    violations.forEach((v) => {
+      const key = `${v.rule_code}::${v.message ?? ''}`
+      if (!byViolation.has(key)) return
+      const entry = byViolation.get(key)!
+      rows.push({ category: v.rule_code, issue: v.message ?? v.rule_code, freq: entry.freq, status: entry.status })
+      byViolation.delete(key)
+    })
+    rows.push({
+      category: T.catCert, issue: certExpiringDetail(expiringCertCount),
+      freq: expiringCertCount, status: expiringCertCount > 0 ? 'warn' : 'ok',
+    })
+    return rows
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ratios, violations, expiringCertCount, isZH])
+
+  const auditOkCount = auditRows.filter((r) => r.status === 'ok').length
+  const auditWarnCount = auditRows.filter((r) => r.status === 'warn').length
+  const auditOverCount = auditRows.filter((r) => r.status === 'over').length
+
+  const AGENCY_RULES = isZH ? [
+    { icon: '📋', title: '50%上限', desc: 'PT/外判人數不得超過同職級長工人數的50%（Cap.459A s.113）' },
+    { icon: '🕐', title: '更次要求', desc: '更次時段需符合本院已登記的更表定義' },
+    { icon: '📅', title: '合約期限', desc: '外判合約最長4個月，需提前續約' },
+    { icon: '👥', title: '人數限制', desc: '每更外判/兼職人數不得超過該職級PT上限' },
+    { icon: '🔍', title: '審計要求', desc: '每季需保留外判人手審核記錄' },
+    { icon: '⏰', title: '通知時限', desc: '外判需提前確認，緊急情況除外' },
+  ] : [
+    { icon: '📋', title: '50% Cap', desc: 'PT/agency headcount cannot exceed 50% of full-time in the same rank (Cap.459A s.113)' },
+    { icon: '🕐', title: 'Shift Hours', desc: 'Shift windows must match this facility\'s registered shift definitions' },
+    { icon: '📅', title: 'Contract Limit', desc: 'Max 4-month agency contracts, must renew in advance' },
+    { icon: '👥', title: 'Count Limit', desc: 'PT/agency headcount per shift must stay within that rank\'s PT cap' },
+    { icon: '🔍', title: 'Audit Record', desc: 'Agency staffing audit records must be kept each quarter' },
+    { icon: '⏰', title: 'Notice Period', desc: 'Advance confirmation required for agency cover, except emergencies' },
+  ]
+
   const TABS: { id: Tab; label: string }[] = [
     { id: 'ratio', label: T.ratio }, { id: 'residents', label: T.residents }, { id: 'certs', label: T.certs },
+    { id: 'agency', label: T.tabAgency }, { id: 'audit', label: T.tabAudit },
   ]
 
   return (
@@ -208,6 +312,34 @@ export default function CompliancePage() {
               </tbody>
             </table>
           </div>
+
+          <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
+            <div className="px-3 pt-3 text-xs font-semibold text-gray-700">{T.ptCapTitle}</div>
+            <table className="w-full text-xs mt-2">
+              <thead>
+                <tr className="bg-gray-50 border-b border-gray-100 text-left text-[10px] text-gray-500 uppercase">
+                  <th className="px-3 py-2.5">{T.colRole}</th><th className="px-3 py-2.5">{T.colFt}</th>
+                  <th className="px-3 py-2.5">{T.colOutsourced}</th><th className="px-3 py-2.5">{T.colTotal}</th>
+                  <th className="px-3 py-2.5">{T.colPtCap}</th><th className="px-3 py-2.5">{T.status}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {ptCapRows.map((row) => (
+                  <tr key={row.rank} className="border-b border-gray-50">
+                    <td className="px-3 py-2.5 font-semibold text-gray-700">{row.rank}</td>
+                    <td className="px-3 py-2.5 text-gray-600">{row.ft}</td>
+                    <td className="px-3 py-2.5 text-gray-600">{row.pt}</td>
+                    <td className="px-3 py-2.5 font-bold text-gray-800">{row.total}</td>
+                    <td className="px-3 py-2.5 text-gray-500">{row.cap}</td>
+                    <td className="px-3 py-2.5"><AuditBadge s={row.ok ? 'ok' : 'over'} /></td>
+                  </tr>
+                ))}
+                {ptCapRows.length === 0 && (
+                  <tr><td colSpan={6} className="px-3 py-6 text-center text-gray-400">-</td></tr>
+                )}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
 
@@ -268,6 +400,64 @@ export default function CompliancePage() {
               )}
             </tbody>
           </table>
+        </div>
+      )}
+
+      {/* AGENCY RULES */}
+      {!loading && tab === 'agency' && (
+        <div className="bg-white border border-gray-200 rounded-xl p-5">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            {AGENCY_RULES.map((rule) => (
+              <div key={rule.title} className="rounded-xl border border-gray-100 bg-gray-50 p-4 flex gap-3">
+                <span className="text-xl flex-shrink-0">{rule.icon}</span>
+                <div>
+                  <div className="text-xs font-semibold text-gray-800 mb-1">{rule.title}</div>
+                  <div className="text-[11px] text-gray-500 leading-relaxed">{rule.desc}</div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* AUDIT CHECKLIST */}
+      {!loading && tab === 'audit' && (
+        <div className="space-y-4">
+          <div className="grid grid-cols-3 gap-3">
+            {[
+              { label: T.auditOk, count: auditOkCount, cls: 'bg-emerald-50 border-emerald-200', color: '#10b981' },
+              { label: T.auditWarn, count: auditWarnCount, cls: 'bg-amber-50 border-amber-200', color: '#f59e0b' },
+              { label: T.auditOver, count: auditOverCount, cls: 'bg-red-50 border-red-200', color: '#ef4444' },
+            ].map((s) => (
+              <div key={s.label} className={`rounded-xl border p-4 text-center ${s.cls}`}>
+                <div className="text-2xl font-bold tabular-nums" style={{ color: s.color }}>{s.count}</div>
+                <div className="text-[11px] font-semibold mt-1" style={{ color: s.color }}>{s.label}</div>
+              </div>
+            ))}
+          </div>
+          <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="bg-gray-50 border-b border-gray-100 text-left text-[10px] text-gray-500 uppercase">
+                  <th className="px-3 py-2.5">{T.colCategory}</th><th className="px-3 py-2.5">{T.colIssue}</th>
+                  <th className="px-3 py-2.5">{T.colFreq}</th><th className="px-3 py-2.5">{T.status}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {auditRows.map((a, i) => (
+                  <tr key={i} className="border-b border-gray-50">
+                    <td className="px-3 py-2.5 font-semibold text-gray-800">{a.category}</td>
+                    <td className="px-3 py-2.5 text-gray-600">{a.issue}</td>
+                    <td className="px-3 py-2.5 text-gray-500">{a.freq || '-'}</td>
+                    <td className="px-3 py-2.5"><AuditBadge s={a.status} /></td>
+                  </tr>
+                ))}
+                {auditRows.length === 0 && (
+                  <tr><td colSpan={4} className="px-3 py-6 text-center text-gray-400">{T.noAuditItems}</td></tr>
+                )}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
     </div>
