@@ -10,7 +10,8 @@
 // higher-security posture, move auth to a server-side BFF with httpOnly cookies.
 import type {
   AlertItem, ApiError, ApiStaff, CompareOptionsResponse, CreatePeriodResponse,
-  DashboardSummary, EventTrigger, FacilityEvent, FutureDebtRow, GeneratedReport, Incident,
+  DashboardSummary, EventTrigger, FacilityEvent, FacilityEventType, FutureDebtRow,
+  GeneratedReport, Incident,
   IncidentStats, JobView, KpiOverview, LeaveCategory, LeaveGroup, LeaveRequest, LeaveStats,
   MyAttendance, MyProfile, MyRoster, MySummary, MyTask, OptimizeResponse, PeriodOut,
   FloorRule, Profile, RatioResult, RegulatoryDoc, ReplacementCandidate, ReportRow,
@@ -271,6 +272,12 @@ export const api = {
     if (params?.dateTo) q.set('date_to', params.dateTo)
     return apiFetch<FacilityEvent[]>(`/facility-events${q.size ? `?${q.toString()}` : ''}`)
   },
+
+  /** 4.2 — the event types the server validates against, with labels. The
+   *  picker reads this so it cannot offer a type the API would reject. */
+  facilityEventTypes: () =>
+    apiFetch<{ event_types: FacilityEventType[] }>('/facility-events/types')
+      .then(r => r.event_types),
 
   createFacilityEvent: (body: {
     event_type: string; event_date: string; start_at?: string; end_at?: string

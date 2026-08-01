@@ -86,7 +86,8 @@ def upsert_certificate(staff_id: str, body: CertificateUpsert,
         return cert_svc.upsert(
             ctx.client, ctx.facility_id, staff_id, cert_type=body.cert_type,
             expiry_date=body.expiry_date, file_url=body.file_url,
-            certificate_id=body.certificate_id)
+            certificate_id=body.certificate_id, cert_number=body.cert_number,
+            issued_date=body.issued_date, uploaded_by=ctx.profile_id)
     except ValueError as exc:
         raise api_error(404 if "not found" in str(exc) else 400,
                         "invalid_certificate", str(exc)) from exc

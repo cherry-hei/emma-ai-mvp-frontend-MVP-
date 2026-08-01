@@ -231,6 +231,21 @@ export interface StaffingRequirement {
   notes?: string | null
 }
 
+/** 4.2 — one entry of GET /facility-events/types.
+ *
+ *  `templated` is the field the create-event form needs: a templated type fills
+ *  its own staffing requirements, and an untemplated one (visiting, meetings,
+ *  PGT) is manager-assessed and must not be saved with a guessed headcount.
+ *  `aliases` are the spellings the workbook importer writes for the same type. */
+export interface FacilityEventType {
+  code: string
+  label_zh: string
+  label_en: string
+  aliases: string[]
+  templated: boolean
+  default_requirements: StaffingRequirement[]
+}
+
 export interface FacilityEvent {
   id: string
   event_type: string

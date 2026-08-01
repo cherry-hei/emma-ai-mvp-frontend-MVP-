@@ -44,6 +44,12 @@ class Settings(BaseSettings):
 
     app_env: str = "development"
 
+    # Firebase Cloud Messaging (spec SA.4). Empty until the Firebase project is
+    # provisioned; `push.deliver()` reports "not configured" and leaves the
+    # notification queued rather than claiming a delivery that never happened.
+    fcm_project_id: str = ""
+    fcm_access_token: str = ""
+
     # CORS allow-list for the frontend origin(s); set CORS_ORIGINS per deployment.
     cors_origins: str = ("http://localhost:3000,http://127.0.0.1:3000,"
                          "http://localhost:3001,http://127.0.0.1:3001")

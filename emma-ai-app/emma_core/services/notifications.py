@@ -16,6 +16,16 @@ def push(client, facility_id: str, *, event_type: str, title: str,
          profile_id: str | None = None, channel: str = IN_APP,
          related_type: str | None = None, related_id: str | None = None) -> dict:
     sent = channel == IN_APP
+    return _delivered(client, facility_id, _record(
+        client, facility_id, event_type=event_type, title=title, body=body,
+        staff_id=staff_id, profile_id=profile_id, channel=channel, sent=sent,
+        related_type=related_type, related_id=related_id))
+
+
+def _record(client, facility_id: str, *, event_type: str, title: str,
+            body: str | None, staff_id: str | None, profile_id: str | None,
+            channel: str, sent: bool, related_type: str | None,
+            related_id: str | None) -> dict:
     # SQL: insert into notifications
     #        (facility_id, staff_id, profile_id, channel, event_type, title, body,
     #         related_type, related_id, status, sent_at)
@@ -31,6 +41,27 @@ def push(client, facility_id: str, *, event_type: str, title: str,
         "status": "sent" if sent else "queued",
         "sent_at": now_iso() if sent else None,
     }).execute().data[0]
+
+
+def _delivered(client, facility_id: str, row: dict) -> dict:
+    """Try the recipient's phone as well, if FCM has been provisioned (SA.4).
+
+    The row is written first and returned whatever happens here. In-app delivery
+    is the guarantee - the notification is in the list the moment the row
+    exists - and push is the extra that reaches someone who does not have the
+    app open. Ordering it the other way would make a failed push able to lose a
+    notification the app could have shown.
+
+    While no Firebase project exists this is one dictionary lookup and a return;
+    `push.deliver` checks its credentials before touching the database.
+    """
+    from . import push
+
+    try:
+        push.deliver(client, facility_id, row)
+    except Exception:  # noqa: BLE001 - see docstring
+        pass
+    return row
 
 
 def _profiles_where(client, facility_id: str, predicate) -> list[dict]:

@@ -650,6 +650,9 @@ class CertificateUpsert(BaseModel):
     cert_type: str = Field(min_length=1, max_length=64)
     expiry_date: Date | None = None
     file_url: str | None = None
+    # As printed on the document; the number the registry is checked against.
+    cert_number: str | None = Field(default=None, max_length=128)
+    issued_date: Date | None = None
     # Set to correct a certificate in place; omit to add or renew by type.
     certificate_id: str | None = None
 
@@ -660,6 +663,8 @@ class CertificateOut(BaseModel):
     staff_id: str
     cert_type: str
     expiry_date: Date | None = None
+    issued_date: Date | None = None
+    cert_number: str | None = None
     file_url: str | None = None
     # Derived on read, never stored: a stored `days_left` is wrong by definition
     # the morning after it is written.

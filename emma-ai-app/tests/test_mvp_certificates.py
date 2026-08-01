@@ -129,6 +129,15 @@ def db():
 
 
 def _add(db, cert_type, days_from_today, **extra):
+    """Put a certificate in the vault as setup.
+
+    `notify=False` because filing one now tells HR (SA.7: "on upload/update, HR
+    receives a notification"), and these tests assert on the notification list
+    to check the *expiry* ladder. Leaving the filing notice in would make every
+    one of them assert around a message it is not about. The filing notice has
+    its own tests at the bottom of this file.
+    """
+    extra.setdefault("notify", False)
     return svc.upsert(db, "fac-1", "staff-1", cert_type=cert_type,
                       expiry_date=TODAY + timedelta(days=days_from_today), **extra)
 
@@ -288,3 +297,197 @@ def test_the_message_names_the_staff_member_for_the_manager(db):
     svc.notify_expiring(db, "fac-1", today=TODAY)
     body = db.notifications[0]["body"]
     assert "Chan Siu Ming" in body
+
+
+# ── SA.7 second pass: the staff member's own vault ──────────────────────────
+# "Staff upload their own certificates ... On upload/update, HR receives a
+# notification that a colleague's cert was updated ... lead time configurable
+# per facility." Three things the first pass did not do.
+
+def _hr_db() -> FakeDB:
+    db = FakeDB()
+    db.store["users_profile"].append(
+        {"id": "prof-hr", "facility_id": "fac-1", "role": "hr"})
+    db.store["users_profile"].append(
+        {"id": "prof-staff", "facility_id": "fac-1", "role": "FRONTLINE"})
+    return db
+
+
+def _filed(db) -> list[dict]:
+    return [n for n in db.notifications if n["event_type"] == "certificate_filed"]
+
+
+def test_filing_a_certificate_tells_hr(db=None):
+    db = _hr_db()
+    svc.upsert(db, "fac-1", "staff-1", cert_type="BLS",
+               expiry_date=TODAY + timedelta(days=300), cert_number="BLS-99",
+               uploaded_by="prof-staff")
+    told = {n["profile_id"] for n in _filed(db)}
+    # 'hr' is the legacy spelling of HR_AUDITOR, which holds the one write grant
+    # on certificates. A literal role list would have missed it entirely.
+    assert "prof-hr" in told
+    assert "prof-staff" not in told, "the uploader does not need telling"
+    assert "Chan Siu Ming" in _filed(db)[0]["title"]
+
+
+def test_a_renewal_says_renewed_not_uploaded():
+    db = _hr_db()
+    svc.upsert(db, "fac-1", "staff-1", cert_type="BLS",
+               expiry_date=TODAY + timedelta(days=10), notify=False)
+    svc.upsert(db, "fac-1", "staff-1", cert_type="BLS",
+               expiry_date=TODAY + timedelta(days=400))
+    assert "renewed" in _filed(db)[0]["title"]
+
+
+def test_the_certificate_number_and_issue_date_are_stored():
+    db = _hr_db()
+    row = svc.upsert(db, "fac-1", "staff-1", cert_type="practising",
+                     cert_number="RN-123456", issued_date=Date(2026, 1, 5),
+                     expiry_date=TODAY + timedelta(days=200), notify=False)
+    assert row["cert_number"] == "RN-123456"
+    assert row["issued_date"] == "2026-01-05"
+    assert row["cert_type"] == "PRACTISING"
+
+
+def test_an_issue_date_after_the_expiry_is_refused():
+    db = _hr_db()
+    with pytest.raises(ValueError, match="issued_date cannot be after"):
+        svc.upsert(db, "fac-1", "staff-1", cert_type="BLS",
+                   issued_date=Date(2027, 1, 1), expiry_date=Date(2026, 12, 1))
+
+
+def test_a_failed_notification_does_not_lose_the_certificate():
+    """The staff member photographed their card and pressed save."""
+    class _NoNotifications(FakeDB):
+        def table(self, name):
+            if name == "notifications":
+                raise RuntimeError("unreachable")
+            return super().table(name)
+
+    db = _NoNotifications()
+    row = svc.upsert(db, "fac-1", "staff-1", cert_type="BLS",
+                     expiry_date=TODAY + timedelta(days=30))
+    assert row["cert_type"] == "BLS"
+    assert len(db.certificates) == 1
+
+
+# ── configurable lead times ─────────────────────────────────────────────────
+def _with_policy(config: dict) -> FakeDB:
+    db = FakeDB()
+    db.store["facility_json_configs"].append({
+        "id": "cfg-1", "facility_id": "fac-1", "config_key": "certificate_reminders",
+        "config_json": config, "active": True, "version": 1,
+    })
+    return db
+
+
+def test_a_facility_can_set_its_own_lead_times():
+    db = _with_policy({"lead_days": [180, 30], "expired_repeat_days": 14})
+    policy = svc.reminder_policy(db, "fac-1")
+    assert policy.lead_days == (30, 180)
+    assert svc.stage_for(120, policy) == "d180"
+    assert svc.stage_for(29, policy) == "d30"
+    # 90 is not a rung for this home, so it falls into the next one up.
+    assert svc.stage_for(90, policy) == "d180"
+    assert svc.stage_for(-10, policy) == "expired:1", "14-day repeat, not 7"
+
+
+def test_the_sweep_looks_as_far_ahead_as_the_configured_ladder():
+    """A home asking to be warned six months out gets nothing from a sweep that
+    only looks 90 days ahead, and the misconfiguration is invisible."""
+    db = _with_policy({"lead_days": [180]})
+    svc.upsert(db, "fac-1", "staff-1", cert_type="BLS",
+               expiry_date=TODAY + timedelta(days=150), notify=False)
+    sent = svc.notify_expiring(db, "fac-1", today=TODAY, dry_run=True)
+    assert [c["stage"] for c in sent] == ["d180"]
+
+
+@pytest.mark.parametrize("config", [
+    {}, {"lead_days": []}, {"lead_days": "soon"}, {"lead_days": [0, -5]},
+    {"expired_repeat_days": 0}, {"lead_days": None},
+])
+def test_a_broken_config_falls_back_to_the_default_ladder(config):
+    """Over-warned is recoverable. Silently unwarned is how a certificate lapses
+    with nobody told, so no config mistake may be able to cause it."""
+    assert svc.reminder_policy(_with_policy(config), "fac-1").lead_days \
+        == svc.DEFAULT_POLICY.lead_days
+
+
+def test_an_unreachable_config_table_falls_back_too():
+    class _NoConfigs(FakeDB):
+        def table(self, name):
+            if name == "facility_json_configs":
+                raise RuntimeError("unreachable")
+            return super().table(name)
+
+    assert svc.reminder_policy(_NoConfigs(), "fac-1") == svc.DEFAULT_POLICY
+
+
+# ── the /me/* half, which is the only one FRONTLINE can reach ───────────────
+def _staff_client(db):
+    from fastapi.testclient import TestClient
+
+    from api.deps import AuthCtx, get_ctx
+    from api.main import app
+    from emma_core.models import Profile
+
+    ctx = AuthCtx(token="t", client=db,
+                  profile=Profile(id="prof-staff", facility_id="fac-1",
+                                  role="FRONTLINE", staff_id="staff-1"))
+    app.dependency_overrides[get_ctx] = lambda: ctx
+    return TestClient(app, raise_server_exceptions=False), app, get_ctx
+
+
+def test_a_care_worker_can_file_and_read_their_own_certificate():
+    """FRONTLINE holds S on staff.certificates, so /staff/{id}/certificates is a
+    403 for them - the one person who cannot use the vault was the person whose
+    certificate it is."""
+    db = _hr_db()
+    http, app, get_ctx = _staff_client(db)
+    try:
+        created = http.post("/me/certificates", json={
+            "cert_type": "BLS", "cert_number": "BLS-42",
+            "expiry_date": "2027-01-31"})
+        listed = http.get("/me/certificates")
+    finally:
+        app.dependency_overrides.pop(get_ctx, None)
+
+    assert created.status_code == 201, created.text
+    assert created.json()["cert_number"] == "BLS-42"
+    assert [c["cert_type"] for c in listed.json()] == ["BLS"]
+    assert _filed(db), "HR was not told a colleague filed a certificate"
+
+
+def test_a_care_worker_cannot_delete_a_colleagues_certificate():
+    db = _hr_db()
+    db.store["staff"].append(
+        {"id": "staff-2", "facility_id": "fac-1", "name": "Someone Else"})
+    theirs = svc.upsert(db, "fac-1", "staff-2", cert_type="BLS",
+                        expiry_date=TODAY + timedelta(days=90), notify=False)
+
+    http, app, get_ctx = _staff_client(db)
+    try:
+        response = http.delete(f"/me/certificates/{theirs['id']}")
+    finally:
+        app.dependency_overrides.pop(get_ctx, None)
+
+    assert response.status_code == 404, "a colleague's uuid must read as missing"
+    assert len(db.certificates) == 1, "the colleague's certificate was deleted"
+
+
+# ── the RLS hole the second pass closed ─────────────────────────────────────
+def test_the_vault_policy_is_scoped_to_the_person_not_the_facility():
+    """Before migration 21 the policy was `facility_id = current_facility_id()`
+    alone, so any token in the home could enumerate every colleague's
+    certificates straight off the table."""
+    import pathlib
+    import re
+
+    sql = (pathlib.Path(__file__).resolve().parents[1] / "supabase" / "migrations"
+           / "20260801000021_sa7_self_service_vault.sql").read_text(encoding="utf-8")
+    policy = re.search(
+        r"create policy staff_certificates_tenant.*?;", sql, re.S)
+    assert policy, "the policy is not redefined in this migration"
+    assert policy.group(0).count("can_see_staff_row(staff_id)") == 2, \
+        "both USING and WITH CHECK must be person-scoped"
+    assert "add column if not exists cert_number" in sql

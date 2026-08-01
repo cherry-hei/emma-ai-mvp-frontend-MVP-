@@ -30,6 +30,7 @@ medication audit means the person cannot be rostered on a drug round tomorrow.
 from __future__ import annotations
 
 from datetime import date as Date, timedelta
+from typing import NamedTuple
 
 from ..permissions import Feature
 from . import notifications
@@ -60,7 +61,55 @@ def _as_date(value) -> Date | None:
     return Date.fromisoformat(str(value)[:10])
 
 
-def stage_for(days_left: int | None) -> str | None:
+class ReminderPolicy(NamedTuple):
+    """When this facility wants to be warned. Defaults are the built-in ladder."""
+
+    lead_days: tuple[int, ...] = WARNING_STAGES
+    expired_repeat_days: int = EXPIRED_REPEAT_DAYS
+
+
+DEFAULT_POLICY = ReminderPolicy()
+REMINDER_CONFIG_KEY = "certificate_reminders"
+
+
+def reminder_policy(client, facility_id: str) -> ReminderPolicy:
+    """The facility's configured lead times, or the default ladder.
+
+    The SA.7 ticket asks for the lead time to be "configurable per facility".
+    It lives in facility_json_configs under `certificate_reminders`, the same
+    versioned, effective-dated store as the rest of the home's rules, so
+    changing it is an admin action rather than a deploy - and last quarter's
+    setting stays answerable.
+
+    Anything malformed falls back to the default ladder rather than raising.
+    A home that mistypes its config must end up over-warned, never silently
+    unwarned: the failure mode of this job is a certificate lapsing with nobody
+    told, and a bad config must not be able to cause it.
+    """
+    from . import facility_config                    # local: avoids a cycle
+
+    try:
+        row = facility_config.get_config(client, facility_id, REMINDER_CONFIG_KEY)
+    except Exception:  # noqa: BLE001 - see docstring
+        return DEFAULT_POLICY
+    config = (row or {}).get("config_json") or {}
+
+    raw = config.get("lead_days")
+    lead: tuple[int, ...] = DEFAULT_POLICY.lead_days
+    if isinstance(raw, (list, tuple)) and raw:
+        days = sorted({int(d) for d in raw
+                       if isinstance(d, (int, float)) and int(d) > 0})
+        if days:
+            lead = tuple(days)
+
+    repeat = config.get("expired_repeat_days")
+    repeat = (int(repeat) if isinstance(repeat, (int, float)) and int(repeat) > 0
+              else DEFAULT_POLICY.expired_repeat_days)
+    return ReminderPolicy(lead, repeat)
+
+
+def stage_for(days_left: int | None,
+              policy: ReminderPolicy = DEFAULT_POLICY) -> str | None:
     """Which warning stage a certificate is at, or None if it is not due one.
 
     Returned as a string because it is stored on the row and compared for
@@ -71,10 +120,10 @@ def stage_for(days_left: int | None) -> str | None:
     if days_left is None:
         return None
     if days_left < 0:
-        return f"expired:{(-days_left - 1) // EXPIRED_REPEAT_DAYS + 1}"
+        return f"expired:{(-days_left - 1) // policy.expired_repeat_days + 1}"
     if days_left == 0:
         return "expires_today"
-    for threshold in WARNING_STAGES:
+    for threshold in policy.lead_days:
         if days_left <= threshold:
             return f"d{threshold}"
     return None
@@ -93,20 +142,23 @@ def list_for_staff(client, facility_id: str, staff_id: str, *,
     return [_decorate(row, today) for row in rows]
 
 
-def _decorate(row: dict, today: Date) -> dict:
+def _decorate(row: dict, today: Date,
+              policy: ReminderPolicy = DEFAULT_POLICY) -> dict:
     expiry = _as_date(row.get("expiry_date"))
     days_left = (expiry - today).days if expiry else None
     return {
         **row,
         "days_left": days_left,
         "is_expired": days_left is not None and days_left < 0,
-        "stage": stage_for(days_left),
+        "stage": stage_for(days_left, policy),
     }
 
 
 def upsert(client, facility_id: str, staff_id: str, *, cert_type: str,
            expiry_date=None, file_url: str | None = None,
-           certificate_id: str | None = None) -> dict:
+           certificate_id: str | None = None, cert_number: str | None = None,
+           issued_date=None, uploaded_by: str | None = None,
+           notify: bool = True) -> dict:
     """Add a certificate, or replace the one of the same type.
 
     One row per (staff, cert_type): a renewal is an update, not a second row.
@@ -122,10 +174,18 @@ def upsert(client, facility_id: str, staff_id: str, *, cert_type: str,
     if not cert_type or len(cert_type) > 64:
         raise ValueError("cert_type must be 1-64 characters")
     expiry = _as_date(expiry_date)
+    issued = _as_date(issued_date)
+    if issued and expiry and issued > expiry:
+        # Caught here rather than left to the database, because the pair is only
+        # wrong relative to each other and the message has to say which is which.
+        raise ValueError("issued_date cannot be after expiry_date")
     row = {
         "facility_id": facility_id, "staff_id": staff_id, "cert_type": cert_type,
         "expiry_date": iso(expiry) if expiry else None,
+        "issued_date": iso(issued) if issued else None,
+        "cert_number": (cert_number or "").strip() or None,
         "file_url": (file_url or "").strip() or None,
+        "uploaded_by": uploaded_by,
         "notified_stage": None,
     }
     if certificate_id:
@@ -136,7 +196,7 @@ def upsert(client, facility_id: str, staff_id: str, *, cert_type: str,
                 .execute().data)
         if not rows:
             raise ValueError("certificate not found")
-        return _decorate(rows[0], Date.today())
+        return _filed(client, facility_id, rows[0], renewal=True, notify=notify)
 
     # SQL: select id from staff_certificates
     #      where facility_id = :f and staff_id = :s and cert_type = :cert_type
@@ -146,11 +206,50 @@ def upsert(client, facility_id: str, staff_id: str, *, cert_type: str,
     if existing:
         rows = (client.table("staff_certificates").update(row)
                 .eq("id", existing[0]["id"]).execute().data)
-        return _decorate(rows[0], Date.today())
+        return _filed(client, facility_id, rows[0], renewal=True, notify=notify)
     # SQL: insert into staff_certificates (...) values (...) returning *
-    return _decorate(
+    return _filed(
+        client, facility_id,
         client.table("staff_certificates").insert(row).execute().data[0],
-        Date.today())
+        renewal=False, notify=notify)
+
+
+def _filed(client, facility_id: str, row: dict, *, renewal: bool,
+           notify: bool) -> dict:
+    """Decorate a written row, and tell HR a colleague filed a certificate.
+
+    From the SA.7 ticket: "On upload/update, HR (HR_AUDITOR role) receives a
+    notification that a colleague's cert was updated."
+
+    Sent to whoever the matrix says may edit certificates, which is HR_AUDITOR
+    (its one write grant) plus ADMIN_CLERK and OWNER - resolved through
+    `can_write` rather than a literal role list, because a hard-coded
+    'HR_AUDITOR' would miss the legacy 'hr' and 'auditor' spellings still in
+    users_profile and silently notify nobody.
+
+    A failed notification cannot fail the upload. The staff member has
+    photographed their card and pressed save; losing that because a
+    notification row would not write is the worse of the two outcomes, and the
+    certificate is still in the vault for the expiry sweep to find.
+    """
+    decorated = _decorate(row, Date.today())
+    if not notify:
+        return decorated
+    try:
+        who = _staff_names(client, facility_id, [row["staff_id"]]).get(
+            row["staff_id"], "A colleague")
+        expiry = row.get("expiry_date")
+        notifications.push_to_responders(
+            client, facility_id, Feature.CERTIFICATES,
+            event_type="certificate_filed",
+            title=f'{who} {"renewed" if renewal else "uploaded"} '
+                  f'{row["cert_type"]}',
+            body=f'Expires {iso(expiry)}' if expiry else "No expiry date given",
+            related_type="staff_certificate", related_id=row.get("id"),
+        )
+    except Exception:  # noqa: BLE001 - see docstring
+        pass
+    return decorated
 
 
 def delete(client, facility_id: str, certificate_id: str) -> None:
@@ -162,9 +261,11 @@ def delete(client, facility_id: str, certificate_id: str) -> None:
 
 # ── expiry sweep ─────────────────────────────────────────────────────────────
 def expiring(client, facility_id: str, *, within_days: int = 90,
-             include_expired: bool = True, today: Date | None = None) -> list[dict]:
+             include_expired: bool = True, today: Date | None = None,
+             policy: ReminderPolicy | None = None) -> list[dict]:
     """Certificates due or overdue, soonest first. Drives the manager dashboard."""
     today = today or Date.today()
+    policy = policy or reminder_policy(client, facility_id)
     horizon = today + timedelta(days=within_days)
     query = (client.table("staff_certificates").select("*")
              .eq("facility_id", facility_id)
@@ -173,7 +274,7 @@ def expiring(client, facility_id: str, *, within_days: int = 90,
     if not include_expired:
         query = query.gte("expiry_date", iso(today))
     rows = query.order("expiry_date").execute().data
-    return [_decorate(row, today) for row in rows]
+    return [_decorate(row, today, policy) for row in rows]
 
 
 def _staff_names(client, facility_id: str, staff_ids: list[str]) -> dict[str, str]:
@@ -209,7 +310,12 @@ def notify_expiring(client, facility_id: str, *, today: Date | None = None,
     and a dry run can be inspected before the first real send.
     """
     today = today or Date.today()
-    due = expiring(client, facility_id, within_days=max(WARNING_STAGES), today=today)
+    # The horizon is the facility's own longest lead time, not the built-in 90.
+    # A home that asks to be warned six months out gets nothing from a sweep that
+    # only looks 90 days ahead, and the misconfiguration is invisible.
+    policy = reminder_policy(client, facility_id)
+    due = expiring(client, facility_id, within_days=max(policy.lead_days),
+                   today=today, policy=policy)
     names = _staff_names(client, facility_id, [c["staff_id"] for c in due])
 
     sent: list[dict] = []

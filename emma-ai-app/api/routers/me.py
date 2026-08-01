@@ -7,16 +7,19 @@ from __future__ import annotations
 
 from datetime import date as Date
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Response
 
 from api.deps import AuthCtx, api_error, get_ctx
 from emma_core.models import (
+    CertificateOut,
+    CertificateUpsert,
     ClockRequest,
     PushSubscriptionRequest,
     TaskExceptionRequest,
     TaskStatusRequest,
 )
 from emma_core.services import attendance as att
+from emma_core.services import certificates as cert_svc
 from emma_core.services import me as svc
 from emma_core.services import notifications as notify
 from emma_core.services import tasks as task_svc
@@ -76,6 +79,57 @@ def report_task_exception(task_assignment_id: str, body: TaskExceptionRequest,
         ctx.client, ctx.facility_id, task_assignment_id,
         reason_code=body.reason_code, note=body.note, staff_id=_staff_id(ctx),
     )
+
+
+# ── the staff member's own certificate vault (spec SA.7) ────────────────────
+# The vault endpoints on /staff/{id}/certificates need a facility-wide grant, so
+# the one person who cannot use them is the person whose certificate it is:
+# FRONTLINE holds S on staff.certificates - self only. The ticket asks for staff
+# to upload their own, so these are the same three operations resolved through
+# the caller's own staff record instead of a path parameter. No role check: the
+# staff_id is never taken from the request, so there is no path here that reads
+# or writes anyone else's row.
+
+@router.get("/me/certificates", response_model=list[CertificateOut])
+def my_certificates(ctx: AuthCtx = Depends(get_ctx)):
+    return cert_svc.list_for_staff(ctx.client, ctx.facility_id, _staff_id(ctx))
+
+
+@router.post("/me/certificates", response_model=CertificateOut, status_code=201)
+def upload_my_certificate(body: CertificateUpsert, ctx: AuthCtx = Depends(get_ctx)):
+    """File or renew one of my own certificates (spec SA.7).
+
+    Filing notifies whoever may act on certificates - HR first, which is the
+    ticket's "HR receives a notification that a colleague's cert was updated".
+    """
+    try:
+        return cert_svc.upsert(
+            ctx.client, ctx.facility_id, _staff_id(ctx),
+            cert_type=body.cert_type, expiry_date=body.expiry_date,
+            file_url=body.file_url, certificate_id=body.certificate_id,
+            cert_number=body.cert_number, issued_date=body.issued_date,
+            uploaded_by=ctx.profile_id,
+        )
+    except ValueError as exc:
+        raise api_error(404 if "not found" in str(exc) else 400,
+                        "invalid_certificate", str(exc)) from exc
+
+
+@router.delete("/me/certificates/{certificate_id}", status_code=204)
+def delete_my_certificate(certificate_id: str, ctx: AuthCtx = Depends(get_ctx)):
+    """Withdraw a certificate I filed.
+
+    Scoped by staff_id rather than by id alone: a uuid from another person's
+    vault must read as missing, not delete their record. RLS narrows a staff
+    token to its own rows as well, and this does not rely on that - a check that
+    only exists in one layer is a check that disappears when that layer moves.
+    """
+    mine = {c["id"] for c in
+            cert_svc.list_for_staff(ctx.client, ctx.facility_id, _staff_id(ctx))}
+    if certificate_id not in mine:
+        raise api_error(404, "not_found", "certificate not found")
+    cert_svc.delete(ctx.client, ctx.facility_id, certificate_id)
+    return Response(status_code=204)
 
 
 @router.post("/me/push-subscriptions", status_code=201)

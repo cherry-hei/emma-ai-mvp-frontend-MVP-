@@ -10,7 +10,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { api } from '@/lib/api'
 import type {
-  ApiStaff, FacilityEvent, FloorRule, StaffQualification, Unit,
+  ApiStaff, FacilityEvent, FacilityEventType, FloorRule, StaffQualification, Unit,
 } from '@/lib/apiTypes'
 import { useLang } from '@/components/layout/LanguageContext'
 
@@ -18,20 +18,12 @@ const PINK = '#E8187A'
 
 type Tab = 'events' | 'qualifications' | 'floors'
 
-// Event types that carry a reusable default requirement, plus the ones the
-// spec leaves to the manager. Mirrors EVENT_DEFAULT_REQUIREMENTS on the server;
-// the server is authoritative — this list only drives the picker.
-const EVENT_TYPES = [
-  { value: 'hair_cutting', zh: '剪髮', en: 'Hair cutting', templated: true },
-  { value: 'cgat', zh: 'CGAT 評估', en: 'CGAT', templated: true },
-  { value: 'medication_board_checking', zh: '藥板核對', en: 'Medication board check', templated: true },
-  { value: 'medication_record_checking', zh: '藥物紀錄核對', en: 'Medication record check', templated: true },
-  { value: 'podiatry', zh: '足部護理', en: 'Podiatry', templated: true },
-  { value: 'monthly_weighing', zh: '每月磅重', en: 'Monthly weighing', templated: true },
-  { value: 'visiting', zh: '探訪', en: 'Visiting', templated: false },
-  { value: 'meeting_training', zh: '會議 / 培訓', en: 'Meeting / training', templated: false },
-  { value: 'pgt', zh: 'PGT', en: 'PGT', templated: false },
-]
+// The event-type list comes from GET /facility-events/types (task 4.2). It used
+// to be a hardcoded copy here, which is exactly the drift Cherry asked to close
+// on 1 Aug: "I don't want the frontend hardcoding a list that drifts from your
+// validation. One endpoint, single source of truth." The copy had already gone
+// stale — the server accepts nine types and this list agreed only because the
+// server's alias table was quietly absorbing the difference.
 
 const QUALIFICATIONS = [
   { value: 'medication_audited', zh: '藥物審核合格', en: 'Medication audited' },
@@ -60,6 +52,7 @@ export default function SchedulingPage() {
   const [events, setEvents] = useState<FacilityEvent[]>([])
   const [quals, setQuals] = useState<StaffQualification[]>([])
   const [rules, setRules] = useState<FloorRule[]>([])
+  const [eventTypes, setEventTypes] = useState<FacilityEventType[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
@@ -105,11 +98,13 @@ export default function SchedulingPage() {
     if (initial) setLoading(true)
     setError('')
     try {
-      const [u, s, e, q, r] = await Promise.all([
+      const [u, s, e, q, r, t] = await Promise.all([
         api.units(), api.listStaff(), api.facilityEvents(),
         api.staffQualifications(), api.floorRules(),
+        api.facilityEventTypes(),
       ])
       setUnits(u); setStaff(s); setEvents(e); setQuals(q); setRules(r)
+      setEventTypes(t)
     } catch (e) {
       setError(errText(e))
     } finally {
@@ -183,8 +178,8 @@ export default function SchedulingPage() {
       {loading ? (
         <div className="text-[11px] text-gray-400">…</div>
       ) : tab === 'events' ? (
-        <EventsTab events={events} units={units} T={T} isZH={isZH}
-                   unitName={unitName} run={run} />
+        <EventsTab events={events} units={units} eventTypes={eventTypes} T={T}
+                   isZH={isZH} unitName={unitName} run={run} />
       ) : tab === 'qualifications' ? (
         <QualificationsTab quals={quals} staff={staff} T={T} isZH={isZH}
                            staffName={staffName} run={run} />
@@ -217,20 +212,25 @@ function AddButton({ label, onClick, busy }: {
 }
 
 // ── events ──────────────────────────────────────────────────────────────────
-function EventsTab({ events, units, T, isZH, unitName, run }: {
-  events: FacilityEvent[]; units: Unit[]; T: Labels; isZH: boolean
+function EventsTab({ events, units, eventTypes, T, isZH, unitName, run }: {
+  events: FacilityEvent[]; units: Unit[]; eventTypes: FacilityEventType[]
+  T: Labels; isZH: boolean
   unitName: (id?: string | null) => string; run: Run
 }) {
   const today = new Date().toISOString().slice(0, 10)
   const [form, setForm] = useState({
-    event_type: 'hair_cutting', event_date: today, title: '', unit_id: '',
+    event_type: '', event_date: today, title: '', unit_id: '',
   })
   const [extra, setExtra] = useState<Array<{ rank: string; count: number; is_additive: boolean }>>([])
-  const chosen = EVENT_TYPES.find((e) => e.value === form.event_type)
+  // No hardcoded default: the first type is whatever the server publishes. A
+  // literal 'hair_cutting' here would be a tenth copy of the list to keep in
+  // step, and would post a type this facility might not have.
+  const selected = form.event_type || eventTypes[0]?.code || ''
+  const chosen = eventTypes.find((e) => e.code === selected)
 
   const submit = () => run(async () => {
     await api.createFacilityEvent({
-      event_type: form.event_type,
+      event_type: selected,
       event_date: form.event_date,
       title: form.title || undefined,
       unit_id: form.unit_id || undefined,
@@ -248,10 +248,12 @@ function EventsTab({ events, units, T, isZH, unitName, run }: {
         <div className="flex flex-wrap gap-2 items-end">
           <label className="text-[10px] text-gray-500">
             <div>{T.type}</div>
-            <select className={INPUT} style={INPUT_STYLE} value={form.event_type}
+            <select className={INPUT} style={INPUT_STYLE} value={selected}
                     onChange={(e) => setForm({ ...form, event_type: e.target.value })}>
-              {EVENT_TYPES.map((e) => (
-                <option key={e.value} value={e.value}>{isZH ? e.zh : e.en}</option>
+              {eventTypes.map((e) => (
+                <option key={e.code} value={e.code}>
+                  {isZH ? e.label_zh : e.label_en}
+                </option>
               ))}
             </select>
           </label>
