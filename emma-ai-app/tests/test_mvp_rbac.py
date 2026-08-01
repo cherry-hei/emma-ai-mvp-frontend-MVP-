@@ -35,7 +35,9 @@ from emma_core.permissions import (
     can_write,
     grant_for,
     is_self_only,
+    may_recommend_for,
     normalise_role,
+    recommend_scope,
     visible_features,
 )
 
@@ -57,8 +59,11 @@ DOC_ROWS = [
     (Feature.ROSTER_PUBLISH,      "F", "-", "-", "-", "-"),
     (Feature.COVER_VIEW_ANALYSIS, "F", "V", "-", "V", "-"),
     (Feature.COVER_ASSIGN,        "F", "R", "-", "-", "-"),
-    (Feature.APPROVE_LEAVE,       "F", "R", "-", "R", "S"),
-    (Feature.APPROVE_DUTY_DO,     "F", "R", "-", "R", "S"),
+    # ALLIED_HEALTH gained R on leave and duty in Cherry's 1 Aug answer,
+    # scoped to its own discipline. APPROVE_SICK was not in that answer and
+    # stays "-": an unstated cell denies.
+    (Feature.APPROVE_LEAVE,       "F", "R", "R", "R", "S"),
+    (Feature.APPROVE_DUTY_DO,     "F", "R", "R", "R", "S"),
     (Feature.APPROVE_SICK,        "F", "R", "-", "R", "S"),
     (Feature.OT_REVIEW,           "F", "R", "-", "V", "S"),
     (Feature.TOIL,                "F", "R", "-", "V", "S"),
@@ -118,28 +123,69 @@ def test_owner_is_the_only_role_that_can_decide():
 
 
 def test_recommend_roles_can_recommend_but_not_decide():
-    for role in (SystemRole.NURSE_MGR, SystemRole.ADMIN_CLERK):
+    for role in (SystemRole.NURSE_MGR, SystemRole.ADMIN_CLERK,
+                 SystemRole.ALLIED_HEALTH):
         assert can_recommend(role, Feature.APPROVE_LEAVE)
         assert not can_decide(role, Feature.APPROVE_LEAVE)
-    assert not can_recommend(SystemRole.ALLIED_HEALTH, Feature.APPROVE_LEAVE)
 
 
-def test_allied_health_holds_no_recommend_grant_anywhere():
-    """Documents a gap, deliberately.
+def test_allied_health_recommends_only_within_its_own_domain():
+    """The gap this used to document is closed.
 
-    The role table calls ALLIED_HEALTH "PT/OT/ST; recommend within own domain",
-    but no row of either feature matrix grants it `R` - its grants are only V, E
-    or hidden. The matrix is followed here because it is the more specific
-    statement; if Cherry intended R on the therapy-domain rows (task codes,
-    medical escort), those cells need to change and this test will fail, which is
-    how we will notice.
+    The v1 role table called ALLIED_HEALTH "PT/OT/ST; recommend within own
+    domain" and then gave it `R` in no cell of either matrix. The old test
+    followed the matrix and asserted no R anywhere, on the basis that the
+    specific table beats the general sentence - and said in its docstring that if
+    Cherry had meant otherwise it would fail loudly. It did, and she did:
+
+        "Yes, my intention was for them to have R for leave/duty approvals within
+         their own domain only (e.g. PT approving PT leave). For task codes and
+         escort, E is perfectly fine."   - 1 Aug 2026
     """
-    assert not any(
-        can_recommend(SystemRole.ALLIED_HEALTH, f)
-        for f in Feature
-    )
+    assert can_recommend(SystemRole.ALLIED_HEALTH, Feature.APPROVE_LEAVE)
+    assert can_recommend(SystemRole.ALLIED_HEALTH, Feature.APPROVE_DUTY_DO)
+    # ...but scoped, unlike every other R in the matrix.
+    assert recommend_scope(SystemRole.ALLIED_HEALTH,
+                           Feature.APPROVE_LEAVE) == "own_domain"
+    assert recommend_scope(SystemRole.NURSE_MGR,
+                           Feature.APPROVE_LEAVE) == "facility"
+    # Unchanged by her answer: "for task codes and escort, E is perfectly fine."
     assert grant_for(SystemRole.ALLIED_HEALTH, Feature.TASK_CODES) is Grant.EDIT
     assert grant_for(SystemRole.ALLIED_HEALTH, Feature.MEDICAL_ESCORT) is Grant.VIEW
+    # Not in her answer, so it stays shut.
+    assert not can_recommend(SystemRole.ALLIED_HEALTH, Feature.APPROVE_SICK)
+
+
+@pytest.mark.parametrize(("reviewer", "subject", "allowed"), [
+    ("PT",  "PT",   True),    # Cherry's own example
+    ("PT",  "PTA",  True),    # the assistant whose absence the PT has to cover
+    ("PTA", "PT",   True),
+    ("OT",  "OTA",  True),
+    ("PT",  "OT",   False),   # a different profession, not "own domain"
+    ("OT",  "PT",   False),
+    ("PT",  "RN",   False),
+    ("PT",  None,   False),   # unknown subject rank denies
+    (None,  "PT",   False),   # reviewer not linked to a staff record denies
+    ("PT",  "HCA",  False),
+])
+def test_the_domain_boundary(reviewer, subject, allowed):
+    """Own domain is the discipline, not all of allied health. Cherry's example is
+    a PT approving PT leave; an OT is a different profession and a PT has no
+    standing over their caseload cover."""
+    assert may_recommend_for(
+        SystemRole.ALLIED_HEALTH, Feature.APPROVE_LEAVE,
+        recommender_rank=reviewer, subject_rank=subject) is allowed
+
+
+def test_facility_scoped_roles_ignore_domain():
+    """A nursing officer recommends on anyone. Scoping is ALLIED_HEALTH's alone,
+    and leaking it to the other R roles would quietly break the approval queue."""
+    assert may_recommend_for(
+        SystemRole.NURSE_MGR, Feature.APPROVE_LEAVE,
+        recommender_rank="RN", subject_rank="PCW") is True
+    assert may_recommend_for(
+        SystemRole.ADMIN_CLERK, Feature.APPROVE_LEAVE,
+        recommender_rank=None, subject_rank=None) is True
 
 
 def test_roi_is_owner_only():
@@ -234,9 +280,13 @@ def test_require_decide_refuses_recommend_roles():
 
 def test_require_recommend_admits_r_roles_and_owner():
     guard = require_recommend(Feature.APPROVE_LEAVE)
-    for role in ("OWNER", "NURSE_MGR", "ADMIN_CLERK", "superintendent", "admin"):
+    # ALLIED_HEALTH now passes the *route* guard. Whose request they may
+    # recommend on is a separate check, in the service, against the data - the
+    # router cannot answer it because it does not know whose leave this is.
+    for role in ("OWNER", "NURSE_MGR", "ADMIN_CLERK", "ALLIED_HEALTH",
+                 "superintendent", "admin"):
         assert guard(_ctx(role))
-    for role in ("ALLIED_HEALTH", "FRONTLINE", "staff"):
+    for role in ("FRONTLINE", "staff", "SCHEDULER", "HR_AUDITOR"):
         with pytest.raises(HTTPException):
             guard(_ctx(role))
 
@@ -325,10 +375,70 @@ def test_leave_list_stays_facility_wide_for_a_manager(monkeypatch):
     assert seen["staff_id"] is None
 
 
-def test_allied_health_cannot_list_leave_at_all(monkeypatch):
+def test_allied_health_can_now_read_the_leave_queue(monkeypatch):
+    """Reversed by Cherry's 1 Aug answer, and it has to be.
+
+    R is a read grant as well as a recommend grant. A therapist who cannot open
+    the queue cannot recommend on anything in it, so granting R on leave without
+    granting the read would be a role that holds a permission it can never use.
+    """
+    seen = {}
     monkeypatch.setattr(leave_router.svc, "list_requests",
-                        lambda *a, **k: pytest.fail("service must not be reached"))
-    with pytest.raises(HTTPException) as exc:
-        leave_router.list_requests(None, None, None, None, None, None,
-                                   None, _ctx("ALLIED_HEALTH"))
-    assert exc.value.status_code == 403
+                        lambda client, fid, **kw: seen.update(kw) or [])
+    leave_router.list_requests(None, None, None, None, None, None,
+                               None, _ctx("ALLIED_HEALTH"))
+    assert seen, "the service should have been reached"
+    # Facility-wide, not self-only: the scoping is applied when they act on a
+    # request, not when they read the list.
+    assert seen["staff_id"] is None
+
+
+def test_scheduler_and_hr_auditor_still_cannot_recommend_on_leave():
+    """Confirmed by Cherry, 1 Aug: SCHEDULER "should NOT recommend on leave -
+    they just draft"; HR_AUDITOR approves nothing."""
+    for role in (SystemRole.SCHEDULER, SystemRole.HR_AUDITOR):
+        for feature in (Feature.APPROVE_LEAVE, Feature.APPROVE_DUTY_DO,
+                        Feature.APPROVE_SICK):
+            assert not can_recommend(role, feature), f"{role.value} / {feature}"
+            assert not can_decide(role, feature)
+
+
+def test_hr_auditor_still_cannot_see_roi():
+    """Confirmed by Cherry, 1 Aug: "HR_AUDITOR: Should NOT see ROI"."""
+    assert not can_read(SystemRole.HR_AUDITOR, Feature.ROI)
+    assert grant_for(SystemRole.HR_AUDITOR, Feature.ROI) is Grant.NONE
+
+
+# ── the KPI matrix (Cherry's RBAC v2, 1 Aug 2026) ───────────────────────────
+KPI_ROWS = [
+    # (feature, OWNER, NURSE_MGR, ALLIED, CLERK, FRONTLINE, SCHEDULER, HR_AUDITOR)
+    (Feature.KPI,                "F", "V", "-", "V", "-", "V", "V"),
+    # The one that is different, and the correction to our own v1 guess.
+    (Feature.KPI_STAFFING_RATIO, "F", "V", "-", "-", "-", "V", "V"),
+]
+
+
+@pytest.mark.parametrize(("feature", "owner", "nurse", "allied", "clerk",
+                          "frontline", "scheduler", "auditor"), KPI_ROWS)
+def test_the_kpi_matrix(feature, owner, nurse, allied, clerk, frontline,
+                        scheduler, auditor):
+    expected = {
+        SystemRole.OWNER: owner, SystemRole.NURSE_MGR: nurse,
+        SystemRole.ALLIED_HEALTH: allied, SystemRole.ADMIN_CLERK: clerk,
+        SystemRole.FRONTLINE: frontline, SystemRole.SCHEDULER: scheduler,
+        SystemRole.HR_AUDITOR: auditor,
+    }
+    for role, code in expected.items():
+        assert grant_for(role, feature) is Grant(code), (
+            f"{role.value} on {feature.value} should be {code}")
+
+
+def test_staffing_ratio_is_narrower_than_compliance():
+    """The v1 guess routed this endpoint through COMPLIANCE so a therapist could
+    check whether the floor was legally staffed. Cherry overruled it. This test
+    exists so the old reasoning cannot quietly return - it is a plausible
+    argument, and it is not what the client decided."""
+    assert can_read(SystemRole.ALLIED_HEALTH, Feature.COMPLIANCE)
+    assert not can_read(SystemRole.ALLIED_HEALTH, Feature.KPI_STAFFING_RATIO)
+    assert can_read(SystemRole.ADMIN_CLERK, Feature.COMPLIANCE)
+    assert not can_read(SystemRole.ADMIN_CLERK, Feature.KPI_STAFFING_RATIO)

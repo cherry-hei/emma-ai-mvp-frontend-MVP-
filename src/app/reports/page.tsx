@@ -21,7 +21,7 @@ const SHIFT_REPORTS = [
   { id: 'do_count',      icon: '📊', en: 'DO Shift Count Report',   zh: 'DO更次數報告',
     desc_en: 'Day-off counts and longest run without a day off', desc_zh: '休班日次數及最長連續工作天' },
   { id: 'ap_shifts',     icon: '⚖️', en: 'A/P Shift Distribution',  zh: 'AP更分配報告',
-    desc_en: 'A vs P vs night shift fairness per staff', desc_zh: 'A更/P更/夜更分配公平性' },
+    desc_en: 'A vs P vs N shift fairness per staff', desc_zh: 'A更/P更/N更分配公平性' },
   { id: 'night_gender',  icon: '🌙', en: 'Night Shift Gender Report', zh: 'N更男女報告',
     desc_en: 'Night shift distribution by gender', desc_zh: '通宵更按性別分配' },
   { id: 'staffing_ratio', icon: '📐', en: 'Staffing Ratio Report',  zh: '人手比率報告',

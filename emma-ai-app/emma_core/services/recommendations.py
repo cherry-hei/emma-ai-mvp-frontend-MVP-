@@ -23,14 +23,55 @@ Three rules the storage enforces rather than trusts:
 """
 from __future__ import annotations
 
+from ..permissions import Feature, may_recommend_for, recommend_scope
 from . import audit
 from ._common import now_iso
 
 RECOMMENDATIONS = ("approve", "reject")
 
 
+class OutOfDomainError(PermissionError):
+    """The reviewer may recommend, but not on this person's request."""
+
+
+def _rank_of_staff(client, facility_id: str, staff_id: str | None) -> str | None:
+    """The rank on a staff row, or None if it cannot be established.
+
+    Every failure collapses to None - missing id, missing row, unreachable table.
+    That is deliberate: this feeds a permission decision, and None denies. A
+    lookup that fails must not become a 500 on an endpoint whose answer, when the
+    lookup fails, is knowably "no".
+    """
+    if not staff_id:
+        return None
+    try:
+        rows = (client.table("staff").select("rank")
+                .eq("facility_id", facility_id).eq("id", staff_id)
+                .execute().data or [])
+    except Exception:  # noqa: BLE001 - see docstring: unknown rank denies
+        return None
+    return rows[0].get("rank") if rows else None
+
+
+def _rank_of_profile(client, facility_id: str, profile_id: str) -> str | None:
+    """The reviewer's own rank, via the staff row their profile points at.
+
+    A profile without a staff row has no rank, so a domain-scoped reviewer in
+    that state recommends on nobody. That is the correct failure: an account we
+    cannot place in a discipline cannot be shown to be in the right one.
+    """
+    try:
+        rows = (client.table("users_profile").select("staff_id")
+                .eq("facility_id", facility_id).eq("id", profile_id)
+                .execute().data or [])
+    except Exception:  # noqa: BLE001
+        return None
+    return _rank_of_staff(client, facility_id, rows[0].get("staff_id")) if rows else None
+
+
 def add(client, facility_id: str, request_id: str, *, profile_id: str,
-        role: str, recommendation: str, reason: str) -> dict:
+        role: str, recommendation: str, reason: str,
+        feature: Feature = Feature.APPROVE_LEAVE) -> dict:
     """Record a first-pass review. Replaces the reviewer's own previous one."""
     if recommendation not in RECOMMENDATIONS:
         raise ValueError(
@@ -41,9 +82,27 @@ def add(client, facility_id: str, request_id: str, *, profile_id: str,
 
     # The request must exist inside the caller's facility. Checked through the
     # caller's own client so RLS decides visibility, not this function.
-    if not (client.table("leave_requests").select("id,status")
-            .eq("facility_id", facility_id).eq("id", request_id).execute().data):
+    rows = (client.table("leave_requests").select("id,status,staff_id")
+            .eq("facility_id", facility_id).eq("id", request_id).execute().data)
+    if not rows:
         raise ValueError("leave request not found")
+
+    # "R within own domain only - e.g. PT approving PT leave" (Cherry, 1 Aug).
+    # The route guard has already established that this role may recommend at
+    # all; this is the second question, about whose request.
+    #
+    # Checked here rather than in the router because it is a property of the
+    # data, not of the request: the router knows the caller's role, only a query
+    # knows whose leave this is.
+    if recommend_scope(role, feature) == "own_domain":
+        subject_rank = _rank_of_staff(client, facility_id, rows[0].get("staff_id"))
+        own_rank = _rank_of_profile(client, facility_id, profile_id)
+        if not may_recommend_for(role, feature, recommender_rank=own_rank,
+                                 subject_rank=subject_rank):
+            raise OutOfDomainError(
+                f"{role} may only recommend within their own discipline; this "
+                f"request belongs to {subject_rank or 'an unknown rank'} and the "
+                f"reviewer is {own_rank or 'not linked to a staff record'}.")
 
     withdraw_own(client, facility_id, request_id, profile_id=profile_id)
 

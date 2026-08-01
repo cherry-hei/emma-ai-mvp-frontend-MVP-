@@ -54,48 +54,56 @@ def roi_summary(on: Date | None = Query(default=None, alias="date"),
 
 
 # ── KPI framework ────────────────────────────────────────────────────────────
+# Guarded on Feature.KPI, not Feature.REPORTS. Cherry's RBAC v2 (1 Aug 2026)
+# gives the KPI screens their own matrix row; it happens to match REPORTS today,
+# and pointing at it directly means a future divergence is a one-line change
+# here rather than a hunt for which endpoints were reports and which were KPIs.
 @router.get("/kpi/overview")
 def kpi_overview(period_id: str | None = Query(default=None),
-                 ctx: AuthCtx = Depends(require_read(Feature.REPORTS))):
+                 ctx: AuthCtx = Depends(require_read(Feature.KPI))):
     return kpi_svc.overview(ctx.client, ctx.facility_id, period_id)
 
 
 @router.get("/kpi/conflict-rate")
 def conflict_rate(period_id: str | None = Query(default=None),
-                  ctx: AuthCtx = Depends(require_read(Feature.REPORTS))):
+                  ctx: AuthCtx = Depends(require_read(Feature.KPI))):
     return kpi_svc.conflict_rate(ctx.client, ctx.facility_id, period_id)
 
 
 @router.get("/kpi/an-gini")
 def an_gini(period_id: str | None = Query(default=None),
-            ctx: AuthCtx = Depends(require_read(Feature.REPORTS))):
+            ctx: AuthCtx = Depends(require_read(Feature.KPI))):
     return kpi_svc.an_gini(ctx.client, ctx.facility_id, period_id)
 
 
 @router.get("/kpi/shift-fairness")
 def shift_fairness(period_id: str | None = Query(default=None),
-                   ctx: AuthCtx = Depends(require_read(Feature.REPORTS))):
+                   ctx: AuthCtx = Depends(require_read(Feature.KPI))):
     return kpi_svc.shift_fairness(ctx.client, ctx.facility_id, period_id)
 
 
 @router.get("/kpi/ai-acceptance")
 def ai_acceptance(period_id: str | None = Query(default=None),
-                  ctx: AuthCtx = Depends(require_read(Feature.REPORTS))):
+                  ctx: AuthCtx = Depends(require_read(Feature.KPI))):
     return kpi_svc.ai_acceptance(ctx.client, ctx.facility_id, period_id)
 
 
 @router.get("/kpi/external-workforce")
 def external_workforce(period_id: str | None = Query(default=None),
-                       ctx: AuthCtx = Depends(require_read(Feature.REPORTS))):
+                       ctx: AuthCtx = Depends(require_read(Feature.KPI))):
     return kpi_svc.external_workforce(ctx.client, ctx.facility_id, period_id)
 
 
-# Staffing ratios are a compliance measure, not a management report: the matrix
-# grants ALLIED_HEALTH V on compliance but – on reports, and a therapist has a
-# legitimate reason to see whether the floor is legally staffed.
+# Narrower than the other six, and narrower than compliance.
+#
+# The v1 guess put this under COMPLIANCE, reasoning that a therapist has a
+# legitimate reason to see whether the floor is legally staffed. Cherry's RBAC v2
+# overruled that: OWNER, NURSE_MGR, SCHEDULER and HR_AUDITOR only - ALLIED_HEALTH
+# and ADMIN_CLERK are both out. Corrected 1 Aug 2026.
 @router.get("/kpi/staffing-ratio-compliance")
 def staffing_ratio_compliance(period_id: str | None = Query(default=None),
-                              ctx: AuthCtx = Depends(require_read(Feature.COMPLIANCE))):
+                              ctx: AuthCtx = Depends(
+                                  require_read(Feature.KPI_STAFFING_RATIO))):
     return kpi_svc.staffing_ratio_compliance(ctx.client, ctx.facility_id, period_id)
 
 

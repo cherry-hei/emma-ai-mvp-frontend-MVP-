@@ -93,8 +93,13 @@ def task_definitions_by_label(client, facility_id: str) -> dict[str, dict]:
 
 def set_status(client, facility_id: str, task_assignment_id: str, *, status: str,
                staff_id: str | None = None) -> dict:
-    if status not in ("pending", "done", "skipped"):
-        raise ValueError("status must be pending, done or skipped")
+    if status not in ("pending", "done", "skipped", "exception"):
+        raise ValueError("status must be pending, done, skipped or exception")
+    if status == "exception":
+        # An exception is the *outcome* of report_exception, which also writes the
+        # reason. Letting it be set here would create an unexplained exception -
+        # exactly the state the reason codes exist to prevent.
+        raise ValueError("report an exception via report_exception, not set_status")
     done = status == "done"
     # SQL: update task_assignments
     #      set task_status  = :status,
@@ -110,6 +115,82 @@ def set_status(client, facility_id: str, task_assignment_id: str, *, status: str
     if not rows:
         raise ValueError("task assignment not found")
     return rows[0]
+
+
+# The closed list the staff app offers. Mirrors the check constraint on
+# task_exceptions.reason_code; `test_mvp_staff_app.py` asserts the two agree,
+# because a code the UI can send and the database rejects is a 500 on a nurse's
+# phone at 3am.
+EXCEPTION_REASONS = (
+    "resident_refused",
+    "resident_absent",
+    "clinical_hold",
+    "equipment_unavailable",
+    "insufficient_time",
+    "staff_reassigned",
+    "other",
+)
+
+
+def report_exception(client, facility_id: str, task_assignment_id: str, *,
+                     reason_code: str, note: str | None = None,
+                     staff_id: str | None = None) -> dict:
+    """Record why a task could not be done, and flag the assignment (spec SA.3).
+
+    The exception row is written first. If the status update then fails, the
+    facility is left with a logged reason on a task that still reads 'pending' -
+    visibly incomplete. The reverse order would leave a task marked 'exception'
+    with nothing saying why, which reads as complete-and-explained to anyone
+    scanning the dashboard.
+    """
+    if reason_code not in EXCEPTION_REASONS:
+        raise ValueError(
+            f"reason_code must be one of {', '.join(EXCEPTION_REASONS)}")
+    if reason_code == "other" and not (note or "").strip():
+        raise ValueError("a note is required when reason_code is 'other'")
+
+    # SQL: select id, task_status from task_assignments
+    #      where facility_id = :facility_id and id = :task_assignment_id
+    rows = (client.table("task_assignments").select("id,task_status")
+            .eq("facility_id", facility_id)
+            .eq("id", task_assignment_id).execute().data)
+    if not rows:
+        raise ValueError("task assignment not found")
+
+    # SQL: insert into task_exceptions
+    #        (facility_id, task_assignment_id, reported_by, reason_code, note)
+    #      values (...) returning *
+    exception_row = client.table("task_exceptions").insert({
+        "facility_id": facility_id,
+        "task_assignment_id": task_assignment_id,
+        "reported_by": staff_id,
+        "reason_code": reason_code,
+        "note": (note or "").strip() or None,
+    }).execute().data[0]
+
+    # SQL: update task_assignments set task_status = 'exception'
+    #      where facility_id = :facility_id and id = :task_assignment_id
+    #      returning *
+    assignment = (client.table("task_assignments")
+                  .update({"task_status": "exception"})
+                  .eq("facility_id", facility_id)
+                  .eq("id", task_assignment_id).execute().data[0])
+    return {"task_assignment": assignment, "exception": exception_row}
+
+
+def exceptions_for(client, facility_id: str, *, task_assignment_id: str | None = None,
+                   limit: int = 100) -> list[dict]:
+    """Newest first. Drives the manager dashboard's exception feed."""
+    # SQL: select * from task_exceptions
+    #      where facility_id = :facility_id
+    #        [and task_assignment_id = :task_assignment_id]
+    #      order by reported_at desc
+    #      limit :limit
+    query = (client.table("task_exceptions").select("*")
+             .eq("facility_id", facility_id))
+    if task_assignment_id:
+        query = query.eq("task_assignment_id", task_assignment_id)
+    return query.order("reported_at", desc=True).limit(limit).execute().data
 
 
 def for_staff_date(client, facility_id: str, staff_id: str, on: Date) -> list[dict]:

@@ -63,6 +63,12 @@ class FakeQuery:
         self.filters.append(("gte", column, value))
         return self
 
+    def is_(self, column: str, _value):
+        # PostgREST spells "column is null" as .is_(col, "null"); the roster-cell
+        # lock reads filter on released_at that way.
+        self.filters.append(("isnull", column, None))
+        return self
+
     def or_(self, _expression: str):
         return self
 
@@ -78,6 +84,8 @@ class FakeQuery:
             if operation == "lte" and self._comparable(actual) > self._comparable(expected):
                 return False
             if operation == "gte" and self._comparable(actual) < self._comparable(expected):
+                return False
+            if operation == "isnull" and actual is not None:
                 return False
         return True
 

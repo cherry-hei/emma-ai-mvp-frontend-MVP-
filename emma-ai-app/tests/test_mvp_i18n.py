@@ -104,6 +104,39 @@ def test_emma_ai_is_never_translated():
 
 
 @requires_frontend
+@pytest.mark.parametrize("code", ["A", "B", "E", "P", "N", "AN"])
+def test_letter_shift_codes_keep_the_letter_in_both_languages(code):
+    """A/P/N are letters, not times of day (Cherry, 1 Aug 2026).
+
+    Both NGOs print the same letters and hang different hours off them - NAAC's A
+    shift is 07:15-15:15 and its A230 runs 14:30-22:30. So "Morning" and 早更 are
+    not a translation choice, they are a factual error, and the fix has to hold on
+    both sides of the dictionary. The hours live in `shift_definitions`.
+    """
+    entry = re.search(
+        rf"^\s*{code}:\s*\{{\s*en:\s*'([^']*)',\s*zh:\s*'([^']*)'",
+        VOCAB_TS.read_text(encoding="utf-8"), re.MULTILINE)
+    assert entry, f"shift code {code} is missing from SHIFTS in vocab.ts"
+    en, zh = entry.group(1), entry.group(2)
+    assert zh == f"{code}更", f"{code} zh label should be '{code}更', got {zh!r}"
+    assert en == f"{code} shift", f"{code} en label should be '{code} shift', got {en!r}"
+
+
+@requires_frontend
+@pytest.mark.parametrize("banned", ["早更", "午更", "夜更", "黃昏更"])
+def test_time_of_day_shift_names_are_gone(banned):
+    """These read as correct Chinese, which is what makes them dangerous - nothing
+    would flag them on review, and a P更 labelled 午更 tells a reader 14:30-22:30
+    is the afternoon."""
+    hits = [
+        p.relative_to(ROOT).as_posix()
+        for p in (ROOT / "src").rglob("*.ts*")
+        if banned in _strip_comments(p.read_text(encoding="utf-8"))
+    ]
+    assert not hits, f"{banned!r} is a time-of-day shift name; use the letter. Found in {hits}"
+
+
+@requires_frontend
 def test_every_rank_code_has_a_chinese_label():
     """A bare Latin rank code in zh mode is what the browser mistranslated, so
     every rank the backend can emit needs an entry in vocab.ts."""

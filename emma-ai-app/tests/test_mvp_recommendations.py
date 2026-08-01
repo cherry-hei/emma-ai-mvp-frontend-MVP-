@@ -41,7 +41,10 @@ def as_role():
 
 
 # ── the boundary: same feature, two different guards ────────────────────────
-CANNOT_RECOMMEND = ["ALLIED_HEALTH", "FRONTLINE", "SCHEDULER", "HR_AUDITOR", "staff"]
+# ALLIED_HEALTH left this list on 1 Aug 2026: Cherry confirmed the role does hold
+# R on leave, scoped to its own discipline. The scoping is exercised further
+# down, against a client that can answer "whose leave is this".
+CANNOT_RECOMMEND = ["FRONTLINE", "SCHEDULER", "HR_AUDITOR", "staff"]
 
 
 @pytest.mark.parametrize("role", CANNOT_RECOMMEND)
@@ -207,3 +210,139 @@ def test_revoke_refuses_a_missing_request():
 
     with pytest.raises(ValueError, match="not found"):
         leave_svc.revoke(_FakeClient([]), "f1", "nope", profile_id="p1", reason="x")
+
+
+# ── domain-scoped recommendation (Cherry, 1 Aug 2026) ───────────────────────
+# "R for leave/duty approvals within their own domain only (e.g. PT approving PT
+# leave)." The route guard cannot enforce this - it knows the caller's role but
+# not whose leave the request is for - so these run against the service with a
+# client that can answer that question.
+class _RecQuery:
+    def __init__(self, store, table):
+        self.store, self.table, self.f, self.mode, self.payload = store, table, {}, "select", None
+
+    def select(self, *a, **k):
+        return self
+
+    def eq(self, col, val):
+        self.f[col] = val
+        return self
+
+    def is_(self, col, _v):
+        self.f[col] = None
+        return self
+
+    def insert(self, row):
+        self.mode, self.payload = "insert", row
+        return self
+
+    def update(self, patch):
+        self.mode, self.payload = "update", patch
+        return self
+
+    def execute(self):
+        rows = self.store[self.table]
+        if self.mode == "insert":
+            new = {**self.payload, "id": f"{self.table}-{len(rows)}"}
+            rows.append(new)
+            return type("R", (), {"data": [new]})
+        hits = [r for r in rows if all(r.get(k) == v for k, v in self.f.items())]
+        if self.mode == "update":
+            for r in hits:
+                r.update(self.payload)
+        return type("R", (), {"data": hits})
+
+
+class _RecDB:
+    """Two therapists, one nurse, and a leave request belonging to each."""
+
+    def __init__(self):
+        from collections import defaultdict
+        self.store = defaultdict(list)
+        self.store["staff"] += [
+            {"id": "s-pt", "facility_id": "f1", "rank": "PT"},
+            {"id": "s-pta", "facility_id": "f1", "rank": "PTA"},
+            {"id": "s-ot", "facility_id": "f1", "rank": "OT"},
+            {"id": "s-rn", "facility_id": "f1", "rank": "RN"},
+        ]
+        self.store["users_profile"] += [
+            {"id": "p-pt", "facility_id": "f1", "staff_id": "s-pt", "role": "ALLIED_HEALTH"},
+            {"id": "p-nurse", "facility_id": "f1", "staff_id": "s-rn", "role": "NURSE_MGR"},
+            {"id": "p-orphan", "facility_id": "f1", "staff_id": None, "role": "ALLIED_HEALTH"},
+        ]
+        for who in ("s-pt", "s-pta", "s-ot", "s-rn"):
+            self.store["leave_requests"].append(
+                {"id": f"req-{who}", "facility_id": "f1", "status": "pending",
+                 "staff_id": who})
+
+    def table(self, name):
+        return _RecQuery(self.store, name)
+
+
+@pytest.fixture
+def recdb():
+    return _RecDB()
+
+
+def _recommend(db, *, profile, role, request_id):
+    return rec_svc.add(db, "f1", request_id, profile_id=profile, role=role,
+                       recommendation="approve", reason="cover is arranged")
+
+
+@pytest.mark.parametrize(("request_id", "label"), [
+    ("req-s-pt", "another physiotherapist"),
+    ("req-s-pta", "their own physiotherapy assistant"),
+])
+def test_a_therapist_may_recommend_inside_their_discipline(recdb, request_id, label):
+    row = _recommend(recdb, profile="p-pt", role="ALLIED_HEALTH",
+                     request_id=request_id)
+    assert row["recommendation"] == "approve", label
+
+
+@pytest.mark.parametrize("request_id", ["req-s-ot", "req-s-rn"])
+def test_a_therapist_may_not_recommend_outside_it(recdb, request_id):
+    """An OT is a different profession and a nurse is not allied health at all.
+    Neither is "own domain", however sympathetic the reviewer."""
+    with pytest.raises(rec_svc.OutOfDomainError):
+        _recommend(recdb, profile="p-pt", role="ALLIED_HEALTH",
+                   request_id=request_id)
+
+
+def test_a_reviewer_with_no_staff_record_recommends_on_nobody(recdb):
+    """Fails closed. An account we cannot place in a discipline cannot be shown
+    to be in the right one, and the safe reading of "unknown" is "no"."""
+    with pytest.raises(rec_svc.OutOfDomainError):
+        _recommend(recdb, profile="p-orphan", role="ALLIED_HEALTH",
+                   request_id="req-s-pt")
+
+
+def test_a_nursing_officer_is_not_scoped(recdb):
+    """Scoping belongs to ALLIED_HEALTH alone. Leaking it to the other R roles
+    would quietly empty the approval queue for the people who run it."""
+    for request_id in ("req-s-pt", "req-s-ot", "req-s-rn"):
+        assert _recommend(recdb, profile="p-nurse", role="NURSE_MGR",
+                          request_id=request_id)
+
+
+def test_the_endpoint_returns_403_not_500(recdb, as_role):
+    """Out-of-domain is a permission answer, not a malformed request. A therapist
+    retrying with better wording will not help, so it must not read as 422."""
+    from api.main import app
+    from api.deps import get_ctx
+
+    app.dependency_overrides[get_ctx] = lambda: AuthCtx(
+        token="t", client=recdb,
+        profile=Profile(id="p-pt", facility_id="f1", role="ALLIED_HEALTH",
+                        staff_id="s-pt"))
+    try:
+        http = TestClient(app, raise_server_exceptions=False)
+        blocked = http.post("/leave-requests/req-s-ot/recommendation",
+                            json={"recommendation": "approve", "reason": "ok"})
+        assert blocked.status_code == 403
+        assert blocked.json()["detail"]["code"] == "out_of_domain"
+
+        allowed = http.post("/leave-requests/req-s-pta/recommendation",
+                            json={"recommendation": "approve", "reason": "ok"})
+        assert allowed.status_code == 201
+    finally:
+        app.dependency_overrides.pop(get_ctx, None)

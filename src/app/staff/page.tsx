@@ -91,7 +91,7 @@ function ProfileModal({ staff, idx, onClose }: { staff: StaffType; idx: number; 
   const L = {
     covers:         isZH ? '緊急補更'        : 'Emergency Covers',
     weekly_load:    isZH ? '本週期時數'      : 'Period Load',
-    night_shifts:   isZH ? '夜更次數'        : 'Night Shifts',
+    night_shifts:   isZH ? 'N更次數'         : 'N Shifts',
     units:          isZH ? '服務單位數'      : 'Units Worked',
     hours_month:    isZH ? '本週期工時'      : 'Hours This Period',
     tab_history:    isZH ? '更表紀錄'        : 'Shift History',

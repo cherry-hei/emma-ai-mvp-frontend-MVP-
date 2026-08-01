@@ -53,6 +53,8 @@ export type Feature =
   | 'staff.profile_write'
   | 'reports'
   | 'compliance'
+  | 'kpi'
+  | 'kpi.staffing_ratio'
   | 'alerts'
   | 'roi'
   | 'audit_log'
@@ -65,20 +67,30 @@ const row = (
   SCHEDULER: Grant, FRONTLINE: Grant, HR_AUDITOR: Grant,
 ): Row => ({ OWNER, NURSE_MGR, ALLIED_HEALTH, ADMIN_CLERK, SCHEDULER, FRONTLINE, HR_AUDITOR })
 
-// SCHEDULER and HR_AUDITOR columns are PROVISIONAL: the source document defines
-// both roles but ships no matrix columns for them. Values match the backend's
-// _PROVISIONAL block and await client confirmation.
+// All seven columns confirmed by Cherry on 1 Aug 2026. The SCHEDULER and
+// HR_AUDITOR columns were provisional until then - the v1 document named both
+// roles and shipped no matrix for either - and came back "100% correct".
 //                        OWNER NURSE ALLIED CLERK SCHED FRONT HRAUD
 const MATRIX: Record<Feature, Row> = {
   'dashboard':           row('F', 'V', 'V', 'V', 'V', '-', 'V'),
   'roster.view':         row('F', 'V', 'V', 'V', 'V', 'S', 'V'),
   'roster.ai_draft':     row('F', 'E', '-', '-', 'E', '-', '-'),
   'roster.publish':      row('F', '-', '-', '-', '-', '-', '-'),
-  'approve.leave':       row('F', 'R', '-', 'R', '-', 'S', '-'),
+  // ALLIED_HEALTH's R is scoped to their own discipline, which this table cannot
+  // express - it is a fact about the request, not about the role. The UI uses
+  // this to decide whether to render the review control at all; the API decides
+  // whether the therapist may act on the particular request behind it and
+  // returns 403 `out_of_domain` if not. Showing the control and having the API
+  // refuse is the right way round: hiding it would need the queue to know every
+  // subject's rank before it could draw a single row.
+  'approve.leave':       row('F', 'R', 'R', 'R', '-', 'S', '-'),
   'staff.portfolio':     row('F', 'V', 'V', 'E', 'V', 'S', 'V'),
   'staff.profile_write': row('F', '-', '-', 'E', '-', '-', '-'),
   'reports':             row('F', 'V', '-', 'V', 'V', '-', 'V'),
   'compliance':          row('F', 'V', 'V', 'V', 'V', '-', 'V'),
+  'kpi':                 row('F', 'V', '-', 'V', 'V', '-', 'V'),
+  // Narrower than both: ALLIED_HEALTH and ADMIN_CLERK are out. Cherry's v2.
+  'kpi.staffing_ratio':  row('F', 'V', '-', '-', 'V', '-', 'V'),
   'alerts':              row('F', 'V', '-', 'V', '-', 'S', 'V'),
   'roi':                 row('F', '-', '-', '-', '-', '-', '-'),
   'audit_log':           row('F', '-', '-', '-', '-', '-', 'V'),

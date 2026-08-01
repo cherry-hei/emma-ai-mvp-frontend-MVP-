@@ -13,6 +13,7 @@ from fastapi import APIRouter, Depends, Query, Response
 from api.deps import AuthCtx, api_error, require_read, require_write
 from emma_core.models import ReportGenerateRequest, ReportRequest
 from emma_core.permissions import Feature
+from emma_core.services import render
 from emma_core.services import reports as svc
 
 router = APIRouter(tags=["reports"])
@@ -85,20 +86,48 @@ def generate_named(name: str, body: ReportRequest | None = None,
                         profile_id=ctx.profile_id)
 
 
-@router.get("/reports/download/{report_type}.csv")
-def download(report_type: str, period_id: str | None = Query(default=None),
+@router.get("/reports/download/{report_type}.{fmt}")
+def download(report_type: str, fmt: str,
+             period_id: str | None = Query(default=None),
              ctx: AuthCtx = Depends(require_read(Feature.REPORTS))):
-    """Generate on demand and stream as CSV - what the Reports page's cards link to.
+    """Generate on demand and stream it back as CSV, XLSX or PDF (spec 3.3).
+
+    One endpoint over all three, because the format is a rendering choice and not
+    a different report - the bytes are built from the same generator output, so a
+    manager's spreadsheet and the PDF sent to SWD can never disagree about what
+    the roster said.
 
     A read despite calling `generate`: nothing is persisted (`persist=False`), and
     the matrix grants ADMIN_CLERK download rights explicitly."""
+    spec = render.FORMATS.get(fmt.lower())
+    if not spec:
+        raise api_error(404, "unknown_format",
+                        f"No format {fmt!r} (expected one of "
+                        f"{', '.join(sorted(render.FORMATS))}).")
     params = {"period_id": period_id} if period_id else {}
-    report = svc.generate(ctx.client, ctx.facility_id, report_type,
-                          params=params, profile_id=ctx.profile_id, persist=False)
+    try:
+        report = svc.generate(ctx.client, ctx.facility_id, report_type,
+                              params=params, profile_id=ctx.profile_id,
+                              persist=False)
+    except ValueError as exc:
+        raise api_error(404, "unknown_report", str(exc)) from exc
+
+    payload = report["payload"]
+    title = report.get("title") or report_type
+    if fmt.lower() == "csv":
+        content = svc.to_csv(payload)
+    else:
+        content = spec["render"](payload, title=title)
+
+    # A draft roster leaves the building clearly marked - watermarked in the PDF,
+    # banded in the spreadsheet, and named in the file itself, so a download
+    # sitting in someone's folder still says what it is.
+    suffix = "-DRAFT" if render.is_draft(payload) else ""
+    filename = f"{report_type}{suffix}.{fmt.lower()}"
     return Response(
-        content=svc.to_csv(report["payload"]),
-        media_type="text/csv; charset=utf-8",
-        headers={"Content-Disposition": f'attachment; filename="{report_type}.csv"'},
+        content=content,
+        media_type=spec["media_type"],
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
 
 

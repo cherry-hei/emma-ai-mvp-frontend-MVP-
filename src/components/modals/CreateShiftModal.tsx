@@ -118,14 +118,18 @@ const EMPLOYEE_OPTIONS = [
 
 /* ---------- Shift Type Options (from NAAC shift codes) ---------- */
 
+// Durations match the NAAC dictionary (docs/naac/shift_codes.csv). The
+// time-of-day words that used to sit in these brackets - 早更 in A/B/G - were
+// dropped on 1 Aug: the letter carries no fixed hour, only the duration does,
+// and the start time comes from the code's digits (A7 = 07:00).
 const SHIFT_OPTIONS_ZH = [
-  { value: 'A',   label: 'A更（早更 8小時）' },
-  { value: 'B',   label: 'B更（早更 9小時）' },
-  { value: 'G',   label: 'G更（早更 7小時）' },
-  { value: 'P',   label: 'P更（下午更 10pm下班）' },
-  { value: 'N',   label: 'N更（通宵更 9小時）' },
-  { value: 'K',   label: 'K更（通宵更 10小時）' },
-  { value: 'AN',  label: 'A/N更（早+通宵 17小時）' },
+  { value: 'A',   label: 'A更（8小時）' },
+  { value: 'B',   label: 'B更（9小時）' },
+  { value: 'G',   label: 'G更（7小時）' },
+  { value: 'P',   label: 'P更（10pm下班）' },
+  { value: 'N',   label: 'N更（通宵 9小時）' },
+  { value: 'K',   label: 'K更（通宵 10小時）' },
+  { value: 'AN',  label: 'A/N更（A更+通宵 17小時）' },
   { value: 'AL',  label: 'AL（年假）' },
   { value: 'SL',  label: 'SL（病假）' },
   { value: 'PH',  label: 'PH（公眾假期）' },
@@ -134,13 +138,13 @@ const SHIFT_OPTIONS_ZH = [
 ]
 
 const SHIFT_OPTIONS_EN = [
-  { value: 'A',   label: 'A Shift (Day 8h)' },
-  { value: 'B',   label: 'B Shift (Day 9h)' },
-  { value: 'G',   label: 'G Shift (Day 7h)' },
-  { value: 'P',   label: 'P Shift (Afternoon till 10pm)' },
-  { value: 'N',   label: 'N Shift (Night 9h)' },
-  { value: 'K',   label: 'K Shift (Night 10h)' },
-  { value: 'AN',  label: 'A/N Shift (Day+Night 17h)' },
+  { value: 'A',   label: 'A Shift (8h)' },
+  { value: 'B',   label: 'B Shift (9h)' },
+  { value: 'G',   label: 'G Shift (7h)' },
+  { value: 'P',   label: 'P Shift (ends 10pm)' },
+  { value: 'N',   label: 'N Shift (overnight 9h)' },
+  { value: 'K',   label: 'K Shift (overnight 10h)' },
+  { value: 'AN',  label: 'A/N Shift (A + overnight, 17h)' },
   { value: 'AL',  label: 'AL (Annual Leave)' },
   { value: 'SL',  label: 'SL (Sick Leave)' },
   { value: 'PH',  label: 'PH (Public Holiday)' },

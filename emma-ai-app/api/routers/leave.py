@@ -133,7 +133,13 @@ def recommend_request(request_id: str, body: RecommendationRequest,
             role=str(ctx.role or ctx.profile.role),
             recommendation=body.recommendation,
             reason=body.reason,
+            feature=Feature.APPROVE_LEAVE,
         )
+    except rec_svc.OutOfDomainError as exc:
+        # 403 rather than 422: the role holds R, the request is well-formed, and
+        # the reviewer simply has no standing over this person. A therapist
+        # retrying with better wording will not help.
+        raise api_error(403, "out_of_domain", str(exc)) from exc
     except ValueError as exc:
         code = "not_found" if "not found" in str(exc) else "invalid_request"
         raise api_error(404 if code == "not_found" else 422, code, str(exc)) from exc

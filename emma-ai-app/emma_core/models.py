@@ -479,12 +479,122 @@ class TaskStatusRequest(BaseModel):
     status: str                       # pending|done|skipped
 
 
+class TaskExceptionRequest(BaseModel):
+    """"Could not do this task, and here is why" (spec SA.3).
+
+    `reason_code` is a closed list so the answer to "how often is personal care
+    refused on 2/F?" is a count rather than a reading exercise. The pattern is
+    kept in step with the database check constraint by
+    `test_mvp_staff_app.py::test_exception_reasons_match_the_migration`.
+    """
+    model_config = ConfigDict(extra="forbid")
+
+    reason_code: str = Field(pattern="^(resident_refused|resident_absent|clinical_hold"
+                                     "|equipment_unavailable|insufficient_time"
+                                     "|staff_reassigned|other)$")
+    note: str | None = Field(default=None, max_length=2000)
+
+    @model_validator(mode="after")
+    def other_needs_a_note(self):
+        if self.reason_code == "other" and not (self.note or "").strip():
+            raise ValueError("a note is required when reason_code is 'other'")
+        return self
+
+
+# ── shift swap (spec SA.6) ───────────────────────────────────────────────────
+class SwapCreateRequest(BaseModel):
+    """Staff A proposes. `requester_staff_id` is never accepted from the body -
+    the caller's own staff record is used, so nobody can propose on another
+    person's behalf."""
+    model_config = ConfigDict(extra="forbid")
+
+    requester_shift_id: str
+    counterparty_staff_id: str
+    counterparty_shift_id: str
+    reason: str | None = Field(default=None, max_length=2000)
+
+
+class SwapPeerResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    accept: bool
+    note: str | None = Field(default=None, max_length=2000)
+
+
+class SwapDecisionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    decision: str = Field(pattern="^(approve|reject)$")
+    note: str | None = Field(default=None, max_length=2000)
+
+
+class PushSubscriptionRequest(BaseModel):
+    """A device registering for push (spec SA.4). Valid before FCM is
+    provisioned - delivery is the worker's problem, registration is not."""
+    model_config = ConfigDict(extra="forbid")
+
+    token: str = Field(min_length=1, max_length=4096)
+    platform: str = Field(default="web", pattern="^(web|ios|android)$")
+    user_agent: str | None = Field(default=None, max_length=500)
+
+
+# ── staff writes (spec 2.1) ──────────────────────────────────────────────────
+class StaffCreate(BaseModel):
+    """Create a staff record. `facility_id` is not accepted from the body: it
+    comes from the caller's profile, so a write can never land in another home."""
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(min_length=1, max_length=200)
+    name_en: str | None = Field(default=None, max_length=200)
+    rank: Rank
+    employment_type: EmploymentType
+    primary_unit_id: str | None = None
+    contracted_hours: float | None = Field(default=None, ge=0, le=168)
+    is_audited_for_medication: bool = False
+    is_mentor: bool = False
+    gender: str | None = Field(default=None, pattern="^(M|F)$")
+    status: str = Field(default="active", pattern="^(active|inactive)$")
+
+    @model_validator(mode="after")
+    def name_is_not_whitespace(self):
+        if not self.name.strip():
+            raise ValueError("name cannot be blank")
+        return self
+
+
+class StaffUpdate(BaseModel):
+    """Every field optional - a PATCH that omits a field leaves it alone.
+    `rank` and `employment_type` are included because both are correctable data
+    entry, and both feed the rule engine, so a wrong one has to be fixable."""
+    model_config = ConfigDict(extra="forbid")
+
+    name: str | None = Field(default=None, min_length=1, max_length=200)
+    name_en: str | None = Field(default=None, max_length=200)
+    rank: Rank | None = None
+    employment_type: EmploymentType | None = None
+    primary_unit_id: str | None = None
+    contracted_hours: float | None = Field(default=None, ge=0, le=168)
+    is_audited_for_medication: bool | None = None
+    is_mentor: bool | None = None
+    gender: str | None = Field(default=None, pattern="^(M|F)$")
+    status: str | None = Field(default=None, pattern="^(active|inactive)$")
+
+    @model_validator(mode="after")
+    def at_least_one_field(self):
+        if not self.model_dump(exclude_unset=True):
+            raise ValueError("provide at least one field to update")
+        return self
+
+
 class TaskAssignmentCreate(BaseModel):
     shift_assignment_id: str
     task_id: str
     start_at: DateTime | None = None
     end_at: DateTime | None = None
     source_type: str = "manual"
+    # Where this escort is going, on this date, for this staff member. Per
+    # assignment and not per task definition - Cherry, ClickUp 4.1, 31 Jul 2026.
+    escort_location: str | None = Field(default=None, max_length=32)
 
 
 class TaskAssignmentPatch(BaseModel):
@@ -492,6 +602,7 @@ class TaskAssignmentPatch(BaseModel):
     start_at: DateTime | None = None
     end_at: DateTime | None = None
     source_type: str | None = None
+    escort_location: str | None = Field(default=None, max_length=32)
 
 
 class TaskAssignmentOut(BaseModel):
@@ -507,6 +618,55 @@ class TaskAssignmentOut(BaseModel):
     source_type: str = "manual"
     task_status: str = "pending"
     completed_at: DateTime | None = None
+    escort_location: str | None = None
+    escort_location_id: str | None = None
+
+
+class EscortLocationOut(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    id: str
+    facility_id: str | None = None
+    code: str
+    name_en: str | None = None
+    name_zh: str | None = None
+    aliases: list[str] = Field(default_factory=list)
+    active: bool = True
+
+
+class EscortLocationRequest(BaseModel):
+    code: str = Field(min_length=1, max_length=16)
+    name_en: str | None = None
+    name_zh: str | None = None
+    aliases: list[str] | None = None
+
+
+class EscortLocationAssign(BaseModel):
+    """`null` clears the destination; the endpoint is how an escort is cancelled."""
+
+    escort_location: str | None = Field(default=None, max_length=32)
+
+
+class CertificateUpsert(BaseModel):
+    cert_type: str = Field(min_length=1, max_length=64)
+    expiry_date: Date | None = None
+    file_url: str | None = None
+    # Set to correct a certificate in place; omit to add or renew by type.
+    certificate_id: str | None = None
+
+
+class CertificateOut(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    id: str
+    staff_id: str
+    cert_type: str
+    expiry_date: Date | None = None
+    file_url: str | None = None
+    # Derived on read, never stored: a stored `days_left` is wrong by definition
+    # the morning after it is written.
+    days_left: int | None = None
+    is_expired: bool = False
+    stage: str | None = None
+    notified_stage: str | None = None
 
 
 class StaffingRequirementIn(BaseModel):

@@ -46,6 +46,28 @@ DEFAULT_NIGHT_POLICY = {
     "cooldown_ranks": ["RN", "EN"],
 }
 
+# Adjacency rules: what a home refuses to put on consecutive days. Empty by
+# default, because these are the home's own working practices rather than
+# statute - Homes A and B have not stated any, NAAC has four (see
+# `docs/naac/rostering_rules_EN.md` and the seed in migration 18).
+#
+# AN -> NO -> O is deliberately NOT here. It is the same rule as `night_chain`,
+# which already requires a sleeping day then a day off after a night duty; NAAC
+# just spells the two codes NO and O. It is configured, not re-implemented.
+DEFAULT_SEQUENCE_POLICY = {
+    # 0 disables the check. NAAC: 8.
+    "max_consecutive_working_days": 0,
+    # [{"shift": ["AN"], "forbidden": ["P"], "reason": "..."}]
+    #   - nothing in `forbidden` may be worked the day BEFORE a `shift` day.
+    "forbidden_before": [],
+    # Same shape, for the day AFTER.
+    "forbidden_after": [],
+    # [{"codes": ["A130", "A230e"], "reason": "..."}]
+    #   - no two codes from one group may fall on consecutive days, including the
+    #     same code twice.
+    "no_consecutive": [],
+}
+
 DEFAULT_AGENCY_POLICY = {
     "agency_employment_types": sorted(EXTERNAL_AGENCY_TYPES),
     "banned_shift_types": ["N", "AN", "7P"],
@@ -680,6 +702,148 @@ def evaluate_night_rules(snapshot: RosterSnapshot) -> list[dict]:
                 details={"source": "prior_roster_or_debt"},
             ))
     return violations
+
+
+def _matches_any(codes: set[str], patterns: Iterable[str]) -> set[str]:
+    """Which of `codes` a rule's pattern list selects.
+
+    `*` is a wildcard at either end, and both ends are needed because NAAC writes
+    two different things into the duty code. `A230*` is a prefix and catches
+    `A230`, `A230e`, `A230#` - the rule is about the duty and the trailing letter
+    is a task marker. `*E` is a suffix and catches `A230E`, `A7E`, `A9E` - that
+    rule is about the E position, which is a task that can sit on any morning
+    duty. A bare pattern is an exact match.
+    """
+    hit: set[str] = set()
+    for pattern in patterns:
+        pattern = str(pattern).upper()
+        if pattern.startswith("*") and pattern.endswith("*") and len(pattern) > 1:
+            stem = pattern[1:-1]
+            hit |= {code for code in codes if stem in code}
+        elif pattern.endswith("*"):
+            stem = pattern[:-1]
+            hit |= {code for code in codes if code.startswith(stem)}
+        elif pattern.startswith("*"):
+            stem = pattern[1:]
+            hit |= {code for code in codes if code.endswith(stem)}
+        elif pattern in codes:
+            hit.add(pattern)
+    return hit
+
+
+def evaluate_sequence_rules(snapshot: RosterSnapshot) -> list[dict]:
+    """Consecutive-day rules: run length, and what may not sit next to what.
+
+    Every one of these is about a *pair of days* rather than a single shift, so
+    none of them can be caught by the per-shift eligibility checks in
+    `evaluate_core_constraints`. They are the difference between a roster that
+    passes every individual rule and one a charge nurse would refuse to sign.
+    """
+    policy, rule_id, severity = _rule_config(
+        snapshot, "shift_sequence", DEFAULT_SEQUENCE_POLICY,
+    )
+    max_run = int(policy.get("max_consecutive_working_days") or 0)
+    forbidden_before = list(policy.get("forbidden_before") or ())
+    forbidden_after = list(policy.get("forbidden_after") or ())
+    no_consecutive = list(policy.get("no_consecutive") or ())
+    if not (max_run or forbidden_before or forbidden_after or no_consecutive):
+        return []
+
+    violations: list[dict] = []
+    shift_by_staff_day: dict[str, dict[Date, list[dict]]] = defaultdict(
+        lambda: defaultdict(list))
+    for _assignment, shift, staff in _active_assignments(snapshot, working_only=True):
+        if staff:
+            shift_by_staff_day[staff["id"]][_as_date(shift["date"])].append(shift)
+
+    for staff_id, by_day in shift_by_staff_day.items():
+        codes_by_day = {
+            day: {str(s.get("shift_type") or "").upper() for s in shifts}
+            for day, shifts in by_day.items()
+        }
+        if max_run:
+            violations.extend(_run_length_violations(
+                staff_id, sorted(by_day), by_day, max_run, rule_id, severity))
+
+        for day, codes in codes_by_day.items():
+            previous = codes_by_day.get(day - timedelta(days=1), set())
+            following = codes_by_day.get(day + timedelta(days=1), set())
+
+            for rule in forbidden_before:
+                anchors = _matches_any(codes, rule.get("shift") or ())
+                clashes = _matches_any(previous, rule.get("forbidden") or ())
+                if anchors and clashes:
+                    violations.append(_violation(
+                        "shift_sequence",
+                        rule.get("reason")
+                        or f"{sorted(clashes)[0]} cannot be worked the day before "
+                           f"{sorted(anchors)[0]}.",
+                        shift_id=by_day[day][0]["id"], staff_id=staff_id, on_date=day,
+                        rule_definition_id=rule_id, severity=severity,
+                        details={"relation": "before", "on_day": sorted(anchors),
+                                 "previous_day": sorted(clashes)},
+                    ))
+
+            for rule in forbidden_after:
+                anchors = _matches_any(codes, rule.get("shift") or ())
+                clashes = _matches_any(following, rule.get("forbidden") or ())
+                if anchors and clashes:
+                    violations.append(_violation(
+                        "shift_sequence",
+                        rule.get("reason")
+                        or f"{sorted(clashes)[0]} cannot be worked the day after "
+                           f"{sorted(anchors)[0]}.",
+                        shift_id=by_day[day][0]["id"], staff_id=staff_id, on_date=day,
+                        rule_definition_id=rule_id, severity=severity,
+                        details={"relation": "after", "on_day": sorted(anchors),
+                                 "next_day": sorted(clashes)},
+                    ))
+
+            for rule in no_consecutive:
+                group = rule.get("codes") or ()
+                today = _matches_any(codes, group)
+                tomorrow = _matches_any(following, group)
+                if today and tomorrow:
+                    violations.append(_violation(
+                        "shift_sequence",
+                        rule.get("reason")
+                        or f"{sorted(today)[0]} and {sorted(tomorrow)[0]} cannot "
+                           "fall on consecutive days.",
+                        shift_id=by_day[day][0]["id"], staff_id=staff_id, on_date=day,
+                        rule_definition_id=rule_id, severity=severity,
+                        details={"relation": "no_consecutive",
+                                 "on_day": sorted(today),
+                                 "next_day": sorted(tomorrow)},
+                    ))
+    return violations
+
+
+def _run_length_violations(staff_id, days, by_day, max_run, rule_id, severity):
+    """One violation per over-long run, reported on the day the limit is passed.
+
+    Reported once per run rather than once per day past the limit: a 12-day run is
+    one scheduling mistake, and eleven near-identical rows would bury the other
+    findings in the same validation report.
+    """
+    out: list[dict] = []
+    run_start: Date | None = None
+    previous: Date | None = None
+    for day in days:
+        if previous is not None and day == previous + timedelta(days=1):
+            run_length = (day - run_start).days + 1
+            if run_length == max_run + 1:
+                out.append(_violation(
+                    "max_consecutive_days",
+                    f"{run_length} consecutive working days; the limit is {max_run}.",
+                    shift_id=by_day[day][0]["id"], staff_id=staff_id, on_date=day,
+                    rule_definition_id=rule_id, severity=severity,
+                    details={"limit": max_run, "run_start": str(run_start),
+                             "run_length_at_breach": run_length},
+                ))
+        else:
+            run_start = day
+        previous = day
+    return out
 
 
 def _calendar_by_date(snapshot: RosterSnapshot) -> dict[str, dict]:
@@ -2055,6 +2219,7 @@ def validate_roster(
     ratio_violations, ratio_rows = evaluate_swd_ratios(snapshot)
     violations.extend(ratio_violations)
     violations.extend(evaluate_night_rules(snapshot))
+    violations.extend(evaluate_sequence_rules(snapshot))
     violations.extend(evaluate_agency_rules(snapshot))
     violations.extend(evaluate_part_time_rules(snapshot))
     violations.extend(evaluate_leave_rules(snapshot))

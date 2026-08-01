@@ -13,8 +13,11 @@ from __future__ import annotations
 
 from datetime import date as Date
 
+from . import audit
 from . import notifications as notify
+from . import roster_locks
 from . import validation
+from ..permissions import Feature
 from ._common import iso, month_bounds, now_iso, staff_brief, staff_by_id
 
 # leave_type -> category, so callers can post either and stay consistent.
@@ -29,6 +32,16 @@ NIGHT_SHIFT_TYPES = {"AN", "N", "7P"}
 
 PENDING_STATES = ("pending", "reviewed")
 DECIDED_STATES = ("approved", "rejected")
+
+
+# Which permission feature gates each category, so a submitted request reaches
+# the queue that actually owns it. The matrix grants these separately - an
+# allied-health lead reviews duty swaps but not sick notes.
+_APPROVAL_FEATURE = {
+    "al": Feature.APPROVE_LEAVE,
+    "duty": Feature.APPROVE_DUTY_DO,
+    "sick": Feature.APPROVE_SICK,
+}
 
 
 def category_for(leave_type: str) -> str:
@@ -390,6 +403,17 @@ def create_request(client, facility_id: str, *, staff_id: str, leave_type: str,
             client, facility_id, staff_id=staff_id, incident_type=leave_type,
             on_date=date_start, reason=reason, leave_request_id=row["id"],
         )
+
+    # Tell whoever can act on it (spec SA.1: "manager receives real-time
+    # notification"). Which feature gates the request decides who is told - a
+    # sick note and a day-off request do not go to the same queue.
+    notify.push_to_approvers(
+        client, facility_id, _APPROVAL_FEATURE[category],
+        event_type="request_submitted",
+        title=f"New {leave_type} request",
+        body=f'{iso(date_start)} – {iso(date_end)}' + (f' · {reason}' if reason else ""),
+        related_type="leave_request", related_id=row["id"],
+    )
     return row
 
 
@@ -460,8 +484,19 @@ def decide(client, facility_id: str, request_id: str, *, decision: str,
     row = (client.table("leave_requests").update(patch)
            .eq("facility_id", facility_id).eq("id", request_id).execute().data[0])
 
+    if decision == "approve":
+        # Auto-lock the roster cell (spec SA.5). Deliberately after the status
+        # update: a lock that outlives a failed approval would hold a cell for a
+        # decision nobody made. The reverse failure - approved but unlocked - is
+        # visible to the approver and fixable by re-approving, which is
+        # idempotent.
+        roster_locks.apply_for_request(client, facility_id, row,
+                                       profile_id=profile_id)
+
     if decision in ("approve", "reject"):
         verdict = "approved" if decision == "approve" else "rejected"
+        _record_decision(client, facility_id, row, decision=decision,
+                         note=note, profile_id=profile_id)
         notify.push(
             client, facility_id, staff_id=row["staff_id"], event_type="leave_decided",
             title=f'{row["leave_type"]} request {verdict}',
@@ -470,6 +505,50 @@ def decide(client, facility_id: str, request_id: str, *, decision: str,
             related_type="leave_request", related_id=row["id"],
         )
     return row
+
+
+def _record_decision(client, facility_id: str, row: dict, *, decision: str,
+                     note: str | None, profile_id: str | None) -> None:
+    """Audit the final decision, and what the reviewers had said at the time.
+
+    Cherry, 1 Aug 2026: after deciding a disputed item the approver records their
+    reasoning, "and this goes into the audit log."
+
+    The recommendation state is captured alongside it, because the note only
+    means anything next to what it was answering. "Spoke with staff directly" is
+    an unremarkable line on its own and the whole story when the row beside it
+    says the reviewers were split one-all and the approver went with the
+    minority. Reconstructing that later from the recommendations table would
+    require trusting that nobody withdrew one afterwards.
+    """
+    from . import recommendations as rec   # local: keeps the import graph acyclic
+
+    try:
+        summary = rec.summarise(
+            rec.for_request(client, facility_id, row["id"], include_withdrawn=False))
+    except Exception:  # noqa: BLE001
+        # Same reasoning as `recommendations.attach`: if the table is unreachable
+        # the decision must still be audited, just without the review context.
+        summary = None
+
+    audit.record(
+        client,
+        facility_id=facility_id,
+        action=f"leave.{decision}",
+        entity_table="leave_requests",
+        entity_id=row["id"],
+        after={
+            "status": row.get("status"),
+            "decision_note": note,
+            "recommendation_summary": summary,
+            # Called out explicitly rather than left for a reader to derive from
+            # the summary: "approved over a split recommendation" is the row an
+            # auditor searches for.
+            "decided_against_split": bool(summary and summary.get("split")),
+        },
+        reason=note or f"leave {decision}",
+        actor_profile_id=profile_id,
+    )
 
 
 def revoke(client, facility_id: str, request_id: str, *, profile_id: str | None,
@@ -496,6 +575,12 @@ def revoke(client, facility_id: str, request_id: str, *, profile_id: str | None,
         "revoked_at": now_iso(),
         "revoke_reason": reason.strip(),
     }).eq("facility_id", facility_id).eq("id", request_id).execute().data[0])
+
+    # The promise is withdrawn, so the cell goes back to the optimiser (spec SA.5).
+    roster_locks.release_for(
+        client, facility_id, source_table="leave_requests", source_id=request_id,
+        profile_id=profile_id, reason=reason.strip(),
+    )
 
     notify.push(
         client, facility_id, staff_id=row["staff_id"], event_type="leave_revoked",

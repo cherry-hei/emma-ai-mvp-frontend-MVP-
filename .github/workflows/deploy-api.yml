@@ -20,6 +20,10 @@ on:
       - ".github/workflows/deploy-api.yml"
   workflow_dispatch: {}
 
+# `emma-ai-app/**` already covers supabase/migrations/**, so a migration-only
+# commit triggers a deploy. That is intended: a schema change with no code change
+# still has to reach the database, and until 1 Aug 2026 nothing ever did.
+
 permissions:
   id-token: write # OIDC token for AssumeRoleWithWebIdentity
   contents: read
@@ -48,6 +52,65 @@ jobs:
         with:
           role-to-assume: arn:aws:iam::${{ vars.AWS_ACCOUNT_ID }}:role/github-actions-emma-api
           aws-region: ${{ vars.AWS_REGION }}
+
+      # ── database migrations ─────────────────────────────────────────────
+      # Before the image, not after. Migrations here are additive, so new schema
+      # with old code is harmless for the minute it lasts; new code against old
+      # schema is the 500s we spent a month chasing. If the push fails the job
+      # stops and nothing ships.
+      #
+      # The URL is read from Secrets Manager rather than duplicated as a GitHub
+      # secret, so there is one copy of the production password and rotating it
+      # is one action. Requires `secretsmanager:GetSecretValue` on
+      # SECRET_ARN_DATABASE_URL in the github-actions-emma-api role - see
+      # SETUP_BACKEND_AWS.md.
+      - name: Read DATABASE_URL from Secrets Manager
+        id: dburl
+        env:
+          SECRET_ARN_DATABASE_URL: ${{ vars.SECRET_ARN_DATABASE_URL }}
+        run: |
+          set -euo pipefail
+          URL=$(aws secretsmanager get-secret-value \
+                  --secret-id "$SECRET_ARN_DATABASE_URL" \
+                  --region "$AWS_REGION" \
+                  --query SecretString --output text)
+          # Mask before it can reach a log line, including on a later failure.
+          echo "::add-mask::$URL"
+          echo "url=$URL" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Pre-flight - would any migration collide with live data?
+        env:
+          DATABASE_URL: ${{ steps.dburl.outputs.url }}
+        run: |
+          set -euo pipefail
+          pip install --quiet "psycopg[binary]>=3.2"
+          # Read-only. Exits 1 on a duplicate that would abort the push half-way
+          # through and leave the schema version lying about what is applied.
+          python emma-ai-app/scripts/preflight_migrations.py
+
+      - name: Install Supabase CLI
+        uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      - name: Apply migrations
+        env:
+          DATABASE_URL: ${{ steps.dburl.outputs.url }}
+        working-directory: emma-ai-app
+        run: |
+          set -euo pipefail
+          # --db-url avoids `supabase link`, so CI needs no personal access token
+          # and no project ref - just the connection string it already has.
+          # Session pooler (5432), never the transaction pooler (6543): DDL and
+          # advisory locks do not survive transaction pooling.
+          supabase db push --db-url "$DATABASE_URL" --include-all
+          echo "--- migrations now applied ---"
+          supabase migration list --db-url "$DATABASE_URL"
 
       - name: Login to Amazon ECR
         id: ecr-login

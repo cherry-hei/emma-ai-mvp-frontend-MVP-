@@ -298,8 +298,14 @@ export default function ROIPage() {
     reduction:  isZH ? '外購減少比例' : 'Agency reduction %',
     contract:   isZH ? '合約年期' : 'Contract term',
     staffTitle: isZH ? '員工基準（實際人數）' : 'Staff Baseline (measured headcount)',
-    headcount:  isZH ? '在職人數' : 'Headcount',
-    vacancies:  isZH ? '空缺' : 'Vacancies',
+    // Three distinct numbers, and the ROI story is the arithmetic between them:
+    // 編制人數 (budgeted) - 在職人數 (in post) = 空缺人數, and the salary budget
+    // sitting against those vacancies is the money available to hire.
+    // 在職 (in post), not 全職 - full-time/part-time is the separate FT/PT split
+    // below, and a part-timer in post still fills an establishment slot.
+    budgeted:   isZH ? '編制人數' : 'Budgeted headcount',
+    headcount:  isZH ? '在職人數' : 'Headcount (in post)',
+    vacancies:  isZH ? '空缺人數' : 'Vacancies',
     totalStaff: isZH ? '總員工人數' : 'Total staff',
     ftpt:       isZH ? '全職 / 兼職' : 'Full-time / Part-time',
     partA:      isZH ? 'Part A - 管理時間節省' : 'Part A - Admin Time Saving',
@@ -441,7 +447,17 @@ export default function ROIPage() {
               </tr>
             </thead>
             <tbody>
+              {/* Derived, not stored: establishment = in post + vacancies. Kept
+                  read-only so the two numbers it is made of stay the only inputs. */}
               <tr className="border-t border-slate-200">
+                <td className="py-1.5 pr-4 text-slate-500">{T.budgeted}</td>
+                {data.staff.by_rank.map((r) => (
+                  <td key={r.rank} className="py-1.5 px-2 text-center font-semibold text-slate-800 tabular-nums">
+                    {r.headcount + r.vacancies}
+                  </td>
+                ))}
+              </tr>
+              <tr className="border-t border-slate-100">
                 <td className="py-1.5 pr-4 text-slate-500">{T.headcount}</td>
                 {data.staff.by_rank.map((r) => (
                   <td key={r.rank} className="py-1.5 px-2 text-center font-semibold text-slate-800 tabular-nums">

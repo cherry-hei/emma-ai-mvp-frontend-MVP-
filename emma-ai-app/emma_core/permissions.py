@@ -92,6 +92,11 @@ class Feature(StrEnum):
     WORKING_HOURS = "working_hours"
     REPORTS = "reports"
     COMPLIANCE = "compliance"
+    # The seven KPI screens were not in the v1 document and were provisionally
+    # treated as reports. Cherry's v2 gives them their own matrix, and splits one
+    # of them out: staffing-ratio compliance is narrower than the rest, not wider.
+    KPI = "kpi"
+    KPI_STAFFING_RATIO = "kpi.staffing_ratio"
     ALERTS = "alerts"
     ROI = "roi"
     FACILITY_SETTINGS = "facility.settings"
@@ -129,8 +134,16 @@ _MATRIX: dict[Feature, tuple[Grant, ...]] = {
     Feature.ROSTER_PUBLISH:       (F,     X,     X,      X,     X),
     Feature.COVER_VIEW_ANALYSIS:  (F,     V,     X,      V,     X),
     Feature.COVER_ASSIGN:         (F,     R,     X,      X,     X),
-    Feature.APPROVE_LEAVE:        (F,     R,     X,      R,     S),
-    Feature.APPROVE_DUTY_DO:      (F,     R,     X,      R,     S),
+    # ALLIED_HEALTH holds R on leave and duty, scoped to its own discipline -
+    # a physiotherapist may recommend on a physiotherapist's request and on
+    # nobody else's. The grant says R; `recommend_scope()` says how far it
+    # reaches, and `DOMAIN_SCOPED_RECOMMEND` below is the list.
+    #
+    # APPROVE_SICK stays X. Cherry confirmed "leave/duty approvals" and named
+    # those two; sick leave was not in the answer, and the house rule is that an
+    # unstated cell denies. One word from her widens it.
+    Feature.APPROVE_LEAVE:        (F,     R,     R,      R,     S),
+    Feature.APPROVE_DUTY_DO:      (F,     R,     R,      R,     S),
     Feature.APPROVE_SICK:         (F,     R,     X,      R,     S),
     Feature.OT_REVIEW:            (F,     R,     X,      V,     S),
     Feature.TOIL:                 (F,     R,     X,      V,     S),
@@ -140,6 +153,12 @@ _MATRIX: dict[Feature, tuple[Grant, ...]] = {
     Feature.WORKING_HOURS:        (F,     E,     X,      E,     X),
     Feature.REPORTS:              (F,     V,     X,      V,     X),
     Feature.COMPLIANCE:           (F,     V,     V,      V,     X),
+    Feature.KPI:                  (F,     V,     X,      V,     X),
+    # Narrower than both KPI and COMPLIANCE, and deliberately so. The v1 guess
+    # put this under COMPLIANCE, reasoning that a therapist has cause to know
+    # whether the floor is legally staffed. Cherry's v2 says no: ALLIED_HEALTH
+    # and ADMIN_CLERK are both out. Overruled and corrected.
+    Feature.KPI_STAFFING_RATIO:   (F,     V,     X,      X,     X),
     Feature.ALERTS:               (F,     V,     X,      V,     S),  # app: own notifications
     Feature.ROI:                  (F,     X,     X,      X,     X),
     Feature.FACILITY_SETTINGS:    (F,     X,     X,      X,     X),
@@ -154,21 +173,24 @@ _MATRIX: dict[Feature, tuple[Grant, ...]] = {
     Feature.DUAL_HOURS_REGIME:    (F,     E,     X,      E,     X),
 }
 
-# PROVISIONAL - awaiting Cherry's confirmation.
+# CONFIRMED by Cherry, 1 Aug 2026: "Your assumptions are 100% correct."
 #
-# The document defines SCHEDULER and HR_AUDITOR in the role table but ships no
-# matrix columns for them, so these two rows are derived from their one-line
-# definitions and are the only entries here not traceable to the source:
+# The v1 document defined SCHEDULER and HR_AUDITOR in the role table but shipped
+# no matrix columns for them, so these two rows were derived from their one-line
+# definitions and flagged provisional. Both are now confirmed as written, plus
+# two explicit answers to the questions raised with them:
 #
-#   SCHEDULER   "authorised roster drafter; cannot publish" -> may draft and edit
-#               a roster and correct hours, never publishes, holds no approval or
-#               recommendation rights, and cannot see ROI, audit log or settings.
-#   HR_AUDITOR  "read-only + cert management" -> reads everything a manager reads
-#               plus the audit log, edits certificates only, approves nothing.
+#   SCHEDULER   "authorised roster drafter; cannot publish". Drafts and edits a
+#               roster, corrects hours, never publishes. **Does not recommend on
+#               leave** - confirmed; "they just draft".
+#   HR_AUDITOR  "read-only + cert management". Reads what a manager reads plus the
+#               audit log, edits certificates only, approves nothing. **Does not
+#               see ROI** - confirmed.
 #
-# Both deliberately err towards less access: widening a role later is a config
-# change, discovering it was too wide is an incident.
-_PROVISIONAL: dict[SystemRole, dict[Feature, Grant]] = {
+# Both err towards less access, which was the principle Cherry endorsed:
+# widening a role later is a config change, discovering it was too wide is an
+# incident.
+_EXTRA_COLUMNS: dict[SystemRole, dict[Feature, Grant]] = {
     SystemRole.SCHEDULER: {
         Feature.DASHBOARD: V,
         Feature.ROSTER_VIEW: V,
@@ -182,8 +204,11 @@ _PROVISIONAL: dict[SystemRole, dict[Feature, Grant]] = {
         Feature.DUAL_HOURS_REGIME: V,
         Feature.COMPLIANCE: V,
         Feature.REPORTS: V,
+        Feature.KPI: V,
+        Feature.KPI_STAFFING_RATIO: V,
         Feature.COVER_VIEW_ANALYSIS: V,
         Feature.STAFF_PORTFOLIO: V,
+        # No APPROVE_* row: a scheduler drafts and does not review. Confirmed.
     },
     SystemRole.HR_AUDITOR: {
         Feature.DASHBOARD: V,
@@ -192,6 +217,8 @@ _PROVISIONAL: dict[SystemRole, dict[Feature, Grant]] = {
         Feature.CERTIFICATES: E,
         Feature.WORKING_HOURS: V,
         Feature.REPORTS: V,
+        Feature.KPI: V,
+        Feature.KPI_STAFFING_RATIO: V,
         Feature.COMPLIANCE: V,
         Feature.ALERTS: V,
         Feature.AUDIT_LOG: V,
@@ -203,7 +230,40 @@ _PROVISIONAL: dict[SystemRole, dict[Feature, Grant]] = {
         Feature.ROSTER_RULE_ENGINE: V,
         Feature.DUTY_MANAGER_ALLOC: V,
         Feature.COVER_VIEW_ANALYSIS: V,
+        # No ROI row: confirmed out.
     },
+}
+
+# ── domain-scoped recommendation ─────────────────────────────────────────────
+# "R for leave/duty approvals within their own domain only (e.g. PT approving PT
+# leave)" - Cherry, 1 Aug 2026.
+#
+# This is the first grant in the matrix that is not answerable from the role
+# alone. Every other cell is a yes or a no; this one is "yes, about these
+# people". So the grant stays R and the reach is a separate question, asked
+# through `recommend_scope()`. Encoding it as a new Grant value instead would
+# have meant every existing `grant is Grant.RECOMMEND` check silently stopped
+# matching a therapist - failing open or closed depending on the call site,
+# which is the worst property a permission change can have.
+#
+# Domain is the therapist's own discipline, not all of allied health. Cherry's
+# example is a PT approving PT leave; an OT is a different profession and a PT
+# has no standing to review their caseload cover.
+DOMAIN_SCOPED_RECOMMEND: frozenset[tuple[SystemRole, Feature]] = frozenset({
+    (SystemRole.ALLIED_HEALTH, Feature.APPROVE_LEAVE),
+    (SystemRole.ALLIED_HEALTH, Feature.APPROVE_DUTY_DO),
+})
+
+# Which ranks each discipline covers. An assistant belongs to the discipline
+# they assist, so a physiotherapist may recommend on their PTA's leave - that is
+# the person whose absence they have to cover.
+THERAPY_DOMAINS: dict[str, frozenset[str]] = {
+    "PT":  frozenset({"PT", "PTA"}),
+    "PTA": frozenset({"PT", "PTA"}),
+    "OT":  frozenset({"OT", "OTA"}),
+    "OTA": frozenset({"OT", "OTA"}),
+    "ST":  frozenset({"ST", "STA"}),
+    "STA": frozenset({"ST", "STA"}),
 }
 
 # Grants that let a request read the facility-wide view of a feature.
@@ -237,9 +297,9 @@ def grant_for(role: str | SystemRole | None, feature: Feature) -> Grant:
     resolved = normalise_role(role)
     if resolved is None:
         return Grant.NONE
-    provisional = _PROVISIONAL.get(resolved)
-    if provisional is not None:
-        return provisional.get(feature, Grant.NONE)
+    extra = _EXTRA_COLUMNS.get(resolved)
+    if extra is not None:
+        return extra.get(feature, Grant.NONE)
     row = _MATRIX.get(feature)
     if row is None:
         return Grant.NONE
@@ -261,7 +321,56 @@ def can_write(role: str | SystemRole | None, feature: Feature) -> bool:
 
 
 def can_recommend(role: str | SystemRole | None, feature: Feature) -> bool:
+    """Whether the role may recommend at all.
+
+    Deliberately does not consider domain. A therapist *can* recommend on leave,
+    which is what decides whether they see the review UI and whether the endpoint
+    exists for them; *whose* leave is `may_recommend_for()`. Merging the two would
+    make a therapist with no PT colleagues look like a role without the grant.
+    """
     return grant_for(role, feature) in RECOMMEND_GRANTS
+
+
+def recommend_scope(role: str | SystemRole | None,
+                    feature: Feature) -> str | None:
+    """`'facility'`, `'own_domain'`, or None when the role cannot recommend."""
+    if not can_recommend(role, feature):
+        return None
+    resolved = normalise_role(role)
+    if (resolved, feature) in DOMAIN_SCOPED_RECOMMEND:
+        return "own_domain"
+    return "facility"
+
+
+def domain_ranks(rank: str | None) -> frozenset[str] | None:
+    """The ranks a domain-scoped recommender covers, or None if unmapped.
+
+    None means "this rank has no defined domain", and callers must treat that as
+    covering nobody. Returning the empty set would read the same at the call site
+    but hide the difference between a therapist with no assistants and a rank we
+    have simply never mapped.
+    """
+    return THERAPY_DOMAINS.get(str(rank or "").upper())
+
+
+def may_recommend_for(role: str | SystemRole | None, feature: Feature, *,
+                      recommender_rank: str | None,
+                      subject_rank: str | None) -> bool:
+    """May this person recommend on *this* request?
+
+    Facility-scoped roles ignore both ranks. A domain-scoped one has to match:
+    an unmapped rank on either side is a no, because the safe reading of "I do
+    not know whether these two are the same discipline" is that they are not.
+    """
+    scope = recommend_scope(role, feature)
+    if scope is None:
+        return False
+    if scope == "facility":
+        return True
+    covered = domain_ranks(recommender_rank)
+    if not covered or not subject_rank:
+        return False
+    return str(subject_rank).upper() in covered
 
 
 def can_decide(role: str | SystemRole | None, feature: Feature) -> bool:

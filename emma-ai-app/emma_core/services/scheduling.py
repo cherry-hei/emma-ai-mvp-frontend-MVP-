@@ -740,6 +740,44 @@ def _update_legacy_task_labels(
      .eq("id", assignment["id"]).execute())
 
 
+def _escort_fields(client, facility_id: str, task: dict,
+                   location: str | None) -> dict:
+    """Resolve a destination against the dictionary (spec 4.1).
+
+    Three cases, and only one of them is an error:
+
+      * a task that does not need a location  -> both columns cleared, whatever
+        was sent, because an escort destination on a laundry task is noise;
+      * a known code                          -> stored and linked;
+      * an unknown code                       -> stored, not linked. The roster
+        cell records what the home did; a missing reference row is our gap.
+
+    The error case is an escort task with no destination at all, because "someone
+    is out of the building, unspecified" is exactly the row a floor-minimum check
+    reads wrongly.
+    """
+    location = (location or "").strip() or None
+    if not task.get("needs_location"):
+        return {"escort_location": None, "escort_location_id": None}
+    if not location:
+        raise ValueError(
+            f"{task.get('task_code') or 'this task'} is an escort task and needs "
+            "an escort_location (e.g. TMH)")
+    # SQL: select id from escort_locations
+    #      where (facility_id = :facility_id or facility_id is null)
+    #        and upper(code) = upper(:location) and active
+    matches = [
+        row for row in (client.table("escort_locations").select("id,code")
+                        .or_(f"facility_id.eq.{facility_id},facility_id.is.null")
+                        .eq("active", True).execute().data)
+        if str(row["code"]).upper() == location.upper()
+    ]
+    return {
+        "escort_location": location,
+        "escort_location_id": matches[0]["id"] if matches else None,
+    }
+
+
 def create_task_assignment(client, facility_id: str, payload: dict) -> dict:
     source_type = payload.get("source_type") or "manual"
     if source_type not in TASK_SOURCE_TYPES:
@@ -772,6 +810,7 @@ def create_task_assignment(client, facility_id: str, payload: dict) -> dict:
         "priority": "high" if task.get("is_restricted") or task.get("requires_audit") else "normal",
         "task_status": "pending",
     }
+    row.update(_escort_fields(client, facility_id, task, payload.get("escort_location")))
     existing = (client.table("task_assignments").select("*")
                 .eq("facility_id", facility_id)
                 .eq("shift_assignment_id", assignment["id"])
@@ -825,6 +864,12 @@ def update_task_assignment(
         update["scheduled_time"] = (
             _time_value(patch["start_at"], "") if patch["start_at"] else None
         )
+    # Re-resolve whenever the destination OR the task changes: moving an
+    # assignment from an escort task to a non-escort one has to clear the
+    # destination, or the roster keeps showing a clinic nobody is going to.
+    if "escort_location" in patch or "task_id" in patch:
+        location = patch.get("escort_location", current.get("escort_location"))
+        update.update(_escort_fields(client, facility_id, task, location))
     result = (client.table("task_assignments").update(update)
               .eq("id", task_assignment_id).execute().data[0])
     _update_legacy_task_labels(

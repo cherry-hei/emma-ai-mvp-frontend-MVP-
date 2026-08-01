@@ -227,3 +227,80 @@ def get_staff_detail(client, facility_id: str, staff_id: str) -> dict | None:
     history.sort(key=lambda h: h["date"] or "", reverse=True)
     detail["shift_history"] = history[:10]
     return detail
+
+
+# ── writes (spec 2.1) ────────────────────────────────────────────────────────
+# The directory was read-only, which is why the Staff Portfolio's "Add staff"
+# button had nothing to call. Both writes are audited: `staff.rank` and
+# `staff.employment_type` feed the rule engine, so changing one silently changes
+# which compliance violations a roster produces.
+
+def create_staff(client, facility_id: str, payload: dict, *,
+                 actor_profile_id: str | None = None,
+                 actor_email: str | None = None) -> dict:
+    """Insert a staff record into the caller's own facility."""
+    from . import audit
+
+    row = {k: v for k, v in payload.items() if v is not None}
+    row["facility_id"] = facility_id
+    row["name"] = str(row["name"]).strip()
+    if row.get("name_en"):
+        row["name_en"] = str(row["name_en"]).strip()
+
+    _check_unit(client, facility_id, row.get("primary_unit_id"))
+
+    # SQL: insert into staff (facility_id, name, name_en, rank, employment_type,
+    #        primary_unit_id, contracted_hours, is_audited_for_medication,
+    #        is_mentor, gender, status)
+    #      values (...) returning *
+    created = client.table("staff").insert(row).execute().data[0]
+    audit.record(client, facility_id=facility_id, action="create",
+                 entity_table="staff", entity_id=created["id"],
+                 after=created, actor_profile_id=actor_profile_id,
+                 actor_email=actor_email)
+    return created
+
+
+def update_staff(client, facility_id: str, staff_id: str, patch: dict, *,
+                 actor_profile_id: str | None = None,
+                 actor_email: str | None = None) -> dict:
+    """Patch a staff record. Only the fields present are touched."""
+    from . import audit
+
+    if not patch:
+        raise ValueError("provide at least one field to update")
+
+    # SQL: select * from staff where facility_id = :facility_id and id = :staff_id
+    rows = (client.table("staff").select("*")
+            .eq("facility_id", facility_id).eq("id", staff_id).execute().data)
+    if not rows:
+        raise ValueError("staff member not found")
+    before = rows[0]
+
+    if "primary_unit_id" in patch:
+        _check_unit(client, facility_id, patch["primary_unit_id"])
+    if "name" in patch and patch["name"] is not None:
+        patch = {**patch, "name": str(patch["name"]).strip()}
+
+    # SQL: update staff set <patch keys>
+    #      where facility_id = :facility_id and id = :staff_id returning *
+    after = (client.table("staff").update(patch)
+             .eq("facility_id", facility_id).eq("id", staff_id).execute().data[0])
+    audit.record(client, facility_id=facility_id, action="update",
+                 entity_table="staff", entity_id=staff_id,
+                 before=before, after=after, actor_profile_id=actor_profile_id,
+                 actor_email=actor_email)
+    return after
+
+
+def _check_unit(client, facility_id: str, unit_id: str | None) -> None:
+    """A unit from another home would pass RLS on `staff` and then read as this
+    home's floor everywhere the roster groups by unit."""
+    if not unit_id:
+        return
+    # SQL: select id from facility_units
+    #      where facility_id = :facility_id and id = :unit_id
+    rows = (client.table("facility_units").select("id")
+            .eq("facility_id", facility_id).eq("id", unit_id).execute().data)
+    if not rows:
+        raise ValueError("primary_unit_id does not belong to this facility")

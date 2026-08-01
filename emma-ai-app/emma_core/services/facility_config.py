@@ -24,7 +24,145 @@ KNOWN_KEYS = (
     "agency_formula",       # Home B's vacancy-driven agency cap
     "floor_minimums",       # per-floor minimum staffing (mirrors Phase 4.3 rules)
     "holiday_priority",     # which leave wins on a high-demand holiday
+    "working_hours",        # NAAC's dual 44h office / 49h frontline week
+    "duty_supervisor_quota",  # per-person '#' allocation for a cycle
+    "meal_breaks",          # when each batch eats, and who eats late
+    "coverage_minimums",    # statutory staff-on-duty windows
 )
+
+
+# ── NAAC's facility profile (2.2) ────────────────────────────────────────────
+# Source: NAAC編更安排1.docx via ClickUp task 2.2, 31 Jul 2026. Translated set in
+# docs/naac/rostering_rules_EN.md.
+#
+# The dual working week is the load-bearing part. From 2021-01-04 frontline staff
+# moved to 49 hours over six days - 8h10m a day, the awkward 8.1667 that produces
+# the `x` (+10 min) code family - while office staff and therapists stayed on 44.
+# It has to be per *role* rather than per facility, because both regimes run in
+# the same building on the same roster, and a leave day is worth 8h to a clerk
+# and 8h10m to a care worker.
+NAAC_WORKING_HOURS = {
+    "regimes": {
+        "office": {
+            "weekly_hours": 44, "daily_hours": 8.0,
+            "rest_days_per_cycle": 9,
+            "ranks": ["SW", "AW", "RN", "EN", "HW"],
+            "note": "Officers, social workers, clerks.",
+        },
+        "therapist": {
+            "weekly_hours": 44, "daily_hours": 9.0,
+            "rest_days_per_cycle": 9,
+            "ranks": ["PT", "OT", "PTA", "OTA"],
+            "note": "44h over fewer, longer days.",
+        },
+        "frontline": {
+            "weekly_hours": 49, "daily_hours": 8.1667,
+            "rest_days_per_cycle": 6,
+            "ranks": ["WA", "PCW", "CW", "HCA", "WM", "COOK"],
+            "note": "8h10m a day since 2021-01-04. Drives the 'x' code family.",
+        },
+    },
+    "cycle_weeks": 6,
+    # Leave is paid at the staff member's own daily hours, which is why the home
+    # writes AL and ALx as separate codes rather than one code and a lookup.
+    "leave_hours_follow_regime": True,
+    "effective_from": "2021-01-04",
+}
+
+# The '#' marker is a per-shift responsibility, not a role: it grants no extra
+# approval rights, so it is config here rather than a row in the RBAC matrix.
+#
+# The per-person numbers are deliberately NOT in this file, and not in any file.
+# Three named staff carry a personal quota (15/13/9 against the nurses' 12) and
+# two more have personal constraints. That is employee data, and Cherry's
+# instruction on 1 Aug was explicit about where it goes:
+#
+#   "the personal constraints ... should be stored as configurable rules in the
+#    DB (not hardcoded in any config file), so that the OWNER can update them via
+#    the admin UI in future without a code change."
+#
+# So `staff_scheduling_constraints` (migration 20) holds them, behind RLS and
+# editable by the OWNER. What lives here is the shape, the default that applies
+# when nobody has an override, and the fact that overrides exist at all.
+NAAC_DUTY_SUPERVISOR_QUOTA = {
+    "marker": "#",
+    "acting_marker": "(#)",
+    "grants_approval_rights": False,
+    "per_cycle_default": 12,
+    "default_applies_to_ranks": ["RN", "EN", "HW"],
+    "overrides_source": "staff_scheduling_constraints",
+    "distribution": "even",
+    "note": "Per-person quotas are rows in staff_scheduling_constraints "
+            "(constraint_type='require_quota'), never config. Seeded from the "
+            "home's DO更次數 sheet. See docs/naac/README.md.",
+}
+
+# Duty supervisors eat an hour after everyone else, because somebody has to be on
+# the floor while the first batch eats. Encoded because it decides who is
+# countable during the meal window, not because catering needs scheduling.
+NAAC_MEAL_BREAKS = {
+    "weekday": {"first_batch": "18:15", "duty_supervisor": "19:15"},
+    "weekend_or_ph": {
+        "residents": "17:30", "first_batch": "17:45", "duty_supervisor": "18:45",
+        "note": "First batch is the two 心 positions; second is the E position and *9肌.",
+    },
+}
+
+# Residential Care Homes (Persons with Disabilities) Regulation, as the home
+# applies it. The overnight rule is why the B130 / A2s / A220x codes exist at all.
+NAAC_COVERAGE_MINIMUMS = {
+    "windows": [
+        {"from": "18:00", "to": "07:00", "min_staff": 2,
+         "note": "Any two staff. The reason B130 / A2s / A220x exist."},
+        {"from": "10:00", "to": "16:00", "min_nurses": 1, "or_min_health_workers": 2,
+         "note": "From the NAAC RBAC document."},
+    ],
+}
+
+NAAC_CONFIGS: dict[str, dict] = {
+    "working_hours": NAAC_WORKING_HOURS,
+    "duty_supervisor_quota": NAAC_DUTY_SUPERVISOR_QUOTA,
+    "meal_breaks": NAAC_MEAL_BREAKS,
+    "coverage_minimums": NAAC_COVERAGE_MINIMUMS,
+    "scheduling_cycle": {"cycle_type": "42day", "days": 42, "weeks": 6},
+}
+
+
+def seed_naac_configs(client, facility_id: str, *, created_by: str | None = None,
+                      overwrite: bool = False) -> list[dict]:
+    """Publish NAAC's profile into `facility_json_configs`.
+
+    Skips a key that already has an active version unless `overwrite`, because
+    re-running a seed should not silently retire a value the home has since
+    corrected by hand.
+    """
+    written = []
+    for key, payload in NAAC_CONFIGS.items():
+        if not overwrite and get_config(client, facility_id, key):
+            continue
+        written.append(put_config(
+            client, facility_id, config_key=key, config_json=payload,
+            description="NAAC TAH profile, from NAAC編更安排1.docx (ClickUp 2.2, 31 Jul 2026)",
+            created_by=created_by,
+        ))
+    return written
+
+
+def working_hours_for_rank(config: dict, rank: str | None) -> dict | None:
+    """Which of the three regimes a rank falls under.
+
+    Returns None for an unmapped rank rather than guessing. A wrong guess here
+    silently misprices every leave day and every overtime hour for that person,
+    and 44 is the more likely guess and the cheaper one - so the caller is made
+    to decide instead.
+    """
+    rank = (rank or "").upper()
+    if not rank:
+        return None
+    for name, regime in (config.get("regimes") or {}).items():
+        if rank in {str(r).upper() for r in regime.get("ranks") or ()}:
+            return {"regime": name, **regime}
+    return None
 
 
 def list_configs(client, facility_id: str, *, config_key: str | None = None,

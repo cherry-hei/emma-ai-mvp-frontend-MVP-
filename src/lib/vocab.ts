@@ -32,7 +32,7 @@ export const RANKS: Record<string, Term> = {
   RN:   { en: 'Registered Nurse',            zh: '註冊護士',     keepCode: true },
   EN:   { en: 'Enrolled Nurse',              zh: '登記護士',     keepCode: true },
   HW:   { en: 'Health Worker',               zh: '保健員',       keepCode: true },
-  HCA:  { en: 'Health Care Assistant',       zh: '健康護理員',   keepCode: true },
+  HCA:  { en: 'Health Care Assistant',       zh: '健康服務助理', keepCode: true },
   RCW:  { en: 'Residential Care Worker',     zh: '院舍護理員',   keepCode: true },
   CW:   { en: 'Care Worker',                 zh: '護理員',       keepCode: true },
   PCW:  { en: 'Personal Care Worker',        zh: '個人照顧員',   keepCode: true },
@@ -43,20 +43,40 @@ export const RANKS: Record<string, Term> = {
   SW:   { en: 'Social Worker',               zh: '社工',         keepCode: true },
   PT:   { en: 'Physiotherapist',             zh: '物理治療師',   keepCode: true },
   OT:   { en: 'Occupational Therapist',      zh: '職業治療師',   keepCode: true },
+  // UNRESOLVED - Cherry's 1 Aug review says WM = 院舍經理 (residential care home
+  // manager). Left as 工友 because her own NAAC files say the opposite, and
+  // loudly: NAAC編更安排1.docx section 6 is headed "WM (Workman) Staffing" and
+  // rosters two WM Monday to Saturday and one on Sunday, on A8x and A9x shifts.
+  // Nobody rosters two home managers onto an 08:00 and an 09:00 shift six days a
+  // week.
+  //
+  // Applying the change would relabel every workman in the imported roster as the
+  // person who runs the building - visible on the roster grid, in the staff
+  // portfolio and in the SWD reports. Getting it wrong in that direction is worse
+  // than leaving it, so it stays until she confirms which code she meant. There
+  // is no manager rank in `Rank` at all, which is the likelier gap.
   WM:   { en: 'Workman',                     zh: '工友',         keepCode: true },
 }
 
 // ── shift / duty codes ──────────────────────────────────────────────────────
-// Single letters are left alone: they are the same mark on the paper roster in
-// both languages, and a home reads "A更" not "早更" off the grid.
+// The letter is the label, in both languages: "A更" / "A shift", never "早更" /
+// "Morning". Confirmed by Cherry, 1 Aug 2026.
+//
+// Time-of-day names are not just unidiomatic here, they are wrong. Both NGOs use
+// the same A/P/N letters but hang different hours off them - NAAC's A shift is
+// 07:15-15:15, and its A230 runs 14:30-22:30, which no reader would call
+// "morning". The letter is what is printed on the paper roster and what staff
+// say out loud; the hours come from the facility's own shift dictionary
+// (`shift_definitions`), not from the name.
 export const SHIFTS: Record<string, Term> = {
-  A:     { en: 'Morning',        zh: '早更' },
-  B:     { en: 'Day',            zh: '日更' },
-  E:     { en: 'Evening',        zh: '黃昏更' },
-  P:     { en: 'Afternoon',      zh: '午更' },
-  N:     { en: 'Night',          zh: '夜更' },
-  AN:    { en: 'Overnight',      zh: '通宵更' },
-  D:     { en: 'Day (AS)',       zh: '日更（助理院長）' },
+  A:     { en: 'A shift',        zh: 'A更' },
+  B:     { en: 'B shift',        zh: 'B更' },
+  E:     { en: 'E shift',        zh: 'E更' },
+  P:     { en: 'P shift',        zh: 'P更' },
+  N:     { en: 'N shift',        zh: 'N更' },
+  AN:    { en: 'AN shift',       zh: 'AN更' },
+  D:     { en: 'D shift (AS)',   zh: 'D更（助理院長）' },
+  NO:    { en: 'Post-night rest', zh: '通宵更後休息' },
   OFF:   { en: 'Off',            zh: '休息' },
   DO:    { en: 'Day Off',        zh: '例假' },
   SLEEP: { en: 'Sleep-in',       zh: '留宿' },
