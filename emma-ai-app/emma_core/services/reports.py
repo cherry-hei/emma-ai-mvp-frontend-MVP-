@@ -11,7 +11,7 @@ import csv
 import io
 from datetime import date as Date
 
-from ._common import as_date, iso, month_bounds, operative_version, resolve_period, shift_minutes
+from ._common import as_date, assignments_for_shifts, iso, month_bounds, operative_version, resolve_period, shift_minutes
 from .compliance import minute_ratio_series, ratio_series, threshold_monitors
 
 NIGHT_CODES = {"N", "AN", "7P"}
@@ -39,7 +39,7 @@ def list_event_triggers(client, facility_id: str, on: Date | None = None) -> lis
              .order("sort_order").execute().data)
     # SQL: select event_type, date, title from facility_events
     #      where facility_id = :facility_id and date >= :start and date <= :end
-    # (counted per event_type in Python and stitched onto the rules — in SQL this
+    # (counted per event_type in Python and stitched onto the rules - in SQL this
     #  would be a `left join lateral (... group by event_type)` on the rule code)
     events = (client.table("facility_events").select("event_type,date,title")
               .eq("facility_id", facility_id)
@@ -67,7 +67,7 @@ def list_reports(client, facility_id: str, *, limit: int = 20) -> list[dict]:
     #      where facility_id = :facility_id
     #      order by created_at desc
     #      limit :limit
-    # (payload_json is deliberately not selected — the list view never renders it)
+    # (payload_json is deliberately not selected - the list view never renders it)
     return (client.table("reports")
             .select("id,report_type,title,period_start,period_end,format,row_count,created_at")
             .eq("facility_id", facility_id)
@@ -97,9 +97,7 @@ def _roster_context(client, facility_id: str, period_id: str | None):
                                     .eq("roster_version_id", version["id"]).execute().data)})
     assigns = []
     if shifts:
-        # SQL: select * from shift_assignments where shift_id = any(:shift_ids)
-        assigns = [a for a in (client.table("shift_assignments").select("*")
-                               .in_("shift_id", list(shifts)).execute().data)
+        assigns = [a for a in assignments_for_shifts(client, shifts)
                    if a.get("status") != "cancelled" and a.get("staff_id")]
     # SQL: select id, name, name_en, rank, gender, employment_type from staff
     #      where facility_id = :facility_id
@@ -120,7 +118,7 @@ def _cells_by_staff(shifts: dict, assigns: list[dict]) -> dict[str, list[dict]]:
 
 
 def _staff_label(st: dict) -> str:
-    return st.get("name_en") or st.get("name") or "—"
+    return st.get("name_en") or st.get("name") or "-"
 
 
 # ── generators ───────────────────────────────────────────────────────────────
@@ -321,10 +319,10 @@ def _staff_register(client, facility_id: str, params: dict) -> dict:
             else c["cert_type"])
     rows = [{
         "staff": _staff_label(st), "name_local": st.get("name"), "rank": st["rank"],
-        "unit": (st.get("unit") or {}).get("name") or "—",
+        "unit": (st.get("unit") or {}).get("name") or "-",
         "employment_type": st["employment_type"], "status": st["status"],
         "medication_audited": "Y" if st.get("is_audited_for_medication") else "N",
-        "certificates": "; ".join(certs.get(st["id"], [])) or "—",
+        "certificates": "; ".join(certs.get(st["id"], [])) or "-",
     } for st in staff]
     return {
         "columns": [
@@ -417,7 +415,7 @@ def _compliance_summary(client, facility_id: str, params: dict) -> dict:
 
 
 def _monthly_staffing_compliance(client, facility_id: str, params: dict) -> dict:
-    """The scheduled monthly report — the compliance summary plus workforce mix."""
+    """The scheduled monthly report - the compliance summary plus workforce mix."""
     from . import kpi as kpi_svc
 
     base = _compliance_summary(client, facility_id, params)
@@ -444,6 +442,113 @@ def _monthly_staffing_compliance(client, facility_id: str, params: dict) -> dict
     return base
 
 
+def _roster_export(client, facility_id: str, params: dict) -> dict:
+    """The published roster itself: one row per staff × day (spec 7.2).
+
+    Long rather than wide - one row per cell, carrying the task codes, the unit
+    and the event markers - because the export is consumed by both a spreadsheet
+    and a diff, and a staff × day matrix breaks the moment a period is a different
+    length.
+    """
+    period, version, shifts, assigns, staff = _roster_context(
+        client, facility_id, params.get("period_id"))
+    units = {}
+    if shifts:
+        # SQL: select id, name from facility_units where facility_id = :facility_id
+        units = {u["id"]: u["name"] for u in (
+            client.table("facility_units").select("id,name")
+            .eq("facility_id", facility_id).execute().data)}
+    events: dict[str, list[str]] = {}
+    if version:
+        # SQL: select date, title from facility_events
+        #      where facility_id = :facility_id
+        #        and date >= :period_start and date <= :period_end
+        for event in (client.table("facility_events").select("date,title")
+                      .eq("facility_id", facility_id)
+                      .gte("date", iso(period["period_start"]))
+                      .lte("date", iso(period["period_end"])).execute().data):
+            events.setdefault(iso(event["date"]), []).append(event["title"] or "")
+
+    by_shift = {a["shift_id"]: a for a in assigns}
+    rows = []
+    for shift_id, shift in shifts.items():
+        assignment = by_shift.get(shift_id)
+        member = staff.get((assignment or {}).get("staff_id") or "")
+        rows.append({
+            "date": iso(shift["date"]),
+            "staff": _staff_label(member) if member else "(unassigned)",
+            "staff_zh": (member or {}).get("name") or "",
+            "rank": (member or {}).get("rank") or shift.get("required_rank") or "",
+            "employment_type": (member or {}).get("employment_type") or "",
+            "shift_type": shift["shift_type"],
+            "start_time": str(shift.get("start_time") or ""),
+            "end_time": str(shift.get("end_time") or ""),
+            "paid_hours": round(shift_minutes(shift) / 60, 2)
+                          if shift.get("is_working") else 0,
+            "unit": units.get(shift.get("unit_id") or "", ""),
+            "tasks": ", ".join((assignment or {}).get("tasks") or []),
+            "is_agency": bool((assignment or {}).get("is_agency")),
+            "events": "; ".join(events.get(iso(shift["date"]), [])),
+        })
+    rows.sort(key=lambda r: (r["date"], r["staff"]))
+    working = [r for r in rows if r["paid_hours"]]
+    return {
+        "columns": [
+            {"key": "date", "label": "Date"}, {"key": "staff", "label": "Staff"},
+            {"key": "staff_zh", "label": "姓名"}, {"key": "rank", "label": "Rank"},
+            {"key": "employment_type", "label": "Employment"},
+            {"key": "shift_type", "label": "Shift"},
+            {"key": "start_time", "label": "Start"}, {"key": "end_time", "label": "End"},
+            {"key": "paid_hours", "label": "Paid hours"},
+            {"key": "unit", "label": "Unit"}, {"key": "tasks", "label": "Task codes"},
+            {"key": "is_agency", "label": "External"},
+            {"key": "events", "label": "Events"},
+        ],
+        "rows": rows,
+        "meta": {**_meta(period, version, "Published roster with task codes and events"),
+                 "cells": len(rows), "working_cells": len(working),
+                 "paid_hours_total": round(sum(r["paid_hours"] for r in rows), 1)},
+    }
+
+
+def _evidence_pack(client, facility_id: str, params: dict) -> dict:
+    """The security / compliance evidence checklist (spec 1.6 / 8.2).
+
+    Every row carries its owner, test method, sample output and whether an
+    external qualified reviewer is required. The caveats travel in `meta` so an
+    exported pack cannot lose the wording the submission depends on.
+    """
+    from . import governance
+
+    checklist = governance.evidence_checklist(client, facility_id)
+    rows = [{
+        "code": item["code"], "category": item["category"], "title": item["title"],
+        "owner": item.get("owner") or "", "status": item["status"].upper(),
+        "test_method": item.get("test_method") or "",
+        "sample_output": item.get("sample_output") or "",
+        "external_review": "yes" if item["external_review_required"] else "no",
+        "checked_on": iso(item["checked_on"]) if item.get("checked_on") else "",
+    } for item in checklist["items"]]
+    return {
+        "columns": [
+            {"key": "code", "label": "Ref"}, {"key": "category", "label": "Category"},
+            {"key": "title", "label": "Control"}, {"key": "owner", "label": "Owner"},
+            {"key": "status", "label": "Status"},
+            {"key": "test_method", "label": "Test method"},
+            {"key": "sample_output", "label": "Sample output"},
+            {"key": "external_review", "label": "External review"},
+            {"key": "checked_on", "label": "Checked"},
+        ],
+        "rows": rows,
+        "meta": {
+            "description": "Client / government submission evidence checklist",
+            "counts": checklist["counts"],
+            "caveats": checklist["caveats"],
+            "external_review_required": checklist["external_review_required"],
+        },
+    }
+
+
 GENERATORS = {
     "roster_hours": _roster_hours,
     "ph_dayoff": _ph_dayoff,
@@ -454,6 +559,8 @@ GENERATORS = {
     "staffing_ratio": _staffing_ratio,
     "compliance_summary": _compliance_summary,
     "monthly_staffing_compliance": _monthly_staffing_compliance,
+    "roster_export": _roster_export,
+    "evidence_pack": _evidence_pack,
 }
 
 TITLES = {
@@ -466,6 +573,8 @@ TITLES = {
     "staffing_ratio": "Staffing Ratio Report",
     "compliance_summary": "SWD Compliance Summary",
     "monthly_staffing_compliance": "Monthly Staffing Compliance Report",
+    "roster_export": "Roster Export",
+    "evidence_pack": "Security & Compliance Evidence Pack",
 }
 
 
@@ -523,7 +632,7 @@ def to_csv(payload: dict) -> str:
 
 def run_schedule(client, facility_id: str, schedule_id: str,
                  profile_id: str | None = None) -> dict:
-    """Manual 'Generate Now' on a scheduled report — same code path the cron uses."""
+    """Manual 'Generate Now' on a scheduled report - same code path the cron uses."""
     # SQL: select * from report_schedules
     #      where facility_id = :facility_id and id = :schedule_id
     rows = (client.table("report_schedules").select("*")

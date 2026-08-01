@@ -49,8 +49,25 @@ next-env.d.ts
 .idea/
 .vscode/
 
+# scratch dirs written by local tooling (a Postgres datadir once landed here)
+.codex-temp/
+
 # Python (backend has its own emma-ai-app/.gitignore too)
 __pycache__/
 *.pyc
 .pytest_cache/
-/docs/
+# docs/ holds the homes' own source workbooks - real rosters, with staff names in
+# them. Those stay out of the repository. The written records beside them do not:
+# committed code points at docs/naac/README.md for the provenance of the shift
+# dictionary, and a code comment referencing a file nobody else has is worse than
+# no comment.
+#
+# Exclude the contents, then re-include by name. Negating a path inside an
+# excluded *directory* does not work - git never descends into it - so the
+# directory itself has to stay listable.
+/docs/*
+!/docs/naac/
+/docs/naac/*
+!/docs/naac/*.md
+!/docs/ZH_REVIEW.md
+!/docs/ZH_REVIEW.csv

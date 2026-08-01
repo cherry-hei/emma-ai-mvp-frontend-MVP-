@@ -1,18 +1,18 @@
-# Setup 2 — Backend API on AWS (ECS Express Mode, auto-deploy from GitHub)
+# Setup 2 - Backend API on AWS (ECS Express Mode, auto-deploy from GitHub)
 
 Deploy the Emma AI **REST API** (FastAPI + uvicorn + OR-Tools) to AWS, with
 push-to-deploy from GitHub. End state: a public HTTPS URL like
 `https://emma-ai-api.ecs.ap-southeast-1.on.aws`, redeployed automatically on
 every push to the deploy branch.
 
-**This guide is click-by-click in the AWS Console** — no AWS CLI, and no Docker
+**This guide is click-by-click in the AWS Console** - no AWS CLI, and no Docker
 on your machine. GitHub Actions does the image build in the cloud.
-(A CLI-equivalent for every step is in [Appendix — CLI equivalents](#appendix--cli-equivalents).)
+(A CLI-equivalent for every step is in [Appendix - CLI equivalents](#appendix--cli-equivalents).)
 
 **What gets deployed:** the JSON API only, from the repo-root
 [`Dockerfile`](Dockerfile).
-**What does NOT:** the database — that's Supabase Cloud, so do
-[`SETUP_SUPABASE_DB.md`](SETUP_SUPABASE_DB.md) **first**. And the UI — see
+**What does NOT:** the database - that's Supabase Cloud, so do
+[`SETUP_SUPABASE_DB.md`](SETUP_SUPABASE_DB.md) **first**. And the UI - see
 [`SETUP_UI_AWS.md`](SETUP_UI_AWS.md).
 
 > A live service **cannot** use your local `supabase start` database. The cloud
@@ -20,7 +20,7 @@ on your machine. GitHub Actions does the image build in the cloud.
 
 > **Why not App Runner?** AWS closed App Runner to new customers (maintenance
 > mode from 30 Apr 2026); a new account can no longer create App Runner
-> services. AWS's recommended replacement is **ECS Express Mode** — it
+> services. AWS's recommended replacement is **ECS Express Mode** - it
 > provisions a Fargate service, Application Load Balancer, auto-scaling, HTTPS
 > and a public URL, at no charge above the underlying resources. Express Mode
 > deploys a **container image**, so the flow is: GitHub Actions builds the
@@ -53,7 +53,7 @@ and GitHub Actions creates the service itself on that first run.
 
 ## Before you start
 
-1. **Supabase Cloud project ready** — schema pushed, seeded if this is `test`.
+1. **Supabase Cloud project ready** - schema pushed, seeded if this is `test`.
    You need four values; all four are already in your local
    `emma-ai-app/.env`, or in the Supabase dashboard:
    | Value | Where in Supabase |
@@ -63,10 +63,10 @@ and GitHub Actions creates the service itself on that first run.
    | `SUPABASE_SERVICE_ROLE_KEY` | Settings → API → service_role (**secret**) |
    | `DATABASE_URL` | Settings → Database → Connection string → URI |
 2. **Your AWS account ID.** Console top-right → click your account name; the
-   12-digit number is shown. Copy it — you need it repeatedly. Written
+   12-digit number is shown. Copy it - you need it repeatedly. Written
    `<ACCOUNT_ID>` below.
 3. **Region set to Asia Pacific (Singapore) `ap-southeast-1`** in the top-right
-   region picker. Check it on *every* console page in this guide — an
+   region picker. Check it on *every* console page in this guide - an
    ECR repo in the wrong region will not be found by the deploy.
 4. **A default VPC** in that region. New accounts have one. Verify: **VPC**
    console → **Your VPCs** → look for one with **Default VPC = Yes**. If there
@@ -74,7 +74,7 @@ and GitHub Actions creates the service itself on that first run.
 
 ---
 
-## Step 1 — Create the ECR repository
+## Step 1 - Create the ECR repository
 
 This is where built images are stored.
 
@@ -86,12 +86,12 @@ This is where built images are stored.
 5. **Create**.
 
 You'll land on the repository list. The **URI** column shows
-`<ACCOUNT_ID>.dkr.ecr.ap-southeast-1.amazonaws.com/emma-ai-api` — confirmation
+`<ACCOUNT_ID>.dkr.ecr.ap-southeast-1.amazonaws.com/emma-ai-api` - confirmation
 that your account ID and region are what you think they are.
 
 ---
 
-## Step 2 — Create the two ECS Express Mode IAM roles
+## Step 2 - Create the two ECS Express Mode IAM roles
 
 Express Mode requires exactly these two role names. Create both by hand so you
 know their ARNs before wiring GitHub.
@@ -139,16 +139,16 @@ This one needs a trust policy the wizard doesn't offer as a preset.
 
 ---
 
-## Step 3 — Store the two secrets
+## Step 3 - Store the two secrets
 
 `SUPABASE_SERVICE_ROLE_KEY` bypasses RLS and `DATABASE_URL` embeds the Postgres
 password. Neither belongs in plain env config or in GitHub.
 
-Do this **twice** — once per secret:
+Do this **twice** - once per secret:
 
 1. Console → **Secrets Manager** → **Store a new secret**.
 2. **Secret type:** *Other type of secret*.
-3. Select the **Plaintext** tab and replace its contents with the raw value —
+3. Select the **Plaintext** tab and replace its contents with the raw value -
    just the key/URI itself, no quotes, no braces, no trailing newline.
    > Stay on **Plaintext**. If you use *Key/value*, the secret becomes a JSON
    > object and the container receives `{"key":"..."}` instead of the value.
@@ -186,7 +186,7 @@ This is the single most common cause of tasks that start and immediately die.
 
 ---
 
-## Step 4 — Let GitHub into AWS (OIDC, no access keys)
+## Step 4 - Let GitHub into AWS (OIDC, no access keys)
 
 GitHub mints a short-lived token and assumes an AWS role. No long-lived AWS
 credentials are ever stored in GitHub.
@@ -200,7 +200,7 @@ credentials are ever stored in GitHub.
 4. **Audience:** `sts.amazonaws.com`
 5. **Add provider**.
 
-> If it says the provider already exists, it's registered — move on.
+> If it says the provider already exists, it's registered - move on.
 
 ### 4b. Create the deploy role
 
@@ -255,10 +255,10 @@ AWS side done. ✅
 
 ---
 
-## Step 5 — Configure the GitHub repo
+## Step 5 - Configure the GitHub repo
 
 The workflow at [`.github/workflows/deploy-api.yml`](.github/workflows/deploy-api.yml)
-reads everything from **repository variables** — nothing is hardcoded, and no
+reads everything from **repository variables** - nothing is hardcoded, and no
 secret *values* enter GitHub (only Secrets Manager ARNs, which are just
 identifiers).
 
@@ -275,17 +275,17 @@ the **Variables** tab → **New repository variable**, once per row:
 | `APP_ENV` | `test` |
 | `SUPABASE_URL` | Supabase project URL |
 | `SUPABASE_ANON_KEY` | anon / public key |
-| `CORS_ORIGINS` | `http://localhost:3001` for now — real UI origin comes in Step 7 |
+| `CORS_ORIGINS` | `http://localhost:3001` for now - real UI origin comes in Step 7 |
 | `SECRET_ARN_SERVICE_ROLE_KEY` | service-role-key ARN from Step 3 |
 | `SECRET_ARN_DATABASE_URL` | database-url ARN from Step 3 |
 
 > Use the **Variables** tab, not *Secrets*. The workflow reads `vars.*`; values
-> put under *Secrets* would arrive empty. Nothing here is confidential —
+> put under *Secrets* would arrive empty. Nothing here is confidential -
 > `SUPABASE_ANON_KEY` is designed to be public and ARNs are just identifiers.
 
 ---
 
-## Step 6 — First deploy
+## Step 6 - First deploy
 
 Commit the workflow and push:
 
@@ -296,7 +296,7 @@ git add .github/workflows/deploy-api.yml && git commit -m "ci: auto-deploy API t
 Then GitHub → **Actions** → **Deploy API to AWS** → **Run workflow** (the
 `workflow_dispatch` button) if the push didn't trigger it.
 
-First run takes **~8–12 min** — it installs OR-Tools and pandas, then waits for
+First run takes **~8–12 min** - it installs OR-Tools and pandas, then waits for
 Fargate and the load balancer to come up. Later runs are much faster thanks to
 the layer cache. The action **creates** the Express Mode service on this first
 run; subsequent runs update it.
@@ -314,7 +314,7 @@ output. If `/health` doesn't answer, go to **Troubleshooting** below.
 
 ---
 
-## Step 7 — Point the UI at it
+## Step 7 - Point the UI at it
 
 1. Deploy the UI per [`SETUP_UI_AWS.md`](SETUP_UI_AWS.md), using this API URL as
    `NEXT_PUBLIC_API_URL`.
@@ -338,7 +338,7 @@ deploy registers a fresh ECS task definition. So:
 - **To rotate a secret:** store the new value in Secrets Manager (the ARN
   doesn't change) and re-run the workflow so tasks restart and re-read it.
 - **Never delete an entry** from the workflow's `environment-variables` or
-  `secrets` list to "keep the old value" — anything absent is dropped from the
+  `secrets` list to "keep the old value" - anything absent is dropped from the
   new task definition.
 
 ---
@@ -351,16 +351,16 @@ Container logs are the fastest diagnosis: **ECS → Clusters → default →
 | Symptom | Cause / fix |
 |---|---|
 | Tasks start then stop; `ResourceInitializationError` fetching secrets | Step 3a missing, or its ARN pattern doesn't match your secret names. |
-| Log: `FileNotFoundError: APP_ENV=test but neither .env.test nor a SUPABASE_URL environment variable is set` | `SUPABASE_URL` didn't reach the container — check the variable name in Step 5. |
+| Log: `FileNotFoundError: APP_ENV=test but neither .env.test nor a SUPABASE_URL environment variable is set` | `SUPABASE_URL` didn't reach the container - check the variable name in Step 5. |
 | Container starts but secrets look like `{"key":"..."}` | The secret was stored as *Key/value* instead of **Plaintext** (Step 3). Re-store it. |
 | Health check failing / target unhealthy | Container port must be `8080`, health path `/health`. Check the log for a startup traceback. |
-| `500` + `db_error` on every call | `DATABASE_URL` / `SUPABASE_*` wrong, or the schema was never pushed — see [`SETUP_SUPABASE_DB.md`](SETUP_SUPABASE_DB.md). |
+| `500` + `db_error` on every call | `DATABASE_URL` / `SUPABASE_*` wrong, or the schema was never pushed - see [`SETUP_SUPABASE_DB.md`](SETUP_SUPABASE_DB.md). |
 | **CORS error** in the browser | UI origin isn't in `CORS_ORIGINS`. Add it, re-run the workflow. Must match scheme + host exactly, no trailing slash. |
-| `401 unauthorized` from clients | Expected without a bearer token — log in via `/auth/login` first. Not a deploy issue. |
+| `401 unauthorized` from clients | Expected without a bearer token - log in via `/auth/login` first. Not a deploy issue. |
 | Actions: `Not authorized to perform sts:AssumeRoleWithWebIdentity` | The org/repo/branch in the Step 4b trust policy doesn't match what you pushed. |
-| Actions: `repository does not exist` on push to ECR | ECR repo name or **region** mismatch — Step 1 vs the `AWS_REGION` / `ECR_REPOSITORY` variables. |
+| Actions: `repository does not exist` on push to ECR | ECR repo name or **region** mismatch - Step 1 vs the `AWS_REGION` / `ECR_REPOSITORY` variables. |
 | Actions: `Unable to assume the service linked role` | IAM eventual consistency. Wait a minute, re-run. |
-| Env var silently disappeared after a deploy | See *Changing configuration later* — the workflow must carry the complete set. |
+| Env var silently disappeared after a deploy | See *Changing configuration later* - the workflow must carry the complete set. |
 
 **Cost (rough):** 1 vCPU / 2 GB Fargate always-on ≈ **$25–35/month**, plus the
 Application Load Balancer at ≈ **$18–20/month**, plus cents for ECR storage.
@@ -370,7 +370,7 @@ in parallel longer than you need to.
 
 **Deliberate pilot setting:** the workflow pins min = max = **1 task**. Job state
 (`optimization_jobs`) lives in Postgres so polling works across instances, but an
-`/optimize-roster` background solve runs in the process that received it — one
+`/optimize-roster` background solve runs in the process that received it - one
 task avoids that entirely. Raise `max-task-count` once solves move off the
 request process.
 
@@ -379,7 +379,7 @@ branch condition in the Step 4b trust policy. Both must agree.
 
 ---
 
-## Appendix — CLI equivalents
+## Appendix - CLI equivalents
 
 Same setup, for reference or scripting. Assumes
 `AWS_REGION=ap-southeast-1` and `AWS_ACCOUNT_ID` are exported.
@@ -393,7 +393,7 @@ Same setup, for reference or scripting. Assumes
 | 3a · read policy | `aws iam put-role-policy --role-name ecsTaskExecutionRole --policy-name EmmaReadSecrets --policy-document "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Action\":\"secretsmanager:GetSecretValue\",\"Resource\":\"arn:aws:secretsmanager:$AWS_REGION:$AWS_ACCOUNT_ID:secret:emma/*\"}]}"` |
 | 4a · OIDC provider | `aws iam create-open-id-connect-provider --url https://token.actions.githubusercontent.com --client-id-list sts.amazonaws.com` |
 | 6 · inspect service | `aws ecs describe-express-gateway-service --service-arn "arn:aws:ecs:$AWS_REGION:$AWS_ACCOUNT_ID:service/default/emma-ai-api" --region "$AWS_REGION"` |
-| — · tail logs | `aws logs tail /ecs/default/emma-ai-api --follow --region "$AWS_REGION"` |
+| - · tail logs | `aws logs tail /ecs/default/emma-ai-api --follow --region "$AWS_REGION"` |
 
 ---
 

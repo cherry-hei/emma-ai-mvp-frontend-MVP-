@@ -1,14 +1,14 @@
-# Setup 3 — UI on AWS (Amplify Hosting, auto-deploy from GitHub)
+# Setup 3 - UI on AWS (Amplify Hosting, auto-deploy from GitHub)
 
 Deploy the Emma AI **frontend** (Next.js 16 · React 19 · Tailwind v4 · shadcn) to
 **AWS Amplify Hosting**. Amplify is the natural "push-to-deploy" home for Next.js
 on AWS: it detects Next.js, runs the managed **SSR** adapter (the app uses server
 components and `/api` route handlers, so a plain static export won't work), and
-redeploys on every push — the frontend analog of the API's push-to-deploy setup.
+redeploys on every push - the frontend analog of the API's push-to-deploy setup.
 
 Do these first:
-1. [`SETUP_SUPABASE_DB.md`](SETUP_SUPABASE_DB.md) — the database.
-2. [`SETUP_BACKEND_AWS.md`](SETUP_BACKEND_AWS.md) — the API. **You need its public
+1. [`SETUP_SUPABASE_DB.md`](SETUP_SUPABASE_DB.md) - the database.
+2. [`SETUP_BACKEND_AWS.md`](SETUP_BACKEND_AWS.md) - the API. **You need its public
    URL** for `NEXT_PUBLIC_API_URL` below.
 
 > The frontend lives at the **repo root** (`src/`), on the frontend branch (e.g.
@@ -28,13 +28,13 @@ Do these first:
 
 ---
 
-## Step 1 — Create the Amplify app
+## Step 1 - Create the Amplify app
 
 AWS Console → **AWS Amplify** → **Create new app** → **Deploy with GitHub**.
 
-1. Authorize GitHub (OAuth — interactive, one-time), pick this **repo** and the
+1. Authorize GitHub (OAuth - interactive, one-time), pick this **repo** and the
    frontend **branch** (e.g. `main`).
-2. Amplify auto-detects **Next.js (SSR)**. Accept the detected build settings —
+2. Amplify auto-detects **Next.js (SSR)**. Accept the detected build settings -
    confirm the app root is the **repo root** (where `package.json` lives), not
    `emma-ai-app/`.
 3. Leave the default build image and Node 18+.
@@ -65,7 +65,7 @@ frontend:
 
 ---
 
-## Step 2 — Environment variables
+## Step 2 - Environment variables
 
 Amplify → your app → **Hosting → Environment variables**. Set:
 
@@ -79,7 +79,7 @@ Amplify → your app → **Hosting → Environment variables**. Set:
 |---|---|
 | `NEXT_PUBLIC_DEV_EMAIL` / `NEXT_PUBLIC_DEV_PASSWORD` | Local-dev auto-login only. In a hosted env, use the real login UI built on `api.login()`. Never ship demo credentials to the browser. |
 
-> `NEXT_PUBLIC_*` values are **inlined into the client bundle at build time** — they
+> `NEXT_PUBLIC_*` values are **inlined into the client bundle at build time** - they
 > are public. Never put secrets (service-role key, DB URL) here. Those belong only
 > to the backend ([`SETUP_BACKEND_AWS.md`](SETUP_BACKEND_AWS.md)).
 
@@ -87,7 +87,7 @@ Save, then trigger a build (**Redeploy this version**) so the new env is baked i
 
 ---
 
-## Step 3 — First deploy
+## Step 3 - First deploy
 
 Amplify builds and deploys automatically. First build takes a few minutes. When it
 finishes you get a default domain:
@@ -100,7 +100,7 @@ Open it and confirm the app loads.
 
 ---
 
-## Step 4 — Wire up CORS (the two-way handshake)
+## Step 4 - Wire up CORS (the two-way handshake)
 
 The API and UI are on **different origins**, so the browser enforces CORS. Take the
 Amplify URL from Step 3 and add it to the backend's `CORS_ORIGINS`:
@@ -121,7 +121,7 @@ Then reload the UI. If the browser console shows a **CORS error**, the origin in
 
 ---
 
-## Step 5 — (optional) Custom domain
+## Step 5 - (optional) Custom domain
 
 Amplify → your app → **Hosting → Custom domains** → add e.g. `emma.example.com`.
 Amplify manages the certificate and gives you DNS records to add at your registrar.
@@ -131,7 +131,7 @@ After it validates:
 
 ---
 
-## Ongoing — auto-deploy
+## Ongoing - auto-deploy
 
 Every push to the connected branch rebuilds and redeploys:
 
@@ -143,7 +143,7 @@ Watch progress in Amplify → your app → the branch's build log.
 
 ---
 
-## Alternative — containerized UI on ECS Express Mode
+## Alternative - containerized UI on ECS Express Mode
 
 If you'd rather run the UI the same way as the API (one platform,
 container-based), build a Next.js **standalone** image and deploy it as a second

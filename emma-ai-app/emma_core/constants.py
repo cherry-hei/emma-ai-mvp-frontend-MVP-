@@ -1,4 +1,4 @@
-"""Domain enums, statuses and display lookups mirroring the DB. Shift codes are intentionally NOT an enum — they're facility-configured data (`shift_definitions`)."""
+"""Domain enums, statuses and display lookups mirroring the DB. Shift codes are intentionally NOT an enum - they're facility-configured data (`shift_definitions`)."""
 from __future__ import annotations
 
 from enum import StrEnum
@@ -29,12 +29,33 @@ class EmploymentType(StrEnum):
 
 
 class Role(StrEnum):
+    """Accepted values of `profiles.role`.
+
+    Two generations coexist on purpose. The canonical seven are Cherry's RBAC
+    definition of 30 Jul 2026 and are what new accounts get; the lower-case set
+    is what seeded and existing accounts still hold. `permissions.normalise_role`
+    folds the legacy values onto the canonical ones, so authorization is decided
+    in one vocabulary regardless of which spelling a row carries. Retiring the
+    legacy members is a data migration, not an enum edit - RLS policies name
+    these strings in SQL (see `current_role_name()`).
+    """
+
+    # canonical - emma_core.permissions.SystemRole
+    OWNER = "OWNER"
+    NURSE_MGR = "NURSE_MGR"
+    ALLIED_HEALTH = "ALLIED_HEALTH"
+    ADMIN_CLERK = "ADMIN_CLERK"
+    SCHEDULER_C = "SCHEDULER"
+    FRONTLINE = "FRONTLINE"
+    HR_AUDITOR = "HR_AUDITOR"
+
+    # legacy - still in the database and the demo seed
     SUPERINTENDENT = "superintendent"
     ADMIN = "admin"
     STAFF = "staff"
-    SCHEDULER = "scheduler"   # Phase 1.1 RBAC — builds/edits rosters
-    HR = "hr"                 # Phase 1.1 RBAC — staff records
-    AUDITOR = "auditor"       # Phase 1.1 RBAC — read-only compliance review
+    SCHEDULER = "scheduler"   # Phase 1.1 RBAC - builds/edits rosters
+    HR = "hr"                 # Phase 1.1 RBAC - staff records
+    AUDITOR = "auditor"       # Phase 1.1 RBAC - read-only compliance review
 
 
 class RosterStatus(StrEnum):
@@ -100,7 +121,7 @@ PUBLISH_THRESHOLD = 60
 # ── rank substitution (Phase 3: emergency cover eligibility) ────────────────
 # Care ranks form a seniority ladder: a more senior care rank may cover a less
 # senior slot, never the other way round. Therapy/social ranks are not
-# interchangeable with care ranks at all — only an exact match covers them.
+# interchangeable with care ranks at all - only an exact match covers them.
 CARE_RANKS = frozenset({"RN", "EN", "HW", "HCA", "CW", "PCW", "AW"})
 RANK_SENIORITY: dict[str, int] = {
     "RN": 7, "EN": 6, "HW": 5, "HCA": 4, "CW": 4, "PCW": 3, "AW": 2,

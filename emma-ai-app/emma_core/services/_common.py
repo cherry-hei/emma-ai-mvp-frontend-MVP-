@@ -9,7 +9,7 @@ from __future__ import annotations
 import calendar
 from datetime import date as Date, datetime, timezone
 
-from ..shifttime import covers_window, day_spans, envelope, paid_minutes, to_minutes
+from ..shifttime import day_spans, paid_minutes, to_minutes
 
 LEAVE_CODES = {"AL", "SL", "DSL"}        # non-working codes that mean "away"
 OFF_CODES = {"OFF", "DO", "SLEEP"}       # non-working codes that mean "free"
@@ -32,14 +32,9 @@ to_min = to_minutes
 
 
 def shift_minutes(shift: dict) -> int:
-    """Paid minutes for a shift row — segment-aware, so a split A/N shift counts
+    """Paid minutes for a shift row - segment-aware, so a split A/N shift counts
     its two duty windows, not the elapsed span between them."""
     return paid_minutes(shift)
-
-
-def shift_envelope(shift: dict) -> tuple[int, int, bool] | None:
-    """Outer span of a shift, for overlap and minimum-rest checks."""
-    return envelope(shift)
 
 
 def day_intervals(start: int, end: int) -> list[tuple[int, int]]:
@@ -57,11 +52,6 @@ def overlaps(a_start: int | None, a_end: int | None, b_start: int, b_end: int) -
     return False
 
 
-def shift_covers(shift: dict, win_start: int, win_end: int) -> bool:
-    """Is the staff member on duty at any point inside the window?"""
-    return covers_window(shift, win_start, win_end)
-
-
 def month_bounds(on: Date | None = None) -> tuple[str, str]:
     on = on or Date.today()
     last = calendar.monthrange(on.year, on.month)[1]
@@ -70,21 +60,42 @@ def month_bounds(on: Date | None = None) -> tuple[str, str]:
 
 # ── roster period / version resolution ───────────────────────────────────────
 def current_period(client, facility_id: str) -> dict | None:
-    """The period covering today, else the most recent by start date."""
+    """The rostered period covering today, else the most recent rostered one.
+
+    Every caller pairs this with ``operative_version`` and reports on the roster it
+    finds, so a period that only exists to carry leave entitlements - open for
+    planning, no shifts on it yet - is not the operative period. Preferring a
+    rostered one keeps the dashboards and KPIs on the last real roster instead of
+    blanking out the moment a future cycle is opened.
+    """
     # SQL: select * from roster_periods
     #      where facility_id = :facility_id
     #      order by period_start desc
-    # (the "covers today" test is done in Python below, over the newest-first list)
+    # (the "covers today" and "has a roster" tests are done in Python below)
     rows = (client.table("roster_periods").select("*")
             .eq("facility_id", facility_id)
             .order("period_start", desc=True).execute().data)
     if not rows:
         return None
+    # SQL: select period_id, version_type, status from roster_versions
+    #      where facility_id = :facility_id
+    versions = (client.table("roster_versions")
+                .select("period_id,version_type,status")
+                .eq("facility_id", facility_id).execute().data)
+    rostered = {
+        v["period_id"] for v in versions
+        if v.get("status") == "published" or v.get("version_type") == "manual"
+    }
     today = Date.today().isoformat()
-    for p in rows:                                   # newest first
-        if iso(p["period_start"]) <= today <= iso(p["period_end"]):
-            return p
-    return rows[0]
+    covers_today = [
+        p for p in rows                              # newest first
+        if iso(p["period_start"]) <= today <= iso(p["period_end"])
+    ]
+    for group in (covers_today, rows):
+        for p in group:
+            if p["id"] in rostered:
+                return p
+    return covers_today[0] if covers_today else rows[0]
 
 
 def resolve_period(client, facility_id: str, period_id: str | None) -> dict | None:
@@ -99,7 +110,7 @@ def resolve_period(client, facility_id: str, period_id: str | None) -> dict | No
 
 def operative_version(client, facility_id: str, period_id: str) -> dict | None:
     """The version that represents reality for a period: the published one if there
-    is one, else the manual draft. Never an A/B/C candidate — those are proposals."""
+    is one, else the manual draft. Never an A/B/C candidate - those are proposals."""
     # SQL: select * from roster_versions
     #      where facility_id = :facility_id and period_id = :period_id
     #      order by created_at desc
@@ -114,20 +125,40 @@ def operative_version(client, facility_id: str, period_id: str) -> dict | None:
     return manual[0] if manual else None
 
 
-def load_roster(client, facility_id: str, version_id: str) -> tuple[list[dict], list[dict]]:
-    """(shifts, assignments) for one roster version, in two queries."""
-    # Two round trips instead of one join — PostgREST cannot return the parent and
-    # child sets as separate arrays, and the callers want them separately anyway.
-    #
-    # SQL (1): select * from shifts where roster_version_id = :version_id
-    shifts = (client.table("shifts").select("*")
-              .eq("roster_version_id", version_id).execute().data)
-    if not shifts:
-        return [], []
-    # SQL (2): select * from shift_assignments where shift_id = any(:shift_ids)
-    assigns = (client.table("shift_assignments").select("*")
-               .in_("shift_id", [s["id"] for s in shifts]).execute().data)
-    return shifts, assigns
+# PostgREST puts every filter in the query string, so `in_` with a long id list
+# can exceed the server's request-line limit and come back as a bare 400. One real
+# 28-day cycle for 48 staff is ~1,100 shifts, which is already past it. Every read
+# that fans out over a roster's ids goes through the helpers below so the request
+# is split rather than rejected.
+IN_CHUNK = 120
+
+
+def fetch_in(client, table: str, column: str, values, *, select: str = "*",
+             filters: dict | None = None) -> list[dict]:
+    """`select <select> from <table> where <column> = any(:values)`, chunked."""
+    values = list(values)
+    rows: list[dict] = []
+    for start in range(0, len(values), IN_CHUNK):
+        query = client.table(table).select(select)
+        for key, value in (filters or {}).items():
+            query = query.eq(key, value)
+        rows.extend(query.in_(column, values[start:start + IN_CHUNK]).execute().data)
+    return rows
+
+
+def assignments_for_shifts(client, shift_ids, *, select: str = "*",
+                           facility_id: str | None = None,
+                           staff_id: str | None = None) -> list[dict]:
+    """Assignments for a roster's shifts - the codebase's most common fan-out.
+
+    # SQL: select <select> from shift_assignments
+    #      where shift_id = any(:shift_ids)
+    #        [and facility_id = :facility_id] [and staff_id = :staff_id]
+    """
+    filters = {key: value for key, value in
+               (("facility_id", facility_id), ("staff_id", staff_id)) if value}
+    return fetch_in(client, "shift_assignments", "shift_id", shift_ids,
+                    select=select, filters=filters)
 
 
 def staff_by_id(client, facility_id: str) -> dict[str, dict]:
@@ -143,10 +174,10 @@ def staff_by_id(client, facility_id: str) -> dict[str, dict]:
 def staff_brief(st: dict | None) -> dict:
     """The staff fields every Phase 3 list row shows."""
     if not st:
-        return {"staff_id": None, "name": "—", "name_en": None, "rank": None, "unit_name": None}
+        return {"staff_id": None, "name": "-", "name_en": None, "rank": None, "unit_name": None}
     unit = st.get("unit") or {}
     return {
-        "staff_id": st["id"], "name": st.get("name") or "—",
+        "staff_id": st["id"], "name": st.get("name") or "-",
         "name_en": st.get("name_en"), "rank": st.get("rank"),
         "unit_name": unit.get("name"),
     }

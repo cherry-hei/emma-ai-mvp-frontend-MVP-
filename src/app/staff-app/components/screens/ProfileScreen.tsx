@@ -60,12 +60,12 @@ export default function ProfileScreen() {
         <div className="mt-3 space-y-3">
           <div className="rounded-xl bg-gray-50 px-3 py-3">
             <p className="text-xs text-gray-400">英文名</p>
-            <p className="text-sm font-medium text-gray-800">{profile.name_en ?? '—'}</p>
+            <p className="text-sm font-medium text-gray-800">{profile.name_en ?? '-'}</p>
           </div>
 
           <div className="rounded-xl bg-gray-50 px-3 py-3">
             <p className="text-xs text-gray-400">工作單位</p>
-            <p className="text-sm font-medium text-gray-800">{profile.unit_name ?? '—'}</p>
+            <p className="text-sm font-medium text-gray-800">{profile.unit_name ?? '-'}</p>
           </div>
 
           <div className="rounded-xl bg-gray-50 px-3 py-3">

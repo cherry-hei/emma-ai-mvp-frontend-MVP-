@@ -1,14 +1,14 @@
 """KPI framework (spec 5.4 – 5.9).
 
-All six KPIs are computed from committed rows — violation_log, shift_assignments,
-manual_override_log, agency_assignments and the ratio engine — for the operative
+All six KPIs are computed from committed rows - violation_log, shift_assignments,
+manual_override_log, agency_assignments and the ratio engine - for the operative
 version of a roster period. Nothing is stored pre-aggregated, so a KPI can never
 disagree with the roster it claims to describe.
 """
 from __future__ import annotations
 
 from ..constants import PlanMode
-from ._common import as_date, operative_version, resolve_period
+from ._common import as_date, assignments_for_shifts, operative_version, resolve_period
 from .compliance import EXTERNAL_TYPES, minute_ratio_series, ratio_series
 
 DIFFICULT_SHIFTS = ("AN", "N", "7P", "P")   # fairness is reported for every type anyway
@@ -28,16 +28,14 @@ def _roster_rows(client, version_id: str) -> tuple[dict[str, dict], list[dict]]:
     if not shifts:
         return {}, []
     by_id = {s["id"]: s for s in shifts}
-    # SQL: select * from shift_assignments where shift_id = any(:shift_ids)
     # (the cancelled / unassigned filter runs in the comprehension, not the query)
-    assigns = [a for a in (client.table("shift_assignments").select("*")
-                           .in_("shift_id", list(by_id)).execute().data)
+    assigns = [a for a in assignments_for_shifts(client, by_id)
                if a.get("status") != "cancelled" and a.get("staff_id")]
     return by_id, assigns
 
 
 def gini(values: list[float]) -> float:
-    """SUM_i SUM_j |xi - xj| / (2 n² x̄) — 0 = perfectly even, 1 = one person has all."""
+    """SUM_i SUM_j |xi - xj| / (2 n² x̄) - 0 = perfectly even, 1 = one person has all."""
     n = len(values)
     if n < 2:
         return 0.0
@@ -203,35 +201,58 @@ def external_workforce(client, facility_id: str, period_id: str | None = None) -
         .eq("facility_id", facility_id).execute().data)}
 
     total = external = 0
+    roster_assignment_ids: set[str] = set()
     by_role: dict[str, dict] = {}
     for a in assigns:
         if not by_id[a["shift_id"]].get("is_working"):
             continue
+        if a.get("id"):
+            roster_assignment_ids.add(str(a["id"]))
         total += 1
         st = staff.get(a["staff_id"]) or {}
         is_external = bool(a.get("is_agency")) or st.get("employment_type") in EXTERNAL_TYPES
-        role = a.get("role") or st.get("rank") or "—"
+        role = a.get("role") or st.get("rank") or "-"
         slot = by_role.setdefault(role, {"role": role, "shifts": 0, "external": 0})
         slot["shifts"] += 1
         if is_external:
             external += 1
             slot["external"] += 1
 
-    # SQL: select cost, date, role from agency_assignments
+    # SQL: select id, cost, date, role, shift_id, shift_assignment_id
+    #      from agency_assignments
     #      where facility_id = :facility_id
     #        and date >= :period_start and date <= :period_end
-    agency_rows = (client.table("agency_assignments").select("cost,date,role")
+    agency_rows = (
+        client.table("agency_assignments")
+        .select("id,cost,date,role,shift_id,shift_assignment_id")
                    .eq("facility_id", facility_id)
                    .gte("date", str(period["period_start"]))
-                   .lte("date", str(period["period_end"])).execute().data)
+        .lte("date", str(period["period_end"]))
+        .execute()
+        .data
+    )
+    # Generated A/B/C drafts share the same calendar dates. Linked purchases
+    # belong only to the operative roster version; unlinked rows are legacy /
+    # directly purchased agency shifts and remain period-scoped.
+    agency_rows = [
+        row for row in agency_rows
+        if not row.get("shift_id") or row["shift_id"] in by_id
+    ]
     cost = sum(float(r.get("cost") or 0) for r in agency_rows)
     for r in agency_rows:
-        role = r.get("role") or "—"
+        # A purchased shift can be linked to the roster assignment that represents
+        # the same person. Keep its spend, but do not count that worker twice.
+        if (
+            r.get("shift_assignment_id")
+            and str(r["shift_assignment_id"]) in roster_assignment_ids
+        ):
+            continue
+        role = r.get("role") or "-"
         slot = by_role.setdefault(role, {"role": role, "shifts": 0, "external": 0})
         slot["shifts"] += 1
         slot["external"] += 1
-    total += len(agency_rows)
-    external += len(agency_rows)
+        total += 1
+        external += 1
 
     for slot in by_role.values():
         slot["dependency_pct"] = (round(slot["external"] / slot["shifts"] * 100, 1)
@@ -286,7 +307,7 @@ def staffing_ratio_compliance(client, facility_id: str,
 
 
 def overview(client, facility_id: str, period_id: str | None = None) -> dict:
-    """Every KPI in one call — what the ROI/KPI dashboard strip renders."""
+    """Every KPI in one call - what the ROI/KPI dashboard strip renders."""
     return {
         "conflict_rate": conflict_rate(client, facility_id, period_id),
         "an_gini": an_gini(client, facility_id, period_id),

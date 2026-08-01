@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ApiRuleError, api, optimizeAndPoll } from '@/lib/api'
 import type {
   OptionScoreOut, PeriodOut, RosterCell, RosterGrid, RosterOption, RuleIssue,
@@ -165,6 +165,8 @@ export function RealRosterBoard() {
   const [publishingId, setPublishingId] = useState('')
   const [publishedIds, setPublishedIds] = useState<Set<string>>(new Set())
   const [publishError, setPublishError] = useState('')
+  const gridRequestRef = useRef(0)
+  const validationRequestRef = useRef(0)
 
   const T = {
     period: isZH ? '週期' : 'Period', newPeriod: isZH ? '＋ 新週期' : '＋ New period',
@@ -173,8 +175,8 @@ export function RealRosterBoard() {
     validate: isZH ? '驗證' : 'Validate', saveDraft: isZH ? '儲存草稿' : 'Save draft',
     publish: isZH ? '發佈' : 'Publish', staff: isZH ? '員工' : 'Staff',
     empty: isZH ? '此週期尚無更表資料。點擊格子開始編輯。' : 'No shifts yet. Click a cell to start editing.',
-    noPeriods: isZH ? '尚無更表週期，請先建立一個。' : 'No roster periods yet — create one to begin.',
-    readonly: isZH ? '（唯讀 — 已發佈或 AI 方案）' : '(read-only — published or AI option)',
+    noPeriods: isZH ? '尚無更表週期，請先建立一個。' : 'No roster periods yet - create one to begin.',
+    readonly: isZH ? '（唯讀 - 已發佈或 AI 方案）' : '(read-only - published or AI option)',
     edit: isZH ? '編輯更次' : 'Edit shift', clear: isZH ? '清除' : 'Clear',
     save: isZH ? '儲存' : 'Save', cancel: isZH ? '取消' : 'Cancel', tasks: isZH ? '任務' : 'Tasks',
     passes: isZH ? '通過' : 'Passes', fails: isZH ? '不通過' : 'Fails',
@@ -186,6 +188,11 @@ export function RealRosterBoard() {
   const flash = (m: string) => { setNotice(m); setError(''); window.setTimeout(() => setNotice(''), 2500) }
 
   // ── loaders ──────────────────────────────────────────────────────────────
+  useEffect(() => () => {
+    gridRequestRef.current += 1
+    validationRequestRef.current += 1
+  }, [])
+
   useEffect(() => {
     api.shiftDefinitions().then(setShiftDefs).catch(() => {})
     api.taskDefinitions().then(setTaskDefs).catch(() => {})
@@ -214,14 +221,46 @@ export function RealRosterBoard() {
     loadVersions(periodId).catch(() => {})
   }, [periodId, loadVersions])
 
+  const validateVersion = useCallback(async (vid: string) => {
+    const requestId = ++validationRequestRef.current
+    try {
+      const result = await api.validateRoster(vid)
+      if (requestId === validationRequestRef.current) setValidation(result)
+      return result
+    } catch (e) {
+      // A newer version or manual re-check supersedes this request.
+      if (requestId !== validationRequestRef.current) return null
+      throw e
+    }
+  }, [])
+
   const loadGrid = useCallback(async (pid: string, vid: string) => {
+    const requestId = ++gridRequestRef.current
+    // The next grid owns the validation strip; invalidate any older response.
+    validationRequestRef.current += 1
     setLoading(true); setError(''); setValidation(null)
     try {
-      setGrid(await api.rosterGrid(pid, vid ? { versionId: vid } : undefined))
+      const nextGrid = await api.rosterGrid(pid, vid ? { versionId: vid } : undefined)
+      if (requestId !== gridRequestRef.current) return
+      setGrid(nextGrid)
+      setLoading(false)
+      if (nextGrid.version_id) {
+        try {
+          await validateVersion(nextGrid.version_id)
+        } catch (e) {
+          if (requestId === gridRequestRef.current) {
+            setError(e instanceof Error ? e.message : 'Validation failed')
+          }
+        }
+      }
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to load roster')
-    } finally { setLoading(false) }
-  }, [])
+      if (requestId === gridRequestRef.current) {
+        setError(e instanceof Error ? e.message : 'Failed to load roster')
+      }
+    } finally {
+      if (requestId === gridRequestRef.current) setLoading(false)
+    }
+  }, [validateVersion])
 
   useEffect(() => { if (periodId) loadGrid(periodId, versionId) }, [periodId, versionId, loadGrid])
 
@@ -287,14 +326,18 @@ export function RealRosterBoard() {
   async function handleValidate() {
     if (!activeVersionId) return
     setBusy('validate'); setError('')
-    try { setValidation(await api.validateRoster(activeVersionId)) }
+    try { await validateVersion(activeVersionId) }
     catch (e) { setError(e instanceof Error ? e.message : 'Validation failed') } finally { setBusy('') }
   }
 
   async function handleSaveDraft() {
     if (!activeVersionId) return
     setBusy('save')
-    try { await api.saveDraft(activeVersionId); flash(isZH ? '已儲存草稿' : 'Draft saved') }
+    try {
+      await api.saveDraft(activeVersionId)
+      try { await validateVersion(activeVersionId) } catch { /* draft remains saved */ }
+      flash(isZH ? '已儲存草稿' : 'Draft saved')
+    }
     catch (e) { setError(e instanceof Error ? e.message : 'Save failed') } finally { setBusy('') }
   }
 
@@ -305,7 +348,11 @@ export function RealRosterBoard() {
       await api.publish(activeVersionId)
       flash(isZH ? '已發佈' : 'Published')
       await refresh()
-    } catch (e) { setError(e instanceof Error ? e.message : 'Publish failed') } finally { setBusy('') }
+    } catch (e) {
+      const message = e instanceof Error ? e.message : 'Publish failed'
+      try { await validateVersion(activeVersionId) } catch { /* preserve the publish error */ }
+      setError(message)
+    } finally { setBusy('') }
   }
 
   async function handleAI() {
@@ -429,7 +476,7 @@ export function RealRosterBoard() {
             ))}
             {validation.ratio_checks.filter((c) => !c.passes).slice(0, 4).map((c, i) => (
               <span key={`r${i}`} className="text-[10px] px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 border border-amber-100">
-                {c.label} — {c.actual}/{c.required}
+                {c.label} - {c.actual}/{c.required}
               </span>
             ))}
           </div>

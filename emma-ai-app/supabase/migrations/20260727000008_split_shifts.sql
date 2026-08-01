@@ -13,7 +13,7 @@
 -- shift and behaves exactly as before. `paid_minutes` lets a facility pay a
 -- handover or sleep-in differently from the clock. See emma_core/shifttime.py.
 --
--- Columns only — the shift dictionary is facility-configured data, so the
+-- Columns only - the shift dictionary is facility-configured data, so the
 -- correct segments per home are set by scripts/seed.py (and, for a live
 -- facility, by whoever maintains shift_definitions).
 -- ============================================================================

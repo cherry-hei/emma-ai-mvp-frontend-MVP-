@@ -1,4 +1,4 @@
-"""ROI v2.2 — admin-time (A1), emergency-cover (A2) and agency (Part B) savings.
+"""ROI v2.2 - admin-time (A1), emergency-cover (A2) and agency (Part B) savings.
 
 The formulas are fixed by the ROI paper; what varies per home is the baseline
 (manager hourly rate, survey hours, agency reduction assumption), which lives in
@@ -17,7 +17,7 @@ EXTERNAL_TYPES = {"local_pt", "agency", "outsource", "casual"}
 SCENARIOS = (
     (5, "conservative", "SWD minimum staffing floor", True),
     (8, "mid", "Paper 1 pilot reference", False),
-    (15, "upside", "Original — removed as overly optimistic", False),
+    (15, "upside", "Original - removed as overly optimistic", False),
 )
 
 DEFAULTS = {
@@ -90,19 +90,58 @@ def _staff_breakdown(client, facility_id: str, vacancies: dict) -> dict:
 
 
 def _agency_spend(client, facility_id: str, start: str, end: str) -> dict:
-    # SQL: select role, cost, hours, vendor, date from agency_assignments
+    # SQL: select role, cost, hours, vendor, date, shift_id from agency_assignments
     #      where facility_id = :facility_id and date >= :start and date <= :end
     # (per-role cost rollup is done in Python; in SQL it would be
     #  `group by role` with `count(*)` and `sum(cost)`)
-    rows = (client.table("agency_assignments").select("role,cost,hours,vendor,date")
+    rows = (client.table("agency_assignments")
+            .select("role,cost,hours,vendor,date,shift_id")
             .eq("facility_id", facility_id)
             .gte("date", start).lte("date", end).execute().data)
+    linked_shift_ids = {
+        row["shift_id"] for row in rows if row.get("shift_id")
+    }
+    published_shift_ids: set[str] = set()
+    if linked_shift_ids:
+        shifts = (
+            client.table("shifts")
+            .select("id,roster_version_id")
+            .eq("facility_id", facility_id)
+            .in_("id", list(linked_shift_ids))
+            .execute()
+            .data
+        )
+        version_ids = {
+            row.get("roster_version_id") for row in shifts
+            if row.get("roster_version_id")
+        }
+        published_versions: set[str] = set()
+        if version_ids:
+            published_versions = {
+                row["id"] for row in (
+                    client.table("roster_versions")
+                    .select("id,status")
+                    .eq("facility_id", facility_id)
+                    .in_("id", list(version_ids))
+                    .eq("status", "published")
+                    .execute()
+                    .data
+                )
+            }
+        published_shift_ids = {
+            row["id"] for row in shifts
+            if row.get("roster_version_id") in published_versions
+        }
+    rows = [
+        row for row in rows
+        if not row.get("shift_id") or row["shift_id"] in published_shift_ids
+    ]
     by_role: dict[str, dict] = {}
     total = 0.0
     for r in rows:
         cost = float(r.get("cost") or 0)
         total += cost
-        slot = by_role.setdefault(r.get("role") or "—", {"role": r.get("role") or "—",
+        slot = by_role.setdefault(r.get("role") or "-", {"role": r.get("role") or "-",
                                                          "shifts": 0, "cost": 0.0})
         slot["shifts"] += 1
         slot["cost"] += cost
@@ -130,19 +169,19 @@ def summary(client, facility_id: str, on: Date | None = None) -> dict:
                  .lte("reported_at", f"{end}T23:59:59Z").execute())
     incident_count = incidents.count or 0
 
-    # Part A1 — roster scheduling time
+    # Part A1 - roster scheduling time
     before = float(s["roster_hours_before"])
     after = float(s["roster_hours_after"])
     a1_hours = round(before - after, 2)
     a1_saving = round(a1_hours * rate)
 
-    # Part A2 — emergency cover
+    # Part A2 - emergency cover
     per_incident = float(s["hours_saved_per_incident"])
     a2_hours = round(incident_count * per_incident, 2)
     a2_saving = round(a2_hours * rate)
     admin_saving = a1_saving + a2_saving
 
-    # Part B — agency
+    # Part B - agency
     reduction = float(s["agency_reduction_pct"])
     agency_saving = round(agency["monthly_cost"] * reduction / 100)
     scenarios = [{

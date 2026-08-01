@@ -2,10 +2,10 @@
 
 Two methods, both required by the Code of Practice reporting (spec 3.6 / 3.7):
 
-  compute_ratios   per-shift check — a staff member counts toward a window if
+  compute_ratios   per-shift check - a staff member counts toward a window if
                    their shift overlaps it at all. Cheap, and what the
                    Compliance page's pass/fail cards show.
-  minute_ratio     minute-level overlap — walks the window segment by segment and
+  minute_ratio     minute-level overlap - walks the window segment by segment and
                    counts only the minutes each person is actually on duty, so a
                    shift that covers half a statutory window can no longer pass
                    the whole window. This is the audit-grade number.
@@ -14,11 +14,13 @@ Rules come from staffing_ratio_rules; the denominator from daily_resident_counts
 """
 from __future__ import annotations
 
+import json
 import math
 from datetime import date as Date, timedelta
 
 from ..models import RatioResult
 from ..shifttime import covers_window, day_spans, duty_spans, to_minutes
+from ._common import assignments_for_shifts
 
 CERT_WARN_DAYS = 90
 AN_MONTHLY_LIMIT = 2          # facility policy: at most 2 AN shifts per staff per month
@@ -36,17 +38,206 @@ def _intervals(start: int, end: int) -> list[tuple[int, int]]:
     return day_spans(start, end, end <= start)
 
 
-def _requirement(rule: dict, residents: int) -> tuple[int, str]:
+def _as_date(value) -> Date | None:
+    if value is None or value == "":
+        return None
+    if isinstance(value, Date):
+        return value
+    return Date.fromisoformat(str(value)[:10])
+
+
+def _json_value(value, expected_type, default):
+    if isinstance(value, expected_type):
+        return value
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+        except (TypeError, ValueError):
+            return default
+        return parsed if isinstance(parsed, expected_type) else default
+    return default
+
+
+def _same_id(left, right) -> bool:
+    return str(left) == str(right)
+
+
+def _resident_total(residents: int | list[dict], rule: dict) -> int:
+    """Resolve one rule's denominator from an aggregate or per-unit rows."""
+    if isinstance(residents, (int, float)):
+        return max(0, int(residents))
+
+    unit_id = rule.get("unit_id")
+    care_level = rule.get("care_level")
+    total = 0
+    for row in residents or []:
+        if unit_id is not None and not _same_id(row.get("unit_id"), unit_id):
+            continue
+        if care_level and row.get("care_level") != care_level:
+            continue
+        try:
+            total += int(row.get("resident_count") or 0)
+        except (TypeError, ValueError):
+            continue
+    return max(0, total)
+
+
+def _rank_config(rule: dict) -> tuple[set[str] | None, dict[str, float]]:
+    """Return counted ranks and their equivalent-head weights.
+
+    Phase 5 JSON configuration takes precedence. Empty JSON retains the legacy
+    exact ``staff_rank`` behaviour; a rule with no rank remains any-rank.
+    """
+    counted_raw = _json_value(rule.get("counted_ranks_json"), list, [])
+    weights_raw = _json_value(rule.get("rank_weights_json"), dict, {})
+    counted = {str(rank) for rank in counted_raw if rank not in (None, "")}
+
+    weights: dict[str, float] = {}
+    for rank, value in weights_raw.items():
+        if isinstance(value, bool):
+            raise ValueError(
+                f"invalid staffing ratio weight for {rank}: expected a number"
+            )
+        try:
+            parsed = float(value)
+        except (TypeError, ValueError):
+            raise ValueError(
+                f"invalid staffing ratio weight for {rank}: expected a number"
+            ) from None
+        if not math.isfinite(parsed) or parsed < 0:
+            raise ValueError(
+                f"invalid staffing ratio weight for {rank}: "
+                "expected a finite non-negative number"
+            )
+        weights[str(rank)] = parsed
+
+    if not counted and weights:
+        counted = set(weights)
+    if not counted and rule.get("staff_rank"):
+        counted = {str(rule["staff_rank"])}
+    return (counted or None), weights
+
+
+def _rank_label(rule: dict) -> str:
+    counted, _weights = _rank_config(rule)
+    return "/".join(sorted(counted)) if counted else "Any"
+
+
+def _requirement(rule: dict, residents: int | list[dict]) -> tuple[int | float, str]:
+    resident_total = _resident_total(residents, rule)
     w = f'{str(rule["time_window_start"])[:5]}–{str(rule["time_window_end"])[:5]}'
-    if rule.get("ratio_residents_per_staff"):
-        ratio = rule["ratio_residents_per_staff"]
-        required = math.ceil(residents / ratio) if residents else 0
-        return required, f'{rule.get("staff_rank") or "Any"} {w} (1:{ratio})'
-    required = rule.get("min_staff_any_rank") or 0
-    return required, f'Any rank {w} (min {required})'
+    ratio_value = rule.get("ratio_residents_per_staff")
+    if ratio_value is not None:
+        try:
+            ratio = int(ratio_value)
+            is_integral = float(ratio_value) == ratio
+        except (TypeError, ValueError):
+            raise ValueError(
+                "ratio_residents_per_staff must be a positive integer"
+            ) from None
+        if isinstance(ratio_value, bool) or not is_integral or ratio <= 0:
+            raise ValueError(
+                "ratio_residents_per_staff must be a positive integer"
+            )
+        # Compare equivalent-head capacity before rounding. Integer headcounts
+        # still behave exactly like ceil(residents / ratio), while fractional
+        # substitutions remain correct (for example Home B: one HW carries
+        # 40/60 of the RN/EN 1:60 capacity).
+        required = resident_total / ratio if resident_total else 0
+        return required, f'{_rank_label(rule)} {w} (1:{ratio})'
+    try:
+        required = int(rule.get("min_staff_any_rank") or 0)
+        is_integral = float(rule.get("min_staff_any_rank") or 0) == required
+    except (TypeError, ValueError):
+        raise ValueError(
+            "min_staff_any_rank must be a non-negative integer"
+        ) from None
+    if (
+        isinstance(rule.get("min_staff_any_rank"), bool)
+        or not is_integral
+        or required < 0
+    ):
+        raise ValueError("min_staff_any_rank must be a non-negative integer")
+    return required, f'{_rank_label(rule)} {w} (min {required})'
 
 
-def _load_rules(client, facility_id: str) -> list[dict]:
+def _rule_identity(rule: dict) -> tuple:
+    """Identity shared by versions and facility overrides of one rule."""
+    code = str(rule.get("rule_code") or "").strip()
+    if code and code != "swd_staffing_ratio":
+        return ("code", code)
+    # Existing rows receive one generic migration default. Keep their original
+    # dimensions in the identity so separate statutory windows are not collapsed.
+    return (
+        "legacy",
+        rule.get("facility_type"),
+        rule.get("care_level"),
+        str(rule.get("unit_id") or ""),
+        str(rule.get("staff_rank") or ""),
+        str(rule.get("time_window_start") or "")[:5],
+        str(rule.get("time_window_end") or "")[:5],
+    )
+
+
+def _version_key(item: tuple[int, dict]) -> tuple:
+    index, rule = item
+    try:
+        version = int(rule.get("config_version") or 1)
+    except (TypeError, ValueError):
+        version = 1
+    effective = _as_date(rule.get("effective_from")) or Date.min
+    return version, effective, str(rule.get("created_at") or ""), -index
+
+
+def _infer_facility_id(rules: list[dict]) -> str | None:
+    values = {str(rule["facility_id"]) for rule in rules if rule.get("facility_id")}
+    return next(iter(values)) if len(values) == 1 else None
+
+
+def _effective_rules(
+    rules: list[dict],
+    facility_id: str | None,
+    on_date,
+) -> list[dict]:
+    """Select active/effective versions with facility-over-global precedence."""
+    day = _as_date(on_date) or Date.today()
+    facility_id = str(facility_id) if facility_id else _infer_facility_id(rules)
+    grouped: dict[tuple, list[tuple[int, dict]]] = {}
+
+    for index, rule in enumerate(rules):
+        if not rule.get("active", True):
+            continue
+        row_facility = str(rule["facility_id"]) if rule.get("facility_id") else None
+        if facility_id and row_facility not in (None, facility_id):
+            continue
+        effective_from = _as_date(rule.get("effective_from"))
+        effective_to = _as_date(rule.get("effective_to"))
+        if effective_from and day < effective_from:
+            continue
+        if effective_to and day > effective_to:
+            continue
+        grouped.setdefault(_rule_identity(rule), []).append((index, rule))
+
+    selected: list[tuple[int, dict]] = []
+    for candidates in grouped.values():
+        facility_rows = [
+            item for item in candidates
+            if facility_id and _same_id(item[1].get("facility_id"), facility_id)
+        ]
+        pool = facility_rows or [
+            item for item in candidates if item[1].get("facility_id") is None
+        ]
+        if not pool:
+            # Pure callers may not provide a target facility. Preserve their
+            # deterministic version choice instead of mixing several versions.
+            pool = candidates
+        winner = max(pool, key=_version_key)
+        selected.append((min(item[0] for item in candidates), winner[1]))
+
+    return [rule for _index, rule in sorted(selected, key=lambda item: item[0])]
+
+
+def _load_rule_rows(client, facility_id: str) -> list[dict]:
     # SQL: select * from staffing_ratio_rules
     #      where (facility_id = :facility_id or facility_id is null)  -- null = statutory
     #        and active = true
@@ -55,44 +246,103 @@ def _load_rules(client, facility_id: str) -> list[dict]:
             .eq("active", True).execute().data)
 
 
-def _evaluate_day(rules: list[dict], residents: int, shift_by: dict[str, dict],
-                  assigns: list[dict]) -> list[RatioResult]:
+def _load_rules(client, facility_id: str, on_date=None) -> list[dict]:
+    return _effective_rules(
+        _load_rule_rows(client, facility_id), facility_id, on_date or Date.today())
+
+
+def _assignment_weight(rule: dict, assignment: dict, shift: dict) -> float | None:
+    if assignment.get("status") == "cancelled":
+        return None
+    unit_id = rule.get("unit_id")
+    if unit_id is not None and not _same_id(shift.get("unit_id"), unit_id):
+        return None
+
+    counted, weights = _rank_config(rule)
+    role = str(assignment.get("role") or "")
+    if counted is not None and role not in counted:
+        return None
+    weight = weights.get(role, 1.0)
+    return weight if weight > 0 else None
+
+
+def _assignment_identity(assignment: dict, fallback: int) -> str:
+    if assignment.get("staff_id"):
+        return f'staff:{assignment["staff_id"]}'
+    # Synthetic agency rows have no staff_id; assignment id is their stable
+    # person-equivalent. The final fallback keeps old pure fixtures usable.
+    marker = assignment.get("id") or f'{assignment.get("shift_id")}:{fallback}'
+    return f"agency:{marker}"
+
+
+def _weighted_window_count(
+    rule: dict,
+    shift_by: dict[str, dict],
+    assigns: list[dict],
+    window_start: int,
+    window_end: int,
+) -> float:
+    weights_by_person: dict[str, float] = {}
+    for index, assignment in enumerate(assigns):
+        shift = shift_by.get(assignment.get("shift_id"))
+        if not shift or not covers_window(shift, window_start, window_end):
+            continue
+        weight = _assignment_weight(rule, assignment, shift)
+        if weight is None:
+            continue
+        identity = _assignment_identity(assignment, index)
+        weights_by_person[identity] = max(weights_by_person.get(identity, 0.0), weight)
+    return sum(weights_by_person.values())
+
+
+def _display_number(value: float) -> int | float:
+    if math.isclose(value, round(value), abs_tol=1e-9):
+        return int(round(value))
+    return round(value, 3)
+
+
+def _evaluate_day(
+    rules: list[dict],
+    residents: int | list[dict],
+    shift_by: dict[str, dict],
+    assigns: list[dict],
+    *,
+    facility_id: str | None = None,
+    on_date=None,
+) -> list[RatioResult]:
+    if on_date is not None:
+        rules = _effective_rules(rules, facility_id, on_date)
     results: list[RatioResult] = []
     for rule in rules:
         ws, we = _mins(rule["time_window_start"]), _mins(rule["time_window_end"])
-        count = 0
-        for a in assigns:
-            sh = shift_by.get(a["shift_id"])
-            # covers_window walks each duty segment, so a split A/N shift does not
-            # count as present during its unpaid afternoon rest.
-            if not sh or not covers_window(sh, ws, we):
-                continue
-            if rule.get("staff_rank") and a.get("role") != rule["staff_rank"]:
-                continue
-            count += 1
+        weighted_count = _weighted_window_count(rule, shift_by, assigns, ws, we)
+        resident_total = _resident_total(residents, rule)
         required, label = _requirement(rule, residents)
         results.append(RatioResult(
             label=label, rank=rule.get("staff_rank"),
             window_start=str(rule["time_window_start"]), window_end=str(rule["time_window_end"]),
-            residents=residents, required=required, actual=count, passes=count >= required,
+            residents=resident_total, required=_display_number(required),
+            actual=_display_number(weighted_count),
+            passes=weighted_count + 1e-9 >= required,
         ))
     return results
 
 
 def compute_ratios(client, facility_id: str, on_date, *,
                    roster_version_id: str | None = None) -> list[RatioResult]:
-    """Ratio check for a single day. Pass ``roster_version_id`` to scope the count to one version — otherwise A/B/C drafts sharing the same dates double-count staff and falsely pass."""
+    """Ratio check for a single day. Pass ``roster_version_id`` to scope the count to one version - otherwise A/B/C drafts sharing the same dates double-count staff and falsely pass."""
     d = str(on_date)
 
-    # SQL: select resident_count from daily_resident_counts
+    # SQL: select unit_id, care_level, resident_count from daily_resident_counts
     #      where facility_id = :facility_id and date = :d
-    # (summed in Python — one row per unit/care_level; `sum(resident_count)` in SQL
-    #  would do the same)
-    residents = sum(r["resident_count"] for r in (
-        client.table("daily_resident_counts").select("resident_count")
-        .eq("facility_id", facility_id).eq("date", d).execute().data))
+    # Rows stay disaggregated so a unit/care-level rule gets its own denominator.
+    residents = (
+        client.table("daily_resident_counts")
+        .select("unit_id,care_level,resident_count")
+        .eq("facility_id", facility_id).eq("date", d).execute().data
+    )
 
-    rules = _load_rules(client, facility_id)
+    rules = _load_rules(client, facility_id, d)
 
     # SQL: select * from shifts
     #      where facility_id = :facility_id and date = :d and is_working = true
@@ -105,14 +355,16 @@ def compute_ratios(client, facility_id: str, on_date, *,
     shift_by = {s["id"]: s for s in shifts}
     assigns = []
     if shift_by:
-        # SQL: select shift_id, role, staff_id, status from shift_assignments
+        # SQL: select id, shift_id, role, staff_id, is_agency, status
+        #      from shift_assignments
         #      where shift_id = any(:shift_ids)
         # (cancelled rows are dropped by the comprehension, not by the query)
-        assigns = [a for a in (client.table("shift_assignments").select("shift_id,role,staff_id,status")
-                               .in_("shift_id", list(shift_by)).execute().data)
-                   if a.get("status") != "cancelled"]
+        assigns = [a for a in assignments_for_shifts(
+            client, shift_by, select="id,shift_id,role,staff_id,is_agency,status")
+            if a.get("status") != "cancelled"]
 
-    return _evaluate_day(rules, residents, shift_by, assigns)
+    return _evaluate_day(
+        rules, residents, shift_by, assigns, facility_id=facility_id, on_date=d)
 
 
 # ── minute-level overlap (spec 3.6) ──────────────────────────────────────────
@@ -121,56 +373,93 @@ def _clip(interval: tuple[int, int], window: tuple[int, int]) -> tuple[int, int]
     return (lo, hi) if lo < hi else None
 
 
-def _minute_eval(rules: list[dict], residents: int, shift_by: dict[str, dict],
-                 assigns: list[dict], d: str) -> list[dict]:
-    """Per-rule minute-level coverage for one day (pure — no DB access).
+def _minute_eval(
+    rules: list[dict],
+    residents: int | list[dict],
+    shift_by: dict[str, dict],
+    assigns: list[dict],
+    d: str,
+    *,
+    facility_id: str | None = None,
+) -> list[dict]:
+    """Per-rule minute-level coverage for one day (pure - no DB access).
 
-    Splits each statutory window into the segments where the on-duty headcount is
-    constant, then reports how many minutes fall short of the requirement. A
-    window only passes when *every* minute in it is covered.
+    Splits each statutory window where the weighted on-duty headcount is
+    constant. The same person is counted once even if duplicate/overlapping
+    assignments exist; distinct synthetic agency assignments count separately.
     """
+    rules = _effective_rules(rules, facility_id, d)
     out: list[dict] = []
     for rule in rules:
         required, label = _requirement(rule, residents)
+        resident_total = _resident_total(residents, rule)
         rank = rule.get("staff_rank")
         windows = _intervals(_mins(rule["time_window_start"]), _mins(rule["time_window_end"]))
 
-        # on-duty intervals of every staff member the rule counts — duty_spans
-        # expands a split shift into its separate windows
-        duty: list[tuple[int, int]] = []
-        for a in assigns:
-            sh = shift_by.get(a["shift_id"])
-            if not sh:
+        # duty_spans expands a split shift into its separate windows. Identity
+        # remains attached so duplicate assignments cannot inflate coverage.
+        duty: list[tuple[str, float, int, int]] = []
+        for index, assignment in enumerate(assigns):
+            shift = shift_by.get(assignment.get("shift_id"))
+            if not shift:
                 continue
-            if rank and a.get("role") != rank:
+            weight = _assignment_weight(rule, assignment, shift)
+            if weight is None:
                 continue
-            duty.extend(duty_spans(sh))
+            identity = _assignment_identity(assignment, index)
+            duty.extend(
+                (identity, weight, start, end)
+                for start, end in duty_spans(shift)
+            )
 
         segments, breach_minutes, window_minutes = [], 0, 0
-        min_actual = None
+        min_actual: float | None = None
         for w in windows:
             window_minutes += w[1] - w[0]
-            clipped = [c for c in (_clip(i, w) for i in duty) if c]
-            points = sorted({w[0], w[1], *(p for c in clipped for p in c)})
+            clipped: list[tuple[str, float, int, int]] = []
+            for identity, weight, start, end in duty:
+                interval = _clip((start, end), w)
+                if interval:
+                    clipped.append((identity, weight, interval[0], interval[1]))
+            points = sorted({
+                w[0], w[1],
+                *(point for _identity, _weight, start, end in clipped
+                  for point in (start, end)),
+            })
             for lo, hi in zip(points, points[1:]):
-                actual = sum(1 for c in clipped if c[0] <= lo and c[1] >= hi)
-                ok = actual >= required
+                active: dict[str, float] = {}
+                for identity, weight, start, end in clipped:
+                    if start <= lo and end >= hi:
+                        active[identity] = max(active.get(identity, 0.0), weight)
+                actual = sum(active.values())
+                ok = actual + 1e-9 >= required
                 if not ok:
                     breach_minutes += hi - lo
                 min_actual = actual if min_actual is None else min(min_actual, actual)
                 segments.append({
                     "start": f"{lo // 60:02d}:{lo % 60:02d}",
                     "end": f"{hi // 60:02d}:{hi % 60:02d}",
-                    "minutes": hi - lo, "actual": actual, "required": required, "passes": ok,
+                    "minutes": hi - lo,
+                    "actual": _display_number(actual),
+                    "required": _display_number(required),
+                    "passes": ok,
                 })
 
         out.append({
-            "date": d, "label": label, "rank": rank,
+            "date": d,
+            "rule_id": rule.get("id"),
+            "rule_code": rule.get("rule_code"),
+            "config_version": int(rule.get("config_version") or 1),
+            "label": label,
+            "rank": rank,
+            "unit_id": rule.get("unit_id"),
             "window_start": str(rule["time_window_start"])[:5],
             "window_end": str(rule["time_window_end"])[:5],
-            "residents": residents, "required": required,
-            "min_actual": min_actual or 0,
-            "window_minutes": window_minutes, "breach_minutes": breach_minutes,
+            "residents": resident_total,
+            "required": _display_number(required),
+            "min_actual": _display_number(min_actual or 0),
+            "window_minutes": window_minutes,
+            "breach_minutes": breach_minutes,
             "passes": breach_minutes == 0,
             "segments": segments,
         })
@@ -181,15 +470,17 @@ def minute_ratio(client, facility_id: str, on_date, *,
                  roster_version_id: str | None = None) -> list[dict]:
     """Minute-level coverage for a single day."""
     d = str(on_date)
-    # Same three reads as compute_ratios — only the evaluation differs (minute-level
+    # Same three reads as compute_ratios - only the evaluation differs (minute-level
     # rather than per-shift), so the SQL is identical.
     #
-    # SQL: select resident_count from daily_resident_counts
+    # SQL: select unit_id, care_level, resident_count from daily_resident_counts
     #      where facility_id = :facility_id and date = :d
-    residents = sum(r["resident_count"] for r in (
-        client.table("daily_resident_counts").select("resident_count")
-        .eq("facility_id", facility_id).eq("date", d).execute().data))
-    rules = _load_rules(client, facility_id)
+    residents = (
+        client.table("daily_resident_counts")
+        .select("unit_id,care_level,resident_count")
+        .eq("facility_id", facility_id).eq("date", d).execute().data
+    )
+    rules = _load_rules(client, facility_id, d)
 
     # SQL: select * from shifts
     #      where facility_id = :facility_id and date = :d and is_working = true
@@ -201,21 +492,22 @@ def minute_ratio(client, facility_id: str, on_date, *,
     shift_by = {s["id"]: s for s in shifts_q.execute().data}
     assigns = []
     if shift_by:
-        # SQL: select shift_id, role, staff_id, status from shift_assignments
+        # SQL: select id, shift_id, role, staff_id, is_agency, status
+        #      from shift_assignments
         #      where shift_id = any(:shift_ids)
-        assigns = [a for a in (client.table("shift_assignments")
-                               .select("shift_id,role,staff_id,status")
-                               .in_("shift_id", list(shift_by)).execute().data)
-                   if a.get("status") != "cancelled"]
-    return _minute_eval(rules, residents, shift_by, assigns, d)
+        assigns = [a for a in assignments_for_shifts(
+            client, shift_by, select="id,shift_id,role,staff_id,is_agency,status")
+            if a.get("status") != "cancelled"]
+    return _minute_eval(
+        rules, residents, shift_by, assigns, d, facility_id=facility_id)
 
 
 def minute_ratio_series(client, facility_id: str, start: Date, end: Date, *,
                         roster_version_id: str | None = None) -> list[dict]:
-    """Minute-level coverage across a range, in a fixed number of queries — the
+    """Minute-level coverage across a range, in a fixed number of queries - the
     breach-minute source for the SWD compliance KPI and the statutory report."""
-    rules = _load_rules(client, facility_id)
-    if not rules:
+    rule_rows = _load_rule_rows(client, facility_id)
+    if not rule_rows:
         return []
     residents_by_date, shift_by, by_date = _load_range(
         client, facility_id, start, end, roster_version_id)
@@ -226,8 +518,14 @@ def minute_ratio_series(client, facility_id: str, start: Date, end: Date, *,
         key = day.isoformat()
         day_assigns = by_date.get(key, [])
         day_shifts = {a["shift_id"]: shift_by[a["shift_id"]] for a in day_assigns}
-        out.extend(_minute_eval(rules, residents_by_date.get(key, 0),
-                                day_shifts, day_assigns, key))
+        out.extend(_minute_eval(
+            rule_rows,
+            residents_by_date.get(key, []),
+            day_shifts,
+            day_assigns,
+            key,
+            facility_id=facility_id,
+        ))
         day += timedelta(days=1)
     return out
 
@@ -236,18 +534,20 @@ def minute_ratio_series(client, facility_id: str, start: Date, end: Date, *,
 def _load_range(client, facility_id: str, start: Date, end: Date,
                 roster_version_id: str | None):
     """(residents_by_date, shift_by_id, assignments_by_date) for a date range."""
-    # Three queries for the whole range, then bucketed by date in Python — this is
+    # Three queries for the whole range, then bucketed by date in Python - this is
     # what keeps ratio_series / minute_ratio_series off a per-day query loop.
     #
-    # SQL: select date, resident_count from daily_resident_counts
+    # SQL: select date, unit_id, care_level, resident_count
+    #      from daily_resident_counts
     #      where facility_id = :facility_id and date >= :start and date <= :end
-    # (in SQL the per-date rollup would be `group by date` with `sum(resident_count)`)
-    residents_by_date: dict[str, int] = {}
-    for r in (client.table("daily_resident_counts").select("date,resident_count")
+    # Keep rows per date rather than rolling up across units.
+    residents_by_date: dict[str, list[dict]] = {}
+    for r in (client.table("daily_resident_counts")
+              .select("date,unit_id,care_level,resident_count")
               .eq("facility_id", facility_id)
               .gte("date", str(start)).lte("date", str(end)).execute().data):
         key = str(r["date"])[:10]
-        residents_by_date[key] = residents_by_date.get(key, 0) + r["resident_count"]
+        residents_by_date.setdefault(key, []).append(r)
 
     # SQL: select * from shifts
     #      where facility_id = :facility_id and is_working = true
@@ -262,12 +562,12 @@ def _load_range(client, facility_id: str, start: Date, end: Date,
 
     assigns = []
     if shift_by:
-        # SQL: select shift_id, role, staff_id, status from shift_assignments
+        # SQL: select id, shift_id, role, staff_id, is_agency, status
+        #      from shift_assignments
         #      where shift_id = any(:shift_ids)
-        assigns = [a for a in (client.table("shift_assignments")
-                               .select("shift_id,role,staff_id,status")
-                               .in_("shift_id", list(shift_by)).execute().data)
-                   if a.get("status") != "cancelled"]
+        assigns = [a for a in assignments_for_shifts(
+            client, shift_by, select="id,shift_id,role,staff_id,is_agency,status")
+            if a.get("status") != "cancelled"]
     by_date: dict[str, list[dict]] = {}
     for a in assigns:
         sh = shift_by.get(a["shift_id"])
@@ -280,8 +580,8 @@ def _load_range(client, facility_id: str, start: Date, end: Date,
 def ratio_series(client, facility_id: str, start: Date, end: Date, *,
                  roster_version_id: str | None = None) -> list[dict]:
     """Pass/fail per day across a range, in a fixed number of queries."""
-    rules = _load_rules(client, facility_id)
-    if not rules:
+    rule_rows = _load_rule_rows(client, facility_id)
+    if not rule_rows:
         return []
     residents_by_date, shift_by, by_date = _load_range(
         client, facility_id, start, end, roster_version_id)
@@ -292,7 +592,14 @@ def ratio_series(client, facility_id: str, start: Date, end: Date, *,
         key = day.isoformat()
         day_assigns = by_date.get(key, [])
         day_shifts = {a["shift_id"]: shift_by[a["shift_id"]] for a in day_assigns}
-        checks = _evaluate_day(rules, residents_by_date.get(key, 0), day_shifts, day_assigns)
+        checks = _evaluate_day(
+            rule_rows,
+            residents_by_date.get(key, []),
+            day_shifts,
+            day_assigns,
+            facility_id=facility_id,
+            on_date=key,
+        )
         failed = [c for c in checks if not c.passes]
         out.append({
             "date": key, "checks": len(checks), "passed": len(checks) - len(failed),
@@ -305,7 +612,7 @@ def ratio_series(client, facility_id: str, start: Date, end: Date, *,
 
 # ── live threshold monitors (Reports page) ───────────────────────────────────
 # The escalation wording and legal references below are regulation, not facility
-# data — they stay in code. Every *number* is measured from the database.
+# data - they stay in code. Every *number* is measured from the database.
 def threshold_monitors(client, facility_id: str) -> list[dict]:
     from ._common import as_date, month_bounds, operative_version, resolve_period
 
@@ -371,9 +678,8 @@ def threshold_monitors(client, facility_id: str) -> list[dict]:
             # SQL: select shift_id, staff_id, role, is_agency, status
             #      from shift_assignments
             #      where shift_id = any(:shift_ids)
-            assigns = (client.table("shift_assignments")
-                       .select("shift_id,staff_id,role,is_agency,status")
-                       .in_("shift_id", list(by_id)).execute().data)
+            assigns = assignments_for_shifts(
+                client, by_id, select="shift_id,staff_id,role,is_agency,status")
             # SQL: select id, employment_type, gender, name, name_en from staff
             #      where facility_id = :facility_id
             staff_rows = {s["id"]: s for s in (
@@ -410,9 +716,9 @@ def threshold_monitors(client, facility_id: str) -> list[dict]:
         "current_count": len(pt_breaches),
         "note_en": (f"{len(pt_breaches)} A/P shifts over the PT cap: "
                     + ", ".join(pt_breaches[:3]) if pt_breaches
-                    else "No triggers this month — A/P shifts within limit ✓"),
+                    else "No triggers this month - A/P shifts within limit ✓"),
         "note_zh": (f"{len(pt_breaches)} 個 A/P 更超出 PT 上限" if pt_breaches
-                    else "本月未觸發 — A/P更均在上限內 ✓"),
+                    else "本月未觸發 - A/P更均在上限內 ✓"),
         "levels": [{"label_en": "🔴 Immediate Block", "label_zh": "🔴 即時阻截",
                     "action_en": "Block roster confirmation + show Cap.459A s.11(3)",
                     "action_zh": "阻止排班確認 + 顯示 Cap.459A s.11(3)"}],

@@ -6,7 +6,7 @@
 // Sign-in is owned by the /login screen (see AuthContext) via login(). The access
 // token is short-lived, so apiFetch transparently swaps the refresh token for a new
 // session on a 401 and replays the request once; if that fails it hard-logs-out and
-// signals AuthContext to route to /login. Tokens live in localStorage — for a
+// signals AuthContext to route to /login. Tokens live in localStorage - for a
 // higher-security posture, move auth to a server-side BFF with httpOnly cookies.
 import type {
   AlertItem, ApiError, ApiStaff, CompareOptionsResponse, CreatePeriodResponse,
@@ -14,6 +14,7 @@ import type {
   IncidentStats, JobView, LeaveCategory, LeaveGroup, LeaveRequest, LeaveStats,
   MyAttendance, MyProfile, MyRoster, MySummary, MyTask, OptimizeResponse, PeriodOut,
   FloorRule, Profile, RatioResult, RegulatoryDoc, ReplacementCandidate, ReportRow,
+  RuleDefinition, RuleDefinitionCreate,
   ReportSchedule, ReportType, ResidentCountOut, RoiSettings, RoiSummary, RosterGrid,
   RosterOption, RuleIssue, SessionOut, ShiftDef, StaffAiAnalysis, StaffDetail,
   StaffQualification, TaskAssignment, TaskDefOut,
@@ -143,7 +144,7 @@ export async function login(email: string, password: string): Promise<SessionOut
 }
 
 // The bearer token for the current user, or null when signed out. Sign-in is owned
-// by the /login screen (see AuthContext) — there is no implicit env auto-login, so
+// by the /login screen (see AuthContext) - there is no implicit env auto-login, so
 // switching facility means signing out and back in as a different account.
 async function ensureToken(): Promise<string | null> {
   return readToken()
@@ -370,6 +371,21 @@ export const api = {
     return apiFetch<RatioResult[]>(`/compliance/ratio?${q.toString()}`)
   },
 
+  complianceRuleDefinitions: (ruleCode?: string) => {
+    const q = new URLSearchParams()
+    if (ruleCode) q.set('rule_code', ruleCode)
+    const qs = q.toString()
+    return apiFetch<RuleDefinition[]>(
+      `/compliance/rule-definitions${qs ? `?${qs}` : ''}`,
+    )
+  },
+
+  createComplianceRuleDefinition: (body: RuleDefinitionCreate) =>
+    apiFetch<RuleDefinition>('/compliance/rule-definitions', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+
   units: () => apiFetch<Unit[]>('/units'),
 
   residentCounts: (date?: string) =>
@@ -378,7 +394,7 @@ export const api = {
   setResidentCount: (body: { date: string; unit_id: string; care_level?: string; count: number }) =>
     apiFetch<{ ok: boolean }>('/resident-counts', { method: 'POST', body: JSON.stringify(body) }),
 
-  // Async solve — returns a pending job_id; poll job() until status === 'completed'.
+  // Async solve - returns a pending job_id; poll job() until status === 'completed'.
   optimizeRoster: (body: { period_id: string; plan_mode?: string; source_version_id?: string }) =>
     apiFetch<OptimizeResponse>('/optimize-roster', {
       method: 'POST',

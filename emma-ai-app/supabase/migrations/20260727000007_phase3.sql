@@ -1,5 +1,5 @@
 -- ============================================================================
--- Emma AI · Phase 3 — operations layer
+-- Emma AI · Phase 3 - operations layer
 --
 -- Everything the Phase 3 screens (Dashboard, Approval, Alert, ROI, Reports,
 -- Staff App) read is a real table here; nothing is computed from fixtures.
@@ -11,14 +11,14 @@
 --   notifications         4.4  in-app / email / WhatsApp fan-out
 --   attendance_events          staff-app clock in / out
 --   task_assignments      3.10 task-code assignment + completion status
---   agency_assignments    5.3  real agency cost — the Part B ROI denominator
+--   agency_assignments    5.3  real agency cost - the Part B ROI denominator
 --   roi_settings          5.1  per-facility configurable ROI baseline
 --   reports / report_schedules  7.1 generated artefacts + the schedule registry
 --   facility_events            event-trigger occurrences (admissions, incidents)
 --   regulatory_documents       SWD regulatory-sync registry
 --
 -- Row-level security: standard own-facility scoping, except the staff-personal
--- tables, which additionally restrict a 'staff' role login to its own rows —
+-- tables, which additionally restrict a 'staff' role login to its own rows -
 -- a staff app token must never be able to read a colleague's leave or roster.
 -- ============================================================================
 
@@ -89,7 +89,7 @@ create table if not exists leave_requests (
 create index if not exists idx_leave_requests_facility on leave_requests(facility_id, status);
 create index if not exists idx_leave_requests_staff on leave_requests(staff_id);
 
--- ── sl_incidents (urgent SL/DSL — ROI A2 + Alert centre) ─────────────────────
+-- ── sl_incidents (urgent SL/DSL - ROI A2 + Alert centre) ─────────────────────
 create table if not exists sl_incidents (
     id                    uuid primary key default gen_random_uuid(),
     facility_id           uuid not null references facilities(id) on delete cascade,
@@ -203,7 +203,7 @@ create table if not exists task_assignments (
 );
 create index if not exists idx_task_assignments_staff on task_assignments(staff_id);
 
--- ── agency_assignments (real agency spend — ROI Part B) ──────────────────────
+-- ── agency_assignments (real agency spend - ROI Part B) ──────────────────────
 create table if not exists agency_assignments (
     id                  uuid primary key default gen_random_uuid(),
     facility_id         uuid not null references facilities(id) on delete cascade,
@@ -230,7 +230,7 @@ create table if not exists roi_settings (
     total_budget              numeric not null default 0,       -- monthly operating budget
     salary_budget             numeric not null default 0,
     contract_years            text not null default '5yr' check (contract_years in ('3yr','5yr','10yr')),
-    -- {"RN": 1, "HCA": 2, …} — open posts per rank. Headcount itself is counted
+    -- {"RN": 1, "HCA": 2, …} - open posts per rank. Headcount itself is counted
     -- from the staff table; only the vacancies are an operator input.
     vacancies_json            jsonb not null default '{}'::jsonb,
     updated_by                uuid references users_profile(id) on delete set null,

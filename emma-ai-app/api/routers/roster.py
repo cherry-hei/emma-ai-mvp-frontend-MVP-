@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, Query, Response
 
 from api.deps import AuthCtx, api_error, get_ctx
 from emma_core.constants import PUBLISH_THRESHOLD
+from emma_core.db import get_service_client
 from emma_core.models import (
     CellWriteRequest, PeriodCreateRequest, PeriodOut, RosterGrid, ShiftDef,
     TaskDefOut, VersionOut,
@@ -14,8 +15,19 @@ from emma_core.models import (
 from emma_core.services import optimize as opt
 from emma_core.services import roster as svc
 from emma_core.services import scheduling as scheduling_svc
+from emma_core.services import validation as validation_svc
 
 router = APIRouter(tags=["roster"])
+WRITE_ROLES = {"superintendent", "admin", "scheduler"}
+
+
+def _require_write_role(ctx: AuthCtx) -> None:
+    if str(ctx.profile.role) not in WRITE_ROLES:
+        raise api_error(
+            403,
+            "forbidden",
+            "Only a superintendent, admin or scheduler may change a roster.",
+        )
 
 
 # ── periods ─────────────────────────────────────────────────────────────────
@@ -123,25 +135,43 @@ def save_draft(version_id: str, ctx: AuthCtx = Depends(get_ctx)):
 
 @router.post("/rosters/{version_id}/publish")
 def publish(version_id: str, ctx: AuthCtx = Depends(get_ctx)):
-    operational_violations = scheduling_svc.validate_roster_rules(
-        ctx.client, ctx.facility_id, version_id, persist=True)
-    if operational_violations:
+    _require_write_role(ctx)
+    if not (
+        ctx.client.table("roster_versions").select("id")
+        .eq("facility_id", ctx.facility_id)
+        .eq("id", version_id)
+        .execute().data
+    ):
+        raise api_error(404, "not_found", "roster version not found")
+    service_client = get_service_client()
+    try:
+        validation = validation_svc.validate_roster(
+            service_client,
+            ctx.facility_id,
+            version_id,
+            validated_by=ctx.profile_id,
+            persist=True,
+        )
+    except ValueError as exc:
+        raise api_error(404, "not_found", str(exc)) from exc
+    if not validation["passes"]:
         raise api_error(
             409, "not_publishable",
-            f"Roster has {len(operational_violations)} task, event, or floor "
-            "coverage violation(s). Validate the roster for details.",
+            (
+                f"Roster has {validation['hard_violation_count']} hard "
+                "compliance violation(s). Validate the roster for details."
+            ),
         )
-    # Solver options have the additional numeric-score gate. Manual versions
-    # have no score row but have already passed the operational guard above.
+    # A generated option retains its Phase 2 quality threshold, while the fresh
+    # deterministic run above is authoritative for every hard constraint.
     score = opt.get_option_scores(ctx.client, version_id)
     if score is not None:
-        if score["constraint_score"] < PUBLISH_THRESHOLD or score["hard_violation_count"] > 0:
+        if score["constraint_score"] < PUBLISH_THRESHOLD:
             raise api_error(
                 409, "not_publishable",
-                f"Option scores {score['constraint_score']} with "
-                f"{score['hard_violation_count']} hard violation(s); "
-                f"minimum publishable score is {PUBLISH_THRESHOLD} with zero hard violations.",
+                f"Option scores {score['constraint_score']}; minimum publishable "
+                f"score is {PUBLISH_THRESHOLD}.",
             )
-    svc.publish_version(ctx.client, facility_id=ctx.facility_id,
+    svc.publish_version(service_client, facility_id=ctx.facility_id,
                         roster_version_id=version_id, created_by=ctx.profile_id)
     return {"roster_version_id": version_id, "status": "published"}

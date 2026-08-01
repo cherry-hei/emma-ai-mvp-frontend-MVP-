@@ -1,4 +1,4 @@
-"""Pure output dataclasses returned by the solver — no DB or ortools types."""
+"""Pure output dataclasses returned by the solver - no DB or ortools types."""
 from __future__ import annotations
 
 from dataclasses import dataclass, field

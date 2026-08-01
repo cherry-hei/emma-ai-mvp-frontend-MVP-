@@ -1,4 +1,4 @@
-"""A/B/C plan weight presets — only these soft-penalty weights differ between
+"""A/B/C plan weight presets - only these soft-penalty weights differ between
 plans. Tuple order: (agency, ot, future_debt, unmet_request, fairness).
 """
 from __future__ import annotations

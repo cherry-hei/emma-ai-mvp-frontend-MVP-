@@ -1,0 +1,21 @@
+code,name_en,place_zh,source_note
+TMH,Tuen Mun Hospital — Psychiatric Out-patient Dept,TMHPOD,
+TMC,Tuen Mun Hospital — General Out-patient Clinic,TMGOPD,
+YOPC,Yan Oi General Out-patient Clinic,YOGOPC,
+SHC,Social Hygiene Clinic,社會衛生科,
+TMH,Tuen Mun Hospital (general),屯門醫院,shares the TMH code with TMHPOD
+ACC,Tuen Mun Hospital — Ambulatory Care Centre,TMHACC,
+YODC,Yan Oi Dental Clinic,仁愛牙科,
+YOTDC,Yan Oi Tong Dental Clinic,仁愛堂牙科,
+TMEC,Tuen Mun Eye Centre,屯門眼科中心,
+CPH,Castle Peak Hospital,青山醫院,
+CPH,Castle Peak Hospital — Ming Sum House,CPH明心樓,shares the CPH code with 青山醫院
+WHC,Wu Hong Health Centre,湖康,
+YOCC,Yan Oi Chest Clinic,仁愛胸肺科,
+深盲輔,HK Society for the Blind — Sham Shui Po,深水埗盲人輔導會,no Latin abbreviation in the source
+元盲輔,HK Society for the Blind — Yuen Long,元朗盲人輔導會,no Latin abbreviation in the source
+POH,Pok Oi Hospital,博愛醫院,
+盈愛,Ying Oi Dental Clinic,盈愛牙科,no Latin abbreviation in the source
+TSW,Tin Shui Wai Hospital,天水圍醫院,
+HHH,Haven of Hope Hospital,靈實醫院,
+TKO,Tseung Kwan O Hospital,將軍溴醫院,"source spells it 將軍溴; the district is 將軍澳 — kept verbatim so the file still matches the home's workbook"

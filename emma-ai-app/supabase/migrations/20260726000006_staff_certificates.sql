@@ -1,5 +1,5 @@
 -- ============================================================================
--- Emma AI · staff_certificates — per-staff certifications / qualifications
+-- Emma AI · staff_certificates - per-staff certifications / qualifications
 -- Feeds the Staff Portfolio "skills / verified credentials" UI. Standard tenant
 -- RLS (own-facility only; service_role bypasses for seed/admin).
 -- ============================================================================

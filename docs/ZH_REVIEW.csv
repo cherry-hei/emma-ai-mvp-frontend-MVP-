@@ -1,0 +1,75 @@
+section,key,english,chinese_current,chinese_suggested,comment
+navigation,nav_dashboard,Dashboard,儀表板,,OK (Cherry 2026-08-01)
+navigation,nav_home,Home,主頁,,OK (Cherry 2026-08-01)
+navigation,nav_roster,Roster,更表,,OK (Cherry 2026-08-01)
+navigation,nav_scheduling,Task Scheduling,任務排程,,OK (Cherry 2026-08-01)
+navigation,nav_compliance,Compliance,合規,,OK (Cherry 2026-08-01)
+navigation,nav_approval,Approval,審批,,OK (Cherry 2026-08-01)
+navigation,nav_personnel,Staff Portfolio,員工檔案,,OK (Cherry 2026-08-01)
+navigation,nav_roi,ROI,投資回報,,OK (Cherry 2026-08-01)
+navigation,nav_reports,Reports,報告,,OK (Cherry 2026-08-01)
+navigation,nav_alert,Alert Centre,警報中心,,OK (Cherry 2026-08-01)
+navigation,nav_ai,AI Insights,AI 洞察,,OK (Cherry 2026-08-01)
+navigation,urgent_alert,🚨 Urgent Alert,🚨 緊急警報,,OK (Cherry 2026-08-01)
+navigation,staff_shortage,P-shift understaffed - F3,P更人手不足 - F3,,OK — already uses the P更 letter form
+navigation,new_request,+ New Request,+ 新增請求,,OK (Cherry 2026-08-01)
+navigation,topnav_roster,Roster,更表,,OK (Cherry 2026-08-01)
+navigation,topnav_scheduling,Task Scheduling,任務排程,,OK (Cherry 2026-08-01)
+navigation,topnav_staffing,Staffing,人手,,"CONFIRMED correct as-is — top nav reads 更表 | 人手 | 合規 | 報告"
+navigation,topnav_compliance,Compliance,合規,,OK (Cherry 2026-08-01)
+navigation,topnav_reports,Reports,報告,,OK (Cherry 2026-08-01)
+navigation,search_ph,Search anything...,搜尋...,,OK (Cherry 2026-08-01)
+roster page,roster_create_shift,Create Shift,新增更份,,OK (Cherry 2026-08-01)
+roster page,roster_create_event,Create Special Event,新增特別活動,,OK (Cherry 2026-08-01)
+roster page,roster_save,Save,儲存,,OK (Cherry 2026-08-01)
+roster page,roster_save_publish,Save & Publish,儲存並發佈,,OK (Cherry 2026-08-01)
+roster page,roster_ai_suggest,AI Suggestion,AI 排更建議,,OK (Cherry 2026-08-01)
+roster page,roster_validate,Validate,驗證,,OK (Cherry 2026-08-01)
+roster page,roster_draft,Draft,草稿,,OK (Cherry 2026-08-01)
+roster page,roster_published,Published,已發佈,,OK (Cherry 2026-08-01)
+roster page,roster_period,Roster Period,更表週期,,OK (Cherry 2026-08-01)
+staff portfolio,staff_add,Add staff,新增員工,,OK (Cherry 2026-08-01)
+staff portfolio,staff_title,Staff Portfolio,員工檔案,,OK (Cherry 2026-08-01)
+staff portfolio,staff_headcount,Headcount,在職人數,,"CONFIRMED 在職人數 — this key is Staff Portfolio only (a count of active staff). It is NOT used on ROI, so the 編制人數 branch of Cherry's answer does not apply here. See the roi.* rows below."
+staff portfolio,staff_certificates,Certificates,證書,,OK (Cherry 2026-08-01)
+staff portfolio,staff_cert_expiring,Expiring soon,即將到期,,OK (Cherry 2026-08-01)
+staff portfolio,staff_contract,Contract,合約,,OK (Cherry 2026-08-01)
+staff portfolio,staff_part_time,Part-time,兼職,,OK (Cherry 2026-08-01)
+roi,roi_budgeted,Budgeted headcount,編制人數,編制人數,"ADDED 2026-08-01 — derived row (in post + vacancies). Makes Cherry's arithmetic explicit on screen: 編制 − 在職 = 空缺, and the salary budget against the vacancies is the money available to hire."
+roi,roi_headcount,Headcount (in post),在職人數,在職人數,"Filled positions, counted from the staff table. 在職 not 全職 — full-time/part-time is the separate FT/PT split on the same card, and a part-timer in post still fills an establishment slot."
+roi,roi_vacancies,Vacancies,空缺,空缺人數,"CHANGED — was 空缺, now 空缺人數 to match Cherry's wording and the 人數 pattern of the two rows above it."
+approvals,approve_recommend,Recommend approve,建議批准,,OK (Cherry 2026-08-01)
+approvals,approve_reject_rec,Recommend reject,建議拒絕,,OK (Cherry 2026-08-01)
+approvals,approve_final,Approve,最終批准,,OK (Cherry 2026-08-01)
+approvals,approve_reject,Reject,拒絕,,OK (Cherry 2026-08-01)
+approvals,approve_revoke,Revoke approval,撤回批准,,OK (Cherry 2026-08-01)
+approvals,approve_reason,Reason,理由,,OK (Cherry 2026-08-01)
+approvals,approve_pending,Pending,待審批,,OK (Cherry 2026-08-01)
+common,common_loading,Loading…,載入中…,,OK (Cherry 2026-08-01)
+common,common_save,Save,儲存,,OK (Cherry 2026-08-01)
+common,common_cancel,Cancel,取消,,OK (Cherry 2026-08-01)
+common,common_close,Close,關閉,,OK (Cherry 2026-08-01)
+common,common_download,Download,下載,,OK (Cherry 2026-08-01)
+common,common_search,Search,搜尋,,OK (Cherry 2026-08-01)
+common,common_total,Total,總計,,OK (Cherry 2026-08-01)
+common,common_none,No records,沒有紀錄,,OK (Cherry 2026-08-01)
+common,common_rank,Rank,職級,,OK (Cherry 2026-08-01)
+common,common_shift,Shift,更份,,OK (Cherry 2026-08-01)
+common,common_date,Date,日期,,OK (Cherry 2026-08-01)
+common,common_status,Status,狀態,,OK (Cherry 2026-08-01)
+common,common_staff,Staff,員工,,OK (Cherry 2026-08-01)
+common,common_facility,Facility,院舍,,OK (Cherry 2026-08-01)
+common,common_no_access,Your role may not view this page,你的權限不可查看此頁,,OK (Cherry 2026-08-01)
+vocab: ranks,RN,Registered Nurse,註冊護士,,OK (Cherry 2026-08-01)
+vocab: shifts,A,A shift,A更,A更,"CHANGED — was 早更 / 'Morning'. Both NGOs use A/P/N letters with different hours behind them (NAAC A = 07:15–15:15, A230 = 14:30–22:30), so a time-of-day name is inaccurate. English changed too, for the same reason."
+vocab: shifts,B,B shift,B更,B更,"CHANGED — was 日更 / 'Day'. Same letter-code rule as A."
+vocab: shifts,E,E shift,E更,E更,"CHANGED — was 黃昏更 / 'Evening'. Same letter-code rule as A."
+vocab: shifts,P,P shift,P更,P更,"CHANGED — was 午更 / 'Afternoon'."
+vocab: shifts,N,N shift,N更,N更,"CHANGED — was 夜更 / 'Night'."
+vocab: shifts,AN,AN shift,AN更,AN更,"CHANGED — was 通宵更 / 'Overnight'. AN is the A+N double shift; the hours come from the facility dictionary."
+vocab: shifts,NO,Post-night rest,通宵更後休息,通宵更後休息,"ADDED — NAAC's mandatory rest day after an AN shift (AN → NO → O). Not a letter shift code, so it keeps a descriptive name."
+vocab: shifts,DO,Day Off,例假,,"Unchanged — not a letter shift code."
+vocab: shifts,OFF,Off,休息,,"Unchanged — not a letter shift code."
+vocab: shifts,SLEEP,Sleep-in,留宿,,"Unchanged — not a letter shift code."
+vocab: leave,AL,Annual Leave,年假,,OK (Cherry 2026-08-01)
+vocab: statuses,pending,Pending,待審批,,OK (Cherry 2026-08-01)

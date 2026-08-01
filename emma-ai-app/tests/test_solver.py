@@ -1,4 +1,4 @@
-"""Pure, offline tests for the CP-SAT rostering engine — no DB, no Supabase.
+"""Pure, offline tests for the CP-SAT rostering engine - no DB, no Supabase.
 
 Determinism: every solve uses SolverLimits(workers=1, seed=42) so results are
 reproducible (multi-worker search is non-deterministic even with a fixed seed).

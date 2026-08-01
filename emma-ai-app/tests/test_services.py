@@ -1,5 +1,5 @@
 """Service-layer tests against the seeded local DB (service-role client)."""
-from datetime import date
+from datetime import date, timedelta
 
 from emma_core.db import get_service_client
 from emma_core.services.auth import get_profile, sign_in
@@ -18,19 +18,24 @@ def _facility(code: str) -> str:
 
 
 def test_roster_grid_shape():
+    """The grid is a rectangle of staff x the period's days, with real cells in it.
+
+    Asserted as invariants rather than fixture counts: Home A's cycle is 28 days
+    under either fixture, but the number of staff and who works day 0 belong to
+    the data, not to the contract.
+    """
     grid = get_roster_grid(sb, _facility("A"))
     assert grid.version_id and grid.status == "draft"
-    assert len(grid.rows) == 7
-    assert len(grid.dates) == 28       # the 7-day pattern repeats across the period
-    rn = next(r for r in grid.rows if r.staff.rank == "RN")
-    en = next(r for r in grid.rows if r.staff.rank == "EN")
-    hw = next(r for r in grid.rows if r.staff.rank == "HW")
-    assert rn.cells[0].shift_type == "P" and rn.cells[0].is_working
-    assert en.cells[0].shift_type == "OFF" and not en.cells[0].is_working
-    # Task labels ride on the care ranks: the Phase 4 dictionary is
-    # profession-specific and gives RN/EN no daily codes.
-    assert hw.cells[0].tasks  # day-0 task labels present
-    assert not rn.cells[0].tasks
+    assert grid.rows, "the grid should carry the facility's staff"
+    assert len(grid.dates) == 28                  # Home A rosters a 28-day cycle
+    # Every row is aligned to the same date axis - the UI indexes cells by column.
+    for row in grid.rows:
+        assert [c.date for c in row.cells] == grid.dates
+    working = [c for row in grid.rows for c in row.cells if c.is_working]
+    assert working, "a rostered period should contain working cells"
+    assert all(c.shift_type and c.assignment_id for c in working)
+    assert any(c.tasks for row in grid.rows for c in row.cells), (
+        "the roster should carry task labels on at least one cell")
 
 
 def test_shift_defs_present():
@@ -44,7 +49,10 @@ def test_ratio_computation():
     assert res
     rn = next(r for r in res if r.rank == "RN")
     assert rn.residents == 18          # 10 East + 8 West
-    assert rn.required == 1            # ceil(18/60)
+    # Phase 5 compares equivalent-head capacity before rounding, so a 1:60 rule
+    # reports 18/60 rather than ceil(). That is what lets a fractional rank
+    # substitution (Home B: one HW carries 40/60 of RN/EN capacity) be expressed.
+    assert rn.required == 0.3
     assert rn.actual >= 0
 
 
@@ -60,7 +68,11 @@ def test_set_and_clear_cell_write_path():
     grid = get_roster_grid(sb, fid)
     ver, staff_id = grid.version_id, grid.rows[0].staff.id
     defs = {d.shift_type: d for d in get_shift_defs(sb, fid)}
-    day = "2026-08-15"  # outside the seeded roster period
+    # Derive a day past the end of the rostered cycle rather than hardcoding one:
+    # clearing the edit must remove the cell outright, which only holds where no
+    # seeded shift sits underneath, and the current cycle rolls with the calendar.
+    last_day = max(c.date for r in grid.rows for c in r.cells)
+    day = (last_day + timedelta(days=7)).isoformat()
 
     set_cell(sb, facility_id=fid, roster_version_id=ver, staff_id=staff_id,
              date=day, shift_type="P", shift_def=defs["P"], tasks=["Test task"])

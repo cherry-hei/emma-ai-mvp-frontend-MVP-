@@ -1,4 +1,4 @@
-# Emma AI — Run Guide (step by step)
+# Emma AI - Run Guide (step by step)
 
 Everything below is run from **`emma-ai-app/`** in **PowerShell** on Windows,
 using your **global Python** (no virtualenv).
@@ -37,7 +37,7 @@ Docker Desktop must be running before you start Supabase.
 pip install -r requirements.txt
 ```
 
-### 1.2 Start local Supabase (first run pulls Docker images — a few GB)
+### 1.2 Start local Supabase (first run pulls Docker images - a few GB)
 ```powershell
 npx supabase start
 ```
@@ -92,7 +92,7 @@ curl http://localhost:8000/auth/me -H "Authorization: Bearer <access_token>"
 
 The login response also returns a `refresh_token`. When the short-lived
 `access_token` expires, `POST /auth/refresh` with `{"refresh_token":"<...>"}` mints a
-fresh session — the Next.js frontend does this automatically on a `401`, falling back
+fresh session - the Next.js frontend does this automatically on a `401`, falling back
 to the `/login` screen only when the refresh token is itself expired.
 
 Seeded accounts:
@@ -146,7 +146,7 @@ python scripts/seed.py
 | `supabase start` errors | Ensure **Docker Desktop is running** (`docker ps`). |
 | Port 8000 in use | `uvicorn api.main:app --reload --port 8001`. |
 | Browser **CORS error** from the frontend | Add the frontend origin to `CORS_ORIGINS` in `.env` and restart uvicorn. |
-| `401 unauthorized` | Send `Authorization: Bearer <access_token>` from `/auth/login`; the token expires — log in again. |
+| `401 unauthorized` | Send `Authorization: Bearer <access_token>` from `/auth/login`; the token expires - log in again. |
 | Login fails | Run `python scripts/seed.py` after `db reset`; password `EmmaDev123!`. |
 | Schema/permission errors | Re-run `npx supabase db reset`, then reseed. |
 
@@ -168,7 +168,7 @@ python scripts/seed.py
 
 ---
 
-## Reference — ports
+## Reference - ports
 
 | Service | URL |
 |---|---|

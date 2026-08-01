@@ -83,20 +83,236 @@ def seed_shift_defs(facility_id: str, defs: list[tuple], splits: dict) -> None:
     ins_many("shift_definitions", rows)
 
 
-def seed_ratio_rules(facility_id: str, cw_rank: str) -> None:
-    rules = [
-        ("RN", "07:00", "20:00", 60, None),
-        ("HW", "07:00", "20:00", 30, None),
-        (cw_rank, "07:00", "17:00", 20, None),
-        (cw_rank, "17:00", "07:00", 40, None),
-        ("AW", "07:00", "18:00", 40, None),
-        (None, "18:00", "07:00", None, 2),  # night: >=2 staff any rank
-    ]
+def seed_ratio_rules(facility_id: str, facility_code: str) -> None:
+    """Seed the exact Home A/B SWD windows from the source specification."""
+    if facility_code == "A":
+        rules = [
+            ("swd_aw", "AW", "08:30", "19:30", 40, ["AW"], {}),
+            ("swd_care_day", "CW", "07:00", "17:00", 20, ["CW"], {}),
+            ("swd_care_night", "CW", "17:00", "07:00", 240, ["CW"], {}),
+            (
+                "swd_health_worker",
+                "HW",
+                "07:00",
+                "18:00",
+                30,
+                ["HW", "RN", "EN"],
+                {"HW": 1, "RN": 2, "EN": 2},
+            ),
+            (
+                "swd_nurse",
+                "RN",
+                "07:00",
+                "18:00",
+                60,
+                ["RN", "EN"],
+                {"RN": 1, "EN": 1},
+            ),
+        ]
+    else:
+        rules = [
+            ("swd_aw", "AW", "07:00", "18:00", 40, ["AW"], {}),
+            ("swd_care_day", "HCA", "07:00", "17:00", 20, ["HCA"], {}),
+            ("swd_health_worker", "HW", "07:00", "20:00", 30, ["HW"], {}),
+            (
+                "swd_nurse",
+                "RN",
+                "07:00",
+                "20:00",
+                60,
+                ["RN", "EN", "HW"],
+                # One RN/EN covers 60 residents; the HW substitute covers 40,
+                # so an HW contributes two-thirds of a nurse-equivalent head.
+                {"RN": 1, "EN": 1, "HW": 2 / 3},
+            ),
+        ]
     ins_many("staffing_ratio_rules", [{
-        "facility_id": facility_id, "staff_rank": r, "time_window_start": s,
-        "time_window_end": e, "ratio_residents_per_staff": ratio,
-        "min_staff_any_rank": mn, "effective_from": "2026-01-01", "active": True,
-    } for (r, s, e, ratio, mn) in rules])
+        "facility_id": facility_id,
+        "rule_code": code,
+        "staff_rank": rank,
+        "time_window_start": start,
+        "time_window_end": end,
+        "ratio_residents_per_staff": ratio,
+        "counted_ranks_json": counted_ranks,
+        "rank_weights_json": rank_weights,
+        "effective_from": "2026-01-01",
+        "config_version": 1,
+        "active": True,
+    } for code, rank, start, end, ratio, counted_ranks, rank_weights in rules])
+
+
+def seed_phase5_rules(facility_id: str, facility_code: str) -> None:
+    night_types = ["AN", "N"] if facility_code == "A" else ["AN", "N", "7P"]
+    agency_config = {
+        "agency_employment_types": ["agency", "outsource", "casual"],
+        "banned_shift_types": [] if facility_code == "A" else ["AN", "N", "7P"],
+        "period_ratio_cap": 0.5,
+        "daily_rank_caps": {"RN|EN|HW": 2, "CW|HCA": 12},
+        "monthly_shift_caps": {"AN": 2} if facility_code == "A" else {},
+        "peak_holiday_terms": [
+            "mid-autumn", "winter solstice", "lunar new year",
+            "農曆新年", "中秋", "冬至",
+        ],
+        "part_time_policy": {
+            "employment_types": ["local_pt"],
+            "required_start": "09:00",
+            "required_end": "17:48" if facility_code == "A" else "18:00",
+            "allowed_weekdays": (
+                [] if facility_code == "A" else [0, 1, 3, 5]
+            ),
+            "weekly_work_days": (
+                {"min": 5, "max": 6}
+                if facility_code == "A"
+                else {"min": 4, "max": 4}
+            ),
+            "fortnightly_work_days": (
+                {"min": 11, "max": 11}
+                if facility_code == "A"
+                else None
+            ),
+            "saturday_requires_weekday_cl": facility_code == "A",
+        },
+    }
+    if facility_code == "B":
+        agency_config["vacancy_cap"] = {
+            "enabled": True,
+            "standard_do_days": 6,
+            "factor": 0.7,
+        }
+    ins_many("rule_definitions", [
+        {
+            "facility_id": facility_id,
+            "rule_code": "night_chain",
+            "name": f"Home {facility_code} night recovery chain",
+            "severity": "hard",
+            "config_json": {
+                "night_shift_types": night_types,
+                "chain_employment_types": ["local_ft"],
+                "sleep_codes": ["SLEEP", "SD"],
+                "day_off_codes": ["DO", "OFF"],
+                "an_monthly_limit": 2,
+                "nurse_night_monthly_limit": 2,
+                "cooldown_ranks": ["RN", "EN"],
+            },
+            "config_version": 1,
+            "effective_from": "2026-01-01",
+        },
+        {
+            "facility_id": facility_id,
+            "rule_code": "agency_limits",
+            "name": f"Home {facility_code} external workforce limits",
+            "severity": "hard",
+            "config_json": agency_config,
+            "config_version": 1,
+            "effective_from": "2026-01-01",
+        },
+        {
+            "facility_id": facility_id,
+            "rule_code": "leave_rules",
+            "name": f"Home {facility_code} leave policy",
+            "severity": "hard",
+            "config_json": {
+                "request_cutoff_day": 10,
+                "max_do_cl_balance": 3,
+            },
+            "config_version": 1,
+            "effective_from": "2026-01-01",
+        },
+    ])
+
+
+# Leave must be requested by ~the 10th of the preceding month, so the earliest
+# approvable request starts about two months out. Carry the configured periods
+# past that horizon or the whole of 5.5 is unreachable.
+FORWARD_CYCLE_DAYS = 120
+
+
+def seed_forward_cycles(
+    facility_id: str,
+    cycle_type: str,
+    last_end: Date,
+    days: int,
+    staff_ids: list[str],
+    *,
+    horizon: Date,
+) -> list[str]:
+    """Open the upcoming cycles (period + entitlements) with no roster attached.
+
+    The leave rules gate on two things at once: a request must clear the
+    submission cutoff, and every requested day must resolve to exactly one
+    configured balance. With only the current cycle seeded, anything late enough
+    to clear the cutoff falls outside every period, so no leave request can ever
+    be approved. Periods must not overlap - the balance trigger rejects a day
+    that resolves to two.
+    """
+    cycles = []
+    while last_end < horizon:
+        start = last_end + timedelta(days=1)
+        if cycle_type == "natural_month":
+            # Roll to the calendar month end so month-based cycles stay aligned.
+            next_month = (start.replace(day=1) + timedelta(days=31)).replace(day=1)
+            last_end = next_month - timedelta(days=1)
+        else:
+            last_end = start + timedelta(days=days - 1)
+        period_id = ins("roster_periods", {
+            "facility_id": facility_id,
+            "period_start": start.isoformat(),
+            "period_end": last_end.isoformat(),
+            "cycle_type": cycle_type,
+            "status": "planning",
+        })
+        seed_leave_balances(facility_id, period_id, staff_ids)
+        cycles.append({"id": period_id, "start": start, "end": last_end})
+    return cycles
+
+
+def roster_cycle_covering(
+    facility_id: str,
+    cycles: list[dict],
+    on_date: Date,
+    label: str,
+    *,
+    staff_ids, ranks, units, pattern, times, splits, task_map,
+) -> dict | None:
+    """Put a real roster on whichever upcoming cycle contains `on_date`.
+
+    The fixed 1-28 Jul cycle stops covering "today" two days later, and every
+    today-scoped screen (dashboard shift mix, staff-app window, attendance) then
+    reads an empty day. Rostering the cycle that actually contains today keeps
+    those live without moving the July fixtures other tests assert on.
+    """
+    current = next(
+        (c for c in cycles if c["start"] <= on_date <= c["end"]), None)
+    if not current:
+        return None
+    version_id = ins("roster_versions", {
+        "facility_id": facility_id, "period_id": current["id"],
+        "version_type": "manual", "label": label, "status": "draft",
+    })
+    dates = dates_for(current["start"].isoformat(),
+                      (current["end"] - current["start"]).days + 1)
+    roster = seed_roster(facility_id, version_id, staff_ids, ranks, units, pattern,
+                         times, splits, task_map, dates)
+    return {**current, "version_id": version_id, "dates": dates, "roster": roster}
+
+
+def seed_leave_balances(
+    facility_id: str,
+    period_id: str,
+    staff_ids: list[str],
+) -> None:
+    ins_many("leave_balances", [
+        {
+            "facility_id": facility_id,
+            "staff_id": staff_id,
+            "period_id": period_id,
+            "leave_type": leave_type,
+            "opening_balance": opening,
+        }
+        for staff_id in staff_ids
+        # DO + CL are one combined carry-over pool with a hard maximum of 3.
+        for leave_type, opening in (("AL", 12), ("PH", 2), ("CL", 1), ("DO", 2))
+    ])
 
 
 # time maps per shift code -> (start, end, cross_midnight, is_working).
@@ -106,15 +322,19 @@ SHIFT_TIMES_A = {
     "A": ("07:00", "15:00", False, True), "B": ("08:00", "16:00", False, True),
     "E": ("09:00", "17:00", False, True), "P": ("13:30", "21:30", False, True),
     "N": ("21:30", "07:00", True, True),  "AN": ("07:00", "13:30", False, True),
+    "PT": ("09:00", "17:48", False, True),
     "OFF": (None, None, False, False), "AL": (None, None, False, False),
     "SLEEP": (None, None, False, False), "DO": (None, None, False, False),
+    "CL": (None, None, False, False),
 }
 SHIFT_TIMES_B = {
     "7A": ("07:00", "19:00", False, True), "9A": ("09:00", "21:00", False, True),
     "7P": ("19:00", "07:00", True, True),  "A": ("07:00", "16:00", False, True),
     "P": ("12:30", "21:30", False, True),  "AN": ("07:00", "14:30", False, True),
+    "PT": ("09:00", "18:00", False, True),
     "OFF": (None, None, False, False), "DO": (None, None, False, False),
     "AL": (None, None, False, False), "SLEEP": (None, None, False, False),
+    "CL": (None, None, False, False),
 }
 
 # Split shifts, straight from the scheduling spec:
@@ -127,11 +347,49 @@ SPLIT_B = {"AN": [{"start": "07:00", "end": "14:30"}, {"start": "21:15", "end": 
 PERIOD_A_START, PERIOD_A_DAYS = "2026-07-01", 28
 PERIOD_B_START, PERIOD_B_DAYS = "2026-07-01", 31
 
+# Weekly patterns sized to the 44h local-FT contract, with the spec's A/N -> SLEEP
+# -> DO chain honoured. Previously the AW worked all seven days and the PCW six
+# nights, which put them 27-30% over contract before any overtime - that is a
+# rostering breach, not an OT signal, and it drowned the real alerts.
+#   A/N = 16h, N = 9.5h, everything else 8h.
+PATTERN_A = [
+    ["P", "A", "P", "AN", "SLEEP", "OFF", "AL"],      # RN   8+8+8+16   = 40h
+    ["OFF", "P", "P", "A", "P", "A", "DO"],           # EN   5 x 8      = 40h
+    ["A", "AN", "SLEEP", "OFF", "A", "A", "OFF"],     # HW   8+16+8+8   = 40h
+    ["P", "P", "OFF", "P", "P", "A", "DO"],           # CW   5 x 8      = 40h
+    ["A", "A", "A", "A", "A", "OFF", "OFF"],          # PTA  5 x 8      = 40h
+    ["N", "N", "SLEEP", "OFF", "N", "N", "DO"],       # PCW  4 x 9.5    = 38h
+    ["P", "P", "P", "P", "P", "OFF", "OFF"],          # AW   5 x 8      = 40h
+]
+# Home B: imported HCA 72h/week, local staff 49.5h/week (spec: 11 working days
+# + 3 rest days per fortnight). 7A/7P are 12h, A/P are 9h.
+PATTERN_B = [
+    ["7A", "7A", "7P", "OFF", "7A", "7A", "7A"],      # HCA  6 x 12 = 72h
+    ["A", "A", "P", "P", "OFF", "A", "DO"],           # HW   5 x 9  = 45h
+    ["P", "P", "A", "A", "P", "OFF", "DO"],           # EN   5 x 9  = 45h
+]
+# staff index -> shift code -> task labels. Home A defines RN-only task codes
+# (A1/A2 Med Checking + Medication Mgmt on A, A4/A5 Wound Care + ICP Review on P),
+# so the nurses must carry them: they are the clinical tasks the ratio and
+# task-eligibility rules are written about, and leaving rows 0-1 empty left the
+# RN/EN with no rostered task evidence at all.
+TASKS_A = {
+    0: {"A": ["Med Checking", "Medication Mgmt"],
+        "P": ["Wound Care", "ICP Review"],
+        "AN": ["Med Checking"]},
+    1: {"A": ["Med Checking"], "P": ["Wound Care", "FU Chat"]},
+    2: {"A": ["Vital Signs"], "AN": ["Vital Signs"],
+        "P": ["AOM (Oral)"]},
+    3: {"A": ["Oral Feeding"], "P": ["Evening Diaper Change"]},
+    4: {"A": ["Rehab Session"]},
+    6: {"P": ["Infection Control"]},
+}
+
 
 def seed_roster(facility_id, version_id, staff_ids, ranks, units, pattern,
                 times, splits, task_map, dates) -> dict[str, list[str]]:
     """One shift + assignment per staff per day. The 7-day pattern repeats across
-    the whole period so a 28-day cycle really has 28 days of roster — the KPI,
+    the whole period so a 28-day cycle really has 28 days of roster - the KPI,
     fairness and report screens all read a full period.
 
     Returns {staff_id: [assignment_id, ...]} in date order.
@@ -300,7 +558,7 @@ def seed_floor_rules(facility_id: str, floors: dict[str, str]) -> None:
 
 def seed_roi_settings(facility_id: str, profile_id: str, *, total_budget: int,
                       salary_budget: int, vacancies: dict) -> None:
-    # roi_settings is keyed by facility_id — it has no surrogate `id`, so this
+    # roi_settings is keyed by facility_id - it has no surrogate `id`, so this
     # can't go through ins().
     # SQL: insert into roi_settings
     #        (facility_id, manager_hourly_rate, roster_hours_before, roster_hours_after,
@@ -391,7 +649,7 @@ def seed_incidents(facility_id: str, staff_ids: list[str], profile_id: str,
         })
 
     # PostgREST unions the column set across a bulk insert and writes NULL where a
-    # key is missing, so every row must carry the same keys — column defaults do
+    # key is missing, so every row must carry the same keys - column defaults do
     # not fill the gaps here.
     open_cases = [(5, "SL", 0), (2, "urgent", 0)]
     for idx, itype, ago in open_cases:
@@ -417,7 +675,7 @@ def seed_agency(facility_id: str, ref: Date) -> None:
         rows.append({
             "facility_id": facility_id, "date": day.isoformat(), "role": "PCW",
             "vendor": "HK Care Staffing Ltd", "hours": 8, "cost": 957,
-            "reason": "SL cover — no internal candidate within rest rules",
+            "reason": "SL cover - no internal candidate within rest rules",
         })
     for i in range(3):
         day = ref - timedelta(days=4 + i * 7)
@@ -452,9 +710,9 @@ def seed_debt(facility_id: str, staff_ids: list[str], period_id: str) -> None:
         "quantity": qty, "unit": "hours" if kind != "AN" else "count",
         "due_period_id": period_id, "status": "open", "note": note,
     } for idx, kind, qty, note in [
-        (3, "TOIL", 8, "emergency cover — compensate next cycle"),
+        (3, "TOIL", 8, "emergency cover - compensate next cycle"),
         (0, "CL", 12.5, "public holiday worked"),
-        (2, "TOIL", 8, "emergency cover — compensate next cycle"),
+        (2, "TOIL", 8, "emergency cover - compensate next cycle"),
         (6, "CL", 4, "shift extension"),
         (1, "AN", 1, "AN make-up owed"),
     ]])
@@ -471,7 +729,7 @@ def seed_notifications(facility_id: str, staff_id: str, profile_id: str) -> None
          "Your shifts for 1–28 July are confirmed.", "read"),
         ("leave_decided", "Annual leave reviewed",
          "Your 12–16 July request is with the superintendent.", "sent"),
-        ("cover_request", "Cover needed — P shift",
+        ("cover_request", "Cover needed - P shift",
          "A P shift needs cover today. Tap to accept.", "sent"),
     ]])
 
@@ -557,11 +815,11 @@ def seed_facility_events(facility_id: str, ref: Date) -> None:
         "facility_id": facility_id, "event_type": etype,
         "date": (ref - timedelta(days=ago)).isoformat(), "title": title,
     } for etype, ago, title in [
-        ("STAFF_JOIN_LEAVE", 21, "PCW joined — imported labour contract"),
-        ("STAFF_JOIN_LEAVE", 6, "PTA resigned — 1 month notice"),
-        ("RESIDENT_ADMISSION", 18, "New resident — East Wing"),
-        ("RESIDENT_ADMISSION", 12, "New resident — West Wing"),
-        ("RESIDENT_ADMISSION", 4, "New resident — East Wing"),
+        ("STAFF_JOIN_LEAVE", 21, "PCW joined - imported labour contract"),
+        ("STAFF_JOIN_LEAVE", 6, "PTA resigned - 1 month notice"),
+        ("RESIDENT_ADMISSION", 18, "New resident - East Wing"),
+        ("RESIDENT_ADMISSION", 12, "New resident - West Wing"),
+        ("RESIDENT_ADMISSION", 4, "New resident - East Wing"),
     ]])
     operational = [
         ("hair_cutting", 0, "Hair cutting", "09:00", "12:00",
@@ -604,7 +862,7 @@ def seed_regulatory_docs() -> None:
         ("CAP459A", "Residential Care Homes (Elderly Persons) Regulation Cap.459A",
          "《安老院規例》Cap.459A", "s.11(3) PT headcount cap", "s.11(3) PT人數上限",
          "2024-06-16", "2024-06-16"),
-        ("COP_2024", "Code of Practice for RCH(E) — June 2024 Revision",
+        ("COP_2024", "Code of Practice for RCH(E) - June 2024 Revision",
          "《安老院實務守則》2024年6月修訂版", "Chapter 9: Agency Services",
          "第9章 外購服務", "2024-06", "2026-04-01"),
         ("SQS_16", "SWD 16 Service Quality Standards", "社署16項服務質素標準",
@@ -695,12 +953,15 @@ def main() -> None:
         ("P", "Afternoon", "13:30", "21:30", False, True),
         ("N", "Night", "21:30", "07:00", True, True),
         ("AN", "A/N split", "07:00", "13:30", True, True),
+        ("PT", "Part-time", "09:00", "17:48", False, True),
         ("OFF", "Day Off", None, None, False, False),
         ("AL", "Annual Leave", None, None, False, False),
         ("SLEEP", "Sleeping Day", None, None, False, False),
         ("DO", "Rest Day", None, None, False, False),
+        ("CL", "Compensatory Leave", None, None, False, False),
     ], SPLIT_A)
-    seed_ratio_rules(fa, "CW")
+    seed_ratio_rules(fa, "A")
+    seed_phase5_rules(fa, "A")
     seed_task_definitions(fa)
 
     period_a = ins("roster_periods", {
@@ -711,36 +972,30 @@ def main() -> None:
         "facility_id": fa, "period_id": period_a, "version_type": "manual",
         "label": "July 2026 draft", "status": "draft",
     })
-    # Weekly patterns sized to the 44h local-FT contract, with the spec's A/N ->
-    # SLEEP -> DO chain honoured. Previously the AW worked all seven days and the
-    # PCW six nights, which put them 27-30% over contract before any overtime —
-    # that is a rostering breach, not an OT signal, and it drowned the real alerts.
-    #   A/N = 16h, N = 9.5h, everything else 8h.
-    pattern_a = [
-        ["P", "A", "P", "AN", "SLEEP", "OFF", "AL"],      # RN   8+8+8+16   = 40h
-        ["OFF", "P", "P", "A", "P", "A", "DO"],           # EN   5 x 8      = 40h
-        ["A", "AN", "SLEEP", "OFF", "A", "A", "OFF"],     # HW   8+16+8+8   = 40h
-        ["P", "P", "OFF", "P", "P", "A", "DO"],           # CW   5 x 8      = 40h
-        ["A", "A", "A", "A", "A", "OFF", "OFF"],          # PTA  5 x 8      = 40h
-        ["N", "N", "SLEEP", "OFF", "N", "N", "DO"],       # PCW  4 x 9.5    = 38h
-        ["P", "P", "P", "P", "P", "OFF", "OFF"],          # AW   5 x 8      = 40h
-    ]
-    tasks_a = {
-        2: {"A": ["Vital Signs"], "AN": ["Vital Signs"],
-            "P": ["AOM (Oral)"]},
-        3: {"A": ["Oral Feeding"], "P": ["Evening Diaper Change"]},
-        4: {"A": ["Rehab Session"]},
-        6: {"P": ["Infection Control"]},
-    }
-    roster_a = seed_roster(fa, ver_a, a_ids, a_ranks, a_units, pattern_a,
-                           SHIFT_TIMES_A, SPLIT_A, tasks_a, dates_a)
+    seed_leave_balances(fa, period_a, a_ids)
+    cycles_a = seed_forward_cycles(
+        fa, "28day", period_a_end, PERIOD_A_DAYS, a_ids,
+        horizon=max(today, period_a_end) + timedelta(days=FORWARD_CYCLE_DAYS))
+    roster_a = seed_roster(fa, ver_a, a_ids, a_ranks, a_units, PATTERN_A,
+                           SHIFT_TIMES_A, SPLIT_A, TASKS_A, dates_a)
+    current_a = roster_cycle_covering(
+        fa, cycles_a, today, "Current cycle draft",
+        staff_ids=a_ids, ranks=a_ranks, units=a_units, pattern=PATTERN_A,
+        times=SHIFT_TIMES_A, splits=SPLIT_A, task_map=TASKS_A)
+    rosters_a = [(roster_a, dates_a)]
+    if current_a:
+        # Today now sits on a real roster, so hang the Phase 3 activity off today
+        # instead of the stale cycle's last day.
+        ref = today
+        rosters_a.append((current_a.pop("roster"), current_a["dates"]))
 
     def shift_lookup_a(staff_id: str, day: Date) -> str | None:
         """The staff member's working shift id on `day`, else None."""
         want = day.isoformat()
-        for shift_id, (i, sid, d, code) in zip(roster_a["shift_ids"], roster_a["meta"]):
-            if sid == staff_id and dates_a[d] == want and SHIFT_TIMES_A[code][3]:
-                return shift_id
+        for roster, dates in rosters_a:
+            for shift_id, (i, sid, d, code) in zip(roster["shift_ids"], roster["meta"]):
+                if sid == staff_id and dates[d] == want and SHIFT_TIMES_A[code][3]:
+                    return shift_id
         return None
 
     # ================= HOME B (natural month) =================
@@ -774,12 +1029,15 @@ def main() -> None:
         ("A", "Morning", "07:00", "16:00", False, True),
         ("P", "Afternoon", "12:30", "21:30", False, True),
         ("AN", "A/N split", "07:00", "14:30", True, True),
+        ("PT", "Part-time", "09:00", "18:00", False, True),
         ("OFF", "Day Off", None, None, False, False),
         ("DO", "Rest Day", None, None, False, False),
         ("AL", "Annual Leave", None, None, False, False),
         ("SLEEP", "Sleeping Day", None, None, False, False),
+        ("CL", "Compensatory Leave", None, None, False, False),
     ], SPLIT_B)
-    seed_ratio_rules(fb, "HCA")
+    seed_ratio_rules(fb, "B")
+    seed_phase5_rules(fb, "B")
     seed_task_definitions(fb)
     seed_floor_rules(fb, {"1F": f1, "2F": f2, "6F": f6})
 
@@ -791,14 +1049,16 @@ def main() -> None:
         "facility_id": fb, "period_id": period_b, "version_type": "manual",
         "label": "July 2026 draft", "status": "draft",
     })
-    # Home B: imported HCA 72h/week, local staff 49.5h/week (spec: 11 working days
-    # + 3 rest days per fortnight). 7A/7P are 12h, A/P are 9h.
-    pattern_b = [
-        ["7A", "7A", "7P", "OFF", "7A", "7A", "7A"],      # HCA  6 x 12 = 72h
-        ["A", "A", "P", "P", "OFF", "A", "DO"],           # HW   5 x 9  = 45h
-        ["P", "P", "A", "A", "P", "OFF", "DO"],           # EN   5 x 9  = 45h
-    ]
-    seed_roster(fb, ver_b, b_ids, b_ranks, b_units, pattern_b, SHIFT_TIMES_B, SPLIT_B, {}, dates_b)
+    seed_leave_balances(fb, period_b, b_ids)
+    period_b_end = Date.fromisoformat(dates_b[-1])
+    cycles_b = seed_forward_cycles(
+        fb, "natural_month", period_b_end, PERIOD_B_DAYS, b_ids,
+        horizon=max(today, period_b_end) + timedelta(days=FORWARD_CYCLE_DAYS))
+    seed_roster(fb, ver_b, b_ids, b_ranks, b_units, PATTERN_B, SHIFT_TIMES_B, SPLIT_B, {}, dates_b)
+    current_b = roster_cycle_covering(
+        fb, cycles_b, today, "Current cycle draft",
+        staff_ids=b_ids, ranks=b_ranks, units=b_units, pattern=PATTERN_B,
+        times=SHIFT_TIMES_B, splits=SPLIT_B, task_map={})
 
     # ---- auth users + profiles ----
     print("Creating dev auth users ...")
@@ -818,10 +1078,14 @@ def main() -> None:
     # the seeded headcount: 7 staff cannot lawfully serve 80 residents under the
     # Code of Practice ratios, and an impossible fixture makes every compliance
     # screen fail for a reason that has nothing to do with the roster. 18 residents
-    # across two wings leaves a realistic mix — most windows pass, and the genuine
+    # across two wings leaves a realistic mix - most windows pass, and the genuine
     # gaps (nobody on an RN's rest day, 21:30–07:00 covered by one person) show up.
-    seed_resident_counts(fa, [(east, 10), (west, 8)], prof_a, dates_a)
-    seed_resident_counts(fb, [(f2, 8), (f6, 7)], prof_a, dates_b)
+    # The newly rostered current cycle needs the same denominator, or every ratio
+    # check for today divides by nothing.
+    seed_resident_counts(fa, [(east, 10), (west, 8)], prof_a,
+                         dates_a + (current_a["dates"] if current_a else []))
+    seed_resident_counts(fb, [(f2, 8), (f6, 7)], prof_a,
+                         dates_b + (current_b["dates"] if current_b else []))
 
     # ---- Phase 3 operations layer (Home A carries the demo activity) ----
     print("Seeding Phase 3 operations data ...")

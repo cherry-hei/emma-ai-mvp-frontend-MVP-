@@ -9,18 +9,310 @@ stamps the response time that feeds the A2 ROI figure.
 """
 from __future__ import annotations
 
-from datetime import date as Date, datetime, timezone
+from dataclasses import dataclass
+from datetime import date as Date, datetime, timedelta, timezone
 
 from ..constants import can_cover_rank
-from . import notifications as notify
+from . import notifications as notify, validation
 from ._common import (
     LEAVE_CODES, as_date, iso, month_bounds, now_iso, operative_version,
+    assignments_for_shifts,
     resolve_period, shift_minutes, staff_brief, staff_by_id, to_min,
 )
 from .compliance import compute_ratios
 
 CERT_WARN_DAYS = 90
 AUDIT_RANKS = {"RN", "EN", "HW"}       # slots whose duties include medication
+
+
+@dataclass(frozen=True, slots=True)
+class _NightPolicy:
+    night_types: frozenset[str]
+    chain_employment_types: frozenset[str]
+    sleep_codes: tuple[str, ...]
+    day_off_codes: tuple[str, ...]
+    cooldown_ranks: frozenset[str]
+    rule_id: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class _RecoveryTarget:
+    day: Date
+    code: str
+    version_id: str
+    definition: dict
+
+
+def _periods(client, facility_id: str) -> list[dict]:
+    rows = (
+        client.table("roster_periods")
+        .select("*")
+        .eq("facility_id", facility_id)
+        .order("period_start")
+        .execute()
+        .data
+    )
+    return sorted(rows, key=lambda row: iso(row["period_start"]))
+
+
+def _period_containing(periods: list[dict], day: Date) -> dict | None:
+    key = day.isoformat()
+    return next(
+        (
+            row for row in periods
+            if iso(row["period_start"]) <= key <= iso(row["period_end"])
+        ),
+        None,
+    )
+
+
+def _shift_roster_context(
+    client,
+    facility_id: str,
+    shift: dict,
+) -> tuple[dict, str]:
+    """Resolve and tenant-check the roster version/period that owns a shift."""
+    version_id = shift.get("roster_version_id")
+    if version_id:
+        versions = (
+            client.table("roster_versions")
+            .select("*")
+            .eq("facility_id", facility_id)
+            .eq("id", version_id)
+            .execute()
+            .data
+        )
+        if not versions:
+            raise ValueError("incident shift does not belong to this facility roster")
+        period_id = versions[0].get("period_id")
+        if not period_id:
+            raise ValueError("incident shift roster has no period")
+        period = resolve_period(client, facility_id, period_id)
+        if not period:
+            raise ValueError("incident shift roster period was not found")
+        day = as_date(shift["date"])
+        if not (
+            as_date(period["period_start"]) <= day <= as_date(period["period_end"])
+        ):
+            raise ValueError("incident shift date is outside its roster period")
+        return period, version_id
+
+    periods = _periods(client, facility_id)
+    period = _period_containing(periods, as_date(shift["date"]))
+    if not period:
+        raise ValueError("no roster period covers the incident shift")
+    version = operative_version(client, facility_id, period["id"])
+    if not version:
+        raise ValueError("incident shift has no operative roster version")
+    return period, version["id"]
+
+
+def _night_policy(
+    client,
+    facility_id: str,
+    period: dict,
+) -> _NightPolicy:
+    """Load the same period-frozen night policy used by validation/optimization."""
+    on_date = as_date(period["period_start"])
+    rows = (
+        client.table("rule_definitions")
+        .select("*")
+        .eq("rule_code", "night_chain")
+        .execute()
+        .data
+    )
+    eligible = [
+        row for row in rows
+        if row.get("active", True)
+        and row.get("facility_id") in (None, facility_id)
+        and (
+            not row.get("effective_from")
+            or as_date(row["effective_from"]) <= on_date
+        )
+        and (
+            not row.get("effective_to")
+            or as_date(row["effective_to"]) >= on_date
+        )
+    ]
+    eligible.sort(
+        key=lambda row: (
+            row.get("facility_id") == facility_id,
+            int(row.get("config_version") or 1),
+            str(row.get("effective_from") or ""),
+        ),
+        reverse=True,
+    )
+    config = dict(validation.DEFAULT_NIGHT_POLICY)
+    if eligible:
+        config.update(eligible[0].get("config_json") or {})
+    return _NightPolicy(
+        night_types=frozenset(
+            str(value).upper() for value in config.get("night_shift_types", ())
+        ),
+        chain_employment_types=frozenset(
+            str(value) for value in config.get("chain_employment_types", ())
+        ),
+        sleep_codes=tuple(
+            str(value).upper() for value in config.get("sleep_codes", ())
+        ),
+        day_off_codes=tuple(
+            str(value).upper() for value in config.get("day_off_codes", ())
+        ),
+        cooldown_ranks=frozenset(
+            str(value).upper() for value in config.get("cooldown_ranks", ())
+        ),
+        rule_id=eligible[0].get("id") if eligible else None,
+    )
+
+
+def _next_period(periods: list[dict], period: dict) -> dict | None:
+    boundary = as_date(period["period_end"])
+    return next(
+        (
+            row for row in periods
+            if as_date(row["period_start"]) > boundary
+        ),
+        None,
+    )
+
+
+def _recovery_targets(
+    client,
+    facility_id: str,
+    shift: dict,
+    period: dict,
+    version_id: str,
+    policy: _NightPolicy,
+    periods: list[dict],
+) -> tuple[list[_RecoveryTarget], list[str]]:
+    """Plan the exact SLEEP/DO cells needed after a configured night shift."""
+    if str(shift.get("shift_type") or "").upper() not in policy.night_types:
+        return [], []
+
+    definitions = (
+        client.table("shift_definitions")
+        .select("*")
+        .eq("facility_id", facility_id)
+        .execute()
+        .data
+    )
+    definition_by_code = {
+        str(row.get("shift_type") or "").upper(): row
+        for row in definitions
+        if not row.get("is_working", False)
+    }
+
+    required = (
+        (1, policy.sleep_codes, "sleeping-day"),
+        (2, policy.day_off_codes, "day-off"),
+    )
+    targets: list[_RecoveryTarget] = []
+    issues: list[str] = []
+    shift_day = as_date(shift["date"])
+    for offset, alternatives, label in required:
+        code = next((value for value in alternatives if value in definition_by_code), None)
+        if not code:
+            issues.append(
+                f"no non-working {label} shift definition is configured "
+                f"({', '.join(alternatives)})"
+            )
+            continue
+
+        day = shift_day + timedelta(days=offset)
+        target_period = _period_containing(periods, day)
+        if not target_period:
+            issues.append(f"no roster period covers mandatory recovery on {day}")
+            continue
+        if target_period["id"] == period["id"]:
+            target_version_id = version_id
+        else:
+            target_version = operative_version(
+                client,
+                facility_id,
+                target_period["id"],
+            )
+            if not target_version:
+                issues.append(
+                    f"no operative roster exists for mandatory recovery on {day}"
+                )
+                continue
+            target_version_id = target_version["id"]
+        targets.append(_RecoveryTarget(
+            day=day,
+            code=code,
+            version_id=target_version_id,
+            definition=definition_by_code[code],
+        ))
+    return targets, issues
+
+
+def _target_assignments(
+    client,
+    facility_id: str,
+    targets: list[_RecoveryTarget],
+) -> dict[tuple[str, Date], list[dict]]:
+    if not targets:
+        return {}
+    version_ids = sorted({target.version_id for target in targets})
+    wanted = {
+        (target.version_id, target.day.isoformat()) for target in targets
+    }
+    shifts = (
+        client.table("shifts")
+        .select("*")
+        .eq("facility_id", facility_id)
+        .in_("roster_version_id", version_ids)
+        .execute()
+        .data
+    )
+    shifts = [
+        row for row in shifts
+        if (row.get("roster_version_id"), iso(row.get("date"))) in wanted
+    ]
+    if not shifts:
+        return {}
+    by_id = {row["id"]: row for row in shifts}
+    assignments = assignments_for_shifts(
+        client, by_id, select="shift_id,staff_id,status", facility_id=facility_id)
+    out: dict[tuple[str, Date], list[dict]] = {}
+    for assignment in assignments:
+        if assignment.get("status") == "cancelled":
+            continue
+        shift = by_id.get(assignment.get("shift_id"))
+        staff_id = assignment.get("staff_id")
+        if not shift or not staff_id:
+            continue
+        out.setdefault((staff_id, as_date(shift["date"])), []).append(shift)
+    return out
+
+
+def _recovery_issues(
+    staff: dict,
+    targets: list[_RecoveryTarget],
+    setup_issues: list[str],
+    assigned: dict[tuple[str, Date], list[dict]],
+    on_leave: set[tuple[str, str]],
+) -> list[str]:
+    issues = list(setup_issues)
+    staff_id = staff["id"]
+    for target in targets:
+        if (staff_id, target.day.isoformat()) in on_leave:
+            issues.append(
+                f"approved leave conflicts with mandatory {target.code} "
+                f"recovery on {target.day}"
+            )
+        existing = assigned.get((staff_id, target.day), [])
+        wrong = [
+            str(row.get("shift_type") or "")
+            for row in existing
+            if str(row.get("shift_type") or "").upper() != target.code
+        ]
+        if wrong:
+            issues.append(
+                f"mandatory {target.code} recovery on {target.day} conflicts "
+                f"with {', '.join(sorted(set(wrong)))}"
+            )
+    return issues
 
 
 # ── reads ────────────────────────────────────────────────────────────────────
@@ -94,7 +386,7 @@ def get_incident(client, facility_id: str, incident_id: str) -> dict | None:
 
 
 def stats(client, facility_id: str, on: Date | None = None) -> dict:
-    """Month-to-date incident KPIs — the four cards on Dashboard and Alert."""
+    """Month-to-date incident KPIs - the four cards on Dashboard and Alert."""
     start, end = month_bounds(on)
     # SQL: select * from sl_incidents
     #      where facility_id = :facility_id
@@ -136,7 +428,7 @@ def stats(client, facility_id: str, on: Date | None = None) -> dict:
 # ── create ───────────────────────────────────────────────────────────────────
 def _find_shift_for(client, facility_id: str, staff_id: str, on_date: Date) -> dict | None:
     """The working shift this staff member was rostered on for `on_date`, in the
-    operative (published, else manual) version — the slot that now needs cover."""
+    operative (published, else manual) version - the slot that now needs cover."""
     period = resolve_period(client, facility_id, None)
     if not period:
         return None
@@ -148,6 +440,7 @@ def _find_shift_for(client, facility_id: str, staff_id: str, on_date: Date) -> d
     #        and date = :on_date
     #        and is_working = true
     shifts = (client.table("shifts").select("*")
+              .eq("facility_id", facility_id)
               .eq("roster_version_id", version["id"]).eq("date", str(on_date))
               .eq("is_working", True).execute().data)
     if not shifts:
@@ -155,8 +448,8 @@ def _find_shift_for(client, facility_id: str, staff_id: str, on_date: Date) -> d
     by_id = {s["id"]: s for s in shifts}
     # SQL: select * from shift_assignments
     #      where shift_id = any(:shift_ids) and staff_id = :staff_id
-    assigns = (client.table("shift_assignments").select("*")
-               .in_("shift_id", list(by_id)).eq("staff_id", staff_id).execute().data)
+    assigns = assignments_for_shifts(client, by_id, facility_id=facility_id,
+                                     staff_id=staff_id)
     for a in assigns:
         if a.get("status") != "cancelled":
             return by_id.get(a["shift_id"])
@@ -167,10 +460,46 @@ def open_incident(client, facility_id: str, *, staff_id: str, incident_type: str
                   on_date: Date | None = None, reason: str | None = None,
                   shift_id: str | None = None, leave_request_id: str | None = None) -> dict:
     """Log an incident and immediately snapshot the ranked cover candidates."""
+    _require_active_staff(client, facility_id, staff_id)
     on_date = on_date or Date.today()
     if not shift_id:
         shift = _find_shift_for(client, facility_id, staff_id, on_date)
         shift_id = shift["id"] if shift else None
+    if shift_id:
+        shifts = (
+            client.table("shifts")
+            .select("id,date")
+            .eq("facility_id", facility_id)
+            .eq("id", shift_id)
+            .execute()
+            .data
+        )
+        if not shifts:
+            raise ValueError("incident shift does not belong to this facility")
+        assignments = (
+            client.table("shift_assignments")
+            .select("id,status")
+            .eq("facility_id", facility_id)
+            .eq("shift_id", shift_id)
+            .eq("staff_id", staff_id)
+            .execute()
+            .data
+        )
+        if not any(row.get("status") != "cancelled" for row in assignments):
+            raise ValueError("staff member is not assigned to the incident shift")
+        on_date = as_date(shifts[0]["date"])
+    if leave_request_id:
+        leave = (
+            client.table("leave_requests")
+            .select("id")
+            .eq("facility_id", facility_id)
+            .eq("id", leave_request_id)
+            .eq("staff_id", staff_id)
+            .execute()
+            .data
+        )
+        if not leave:
+            raise ValueError("leave request does not belong to this staff member")
 
     # SQL: insert into sl_incidents
     #        (facility_id, staff_id, shift_id, leave_request_id, incident_type,
@@ -187,7 +516,7 @@ def open_incident(client, facility_id: str, *, staff_id: str, incident_type: str
     refresh_candidates(client, facility_id, row["id"])
     notify.push(
         client, facility_id, event_type="cover_request",
-        title=f"{incident_type} reported — cover required",
+        title=f"{incident_type} reported - cover required",
         body=f'{iso(on_date)}' + (f' · {reason}' if reason else ""),
         related_type="sl_incident", related_id=row["id"],
     )
@@ -222,22 +551,48 @@ def _rest_conflict(candidate_shifts: list[dict], vacancy: dict, min_rest_min: in
 
 def build_candidates(client, facility_id: str, incident: dict) -> list[dict]:
     """Rank every other active staff member for the vacant shift. Never filters a
-    person out silently — blocked candidates come back with `blocked_reasons`."""
+    person out silently - blocked candidates come back with `blocked_reasons`."""
     shift_id = incident.get("shift_id")
     vacancy = None
     if shift_id:
         # SQL: select * from shifts where id = :shift_id
-        rows = client.table("shifts").select("*").eq("id", shift_id).execute().data
+        rows = (
+            client.table("shifts")
+            .select("*")
+            .eq("facility_id", facility_id)
+            .eq("id", shift_id)
+            .execute()
+            .data
+        )
         vacancy = rows[0] if rows else None
     if not vacancy:
         return []
 
     v_date = as_date(vacancy["date"])
-    period = resolve_period(client, facility_id, None)
-    version_id = None
-    if period:
-        version = operative_version(client, facility_id, period["id"])
-        version_id = version["id"] if version else None
+    period, version_id = _shift_roster_context(
+        client,
+        facility_id,
+        vacancy,
+    )
+    periods = _periods(client, facility_id)
+    policy = _night_policy(client, facility_id, period)
+    night_type = str(vacancy.get("shift_type") or "").upper()
+    is_night = night_type in policy.night_types
+    recovery_targets, recovery_setup_issues = _recovery_targets(
+        client,
+        facility_id,
+        vacancy,
+        period,
+        version_id,
+        policy,
+        periods,
+    )
+    recovery_assignments = _target_assignments(
+        client,
+        facility_id,
+        recovery_targets,
+    )
+    due_period = _next_period(periods, period)
 
     # SQL: select s.*, jsonb_build_object('name', u.name) as unit
     #      from staff s
@@ -246,7 +601,7 @@ def build_candidates(client, facility_id: str, incident: dict) -> list[dict]:
     staff_rows = (client.table("staff").select("*, unit:facility_units(name)")
                   .eq("facility_id", facility_id).eq("status", "active").execute().data)
     # SQL: select * from staff_contracts where facility_id = :facility_id
-    # (keyed by staff_id in Python — last row per staff wins, no effective-date filter)
+    # (keyed by staff_id in Python - last row per staff wins, no effective-date filter)
     contracts = {c["staff_id"]: c for c in (
         client.table("staff_contracts").select("*").eq("facility_id", facility_id).execute().data)}
 
@@ -257,14 +612,16 @@ def build_candidates(client, facility_id: str, incident: dict) -> list[dict]:
     if version_id:
         # SQL: select * from shifts where roster_version_id = :version_id
         shifts = (client.table("shifts").select("*")
+                  .eq("facility_id", facility_id)
                   .eq("roster_version_id", version_id).execute().data)
         by_id = {s["id"]: s for s in shifts}
         assigns = []
         if by_id:
             # SQL: select shift_id, staff_id, status from shift_assignments
             #      where shift_id = any(:shift_ids)
-            assigns = (client.table("shift_assignments").select("shift_id,staff_id,status")
-                       .in_("shift_id", list(by_id)).execute().data)
+            assigns = assignments_for_shifts(
+                client, by_id, select="shift_id,staff_id,status",
+                facility_id=facility_id)
         for a in assigns:
             sid, sh = a.get("staff_id"), by_id.get(a["shift_id"])
             if not sid or not sh or a.get("status") == "cancelled":
@@ -275,16 +632,28 @@ def build_candidates(client, facility_id: str, incident: dict) -> list[dict]:
                 worked_types.setdefault(sid, set()).add(sh["shift_type"])
 
     from .leave import approved_leave_dates
-    on_leave = approved_leave_dates(client, facility_id, v_date, v_date)
+    on_leave = approved_leave_dates(
+        client,
+        facility_id,
+        v_date,
+        v_date + timedelta(days=2),
+    )
 
-    # SQL: select staff_id from future_debt_ledger
+    # SQL: select staff_id, debt_type, due_period_id from future_debt_ledger
     #      where facility_id = :facility_id and status = 'open'
     # (counted per staff in Python; in SQL this would be a
     #  `group by staff_id` with `count(*)`)
     open_debt: dict[str, int] = {}
-    for d in (client.table("future_debt_ledger").select("staff_id")
+    cooldown_staff: set[str] = set()
+    for d in (client.table("future_debt_ledger")
+              .select("staff_id,debt_type,due_period_id")
               .eq("facility_id", facility_id).eq("status", "open").execute().data):
         open_debt[d["staff_id"]] = open_debt.get(d["staff_id"], 0) + 1
+        if (
+            d.get("debt_type") == "NIGHT_COOLDOWN"
+            and (not d.get("due_period_id") or d.get("due_period_id") == (period or {}).get("id"))
+        ):
+            cooldown_staff.add(d["staff_id"])
 
     period_days = 28
     if period:
@@ -305,8 +674,29 @@ def build_candidates(client, facility_id: str, incident: dict) -> list[dict]:
             blocked.append(f'{st["rank"]} cannot cover a {required_rank} slot')
         if required_rank in AUDIT_RANKS and not st.get("is_audited_for_medication"):
             blocked.append("not audited for medication duty")
+        if (
+            is_night
+            and str(st.get("rank") or "").upper() in policy.cooldown_ranks
+            and st["id"] in cooldown_staff
+        ):
+            blocked.append("mandatory next-period nurse night cooldown")
         if (st["id"], v_date.isoformat()) in on_leave:
             blocked.append("on approved leave that day")
+        if due_period is None:
+            blocked.append(
+                "next roster period is required for bounded compensation debt"
+            )
+        if (
+            is_night
+            and st.get("employment_type") in policy.chain_employment_types
+        ):
+            blocked.extend(_recovery_issues(
+                st,
+                recovery_targets,
+                recovery_setup_issues,
+                recovery_assignments,
+                on_leave,
+            ))
 
         same_day = [s for s in mine if iso(s["date"]) == v_date.isoformat()]
         if any(s["shift_type"] in LEAVE_CODES for s in same_day):
@@ -363,16 +753,13 @@ def build_candidates(client, facility_id: str, incident: dict) -> list[dict]:
     return out
 
 
-def refresh_candidates(client, facility_id: str, incident_id: str) -> list[dict]:
-    """Recompute and persist the candidate snapshot (spec: the ranking the manager saw)."""
-    # SQL: select * from sl_incidents
-    #      where facility_id = :facility_id and id = :incident_id
-    rows = (client.table("sl_incidents").select("*")
-            .eq("facility_id", facility_id).eq("id", incident_id).execute().data)
-    if not rows:
-        raise ValueError("incident not found")
-    ranked = build_candidates(client, facility_id, rows[0])
-
+def _persist_candidate_snapshot(
+    client,
+    facility_id: str,
+    incident_id: str,
+    ranked: list[dict],
+) -> None:
+    """Replace one incident's explainable candidate snapshot as a unit."""
     # Delete-then-insert rather than upsert: the ranking is a whole snapshot, and a
     # candidate who dropped out must not survive as a stale row.
     #
@@ -393,6 +780,18 @@ def refresh_candidates(client, facility_id: str, incident_id: str) -> list[dict]
             "blocked_reasons": c["blocked_reasons"], "reasons": c["reasons"],
             "future_debt_json": c["future_debt"],
         } for c in ranked]).execute()
+
+
+def refresh_candidates(client, facility_id: str, incident_id: str) -> list[dict]:
+    """Recompute and persist the candidate snapshot (spec: the ranking the manager saw)."""
+    # SQL: select * from sl_incidents
+    #      where facility_id = :facility_id and id = :incident_id
+    rows = (client.table("sl_incidents").select("*")
+            .eq("facility_id", facility_id).eq("id", incident_id).execute().data)
+    if not rows:
+        raise ValueError("incident not found")
+    ranked = build_candidates(client, facility_id, rows[0])
+    _persist_candidate_snapshot(client, facility_id, incident_id, ranked)
     return ranked
 
 
@@ -433,6 +832,276 @@ def list_candidates(client, facility_id: str, incident_id: str, *,
 
 
 # ── resolve (close the loop) ─────────────────────────────────────────────────
+def _require_profile(client, facility_id: str, profile_id: str | None) -> None:
+    if not profile_id:
+        return
+    rows = (
+        client.table("users_profile")
+        .select("id")
+        .eq("facility_id", facility_id)
+        .eq("id", profile_id)
+        .execute()
+        .data
+    )
+    if not rows:
+        raise ValueError("resolving profile does not belong to this facility")
+
+
+def _require_active_staff(
+    client,
+    facility_id: str,
+    staff_id: str,
+) -> dict:
+    rows = (
+        client.table("staff")
+        .select("*")
+        .eq("facility_id", facility_id)
+        .eq("id", staff_id)
+        .eq("status", "active")
+        .execute()
+        .data
+    )
+    if not rows:
+        raise ValueError("staff member does not belong to this facility")
+    return rows[0]
+
+
+def _resolve_recovery_plan(
+    client,
+    facility_id: str,
+    shift: dict,
+    staff: dict,
+) -> tuple[dict, dict, _NightPolicy, list[_RecoveryTarget]]:
+    period, version_id = _shift_roster_context(
+        client,
+        facility_id,
+        shift,
+    )
+    periods = _periods(client, facility_id)
+    due_period = _next_period(periods, period)
+    if not due_period:
+        raise ValueError(
+            "create the next roster period before resolving cover; "
+            "compensation debt must have a bounded due period"
+        )
+
+    policy = _night_policy(client, facility_id, period)
+    is_night = (
+        str(shift.get("shift_type") or "").upper() in policy.night_types
+    )
+    if (
+        is_night
+        and str(staff.get("rank") or "").upper() in policy.cooldown_ranks
+    ):
+        cooldown = (
+            client.table("future_debt_ledger")
+            .select("*")
+            .eq("facility_id", facility_id)
+            .eq("staff_id", staff["id"])
+            .eq("debt_type", "NIGHT_COOLDOWN")
+            .eq("status", "open")
+            .execute()
+            .data
+        )
+        active = [
+            row for row in cooldown
+            if (
+                not row.get("due_period_id")
+                or row.get("due_period_id") == period["id"]
+            )
+        ]
+        if active:
+            raise ValueError(
+                "replacement is in the mandatory next-period nurse night cooldown"
+            )
+
+    targets: list[_RecoveryTarget] = []
+    if (
+        is_night
+        and staff.get("employment_type") in policy.chain_employment_types
+    ):
+        targets, setup_issues = _recovery_targets(
+            client,
+            facility_id,
+            shift,
+            period,
+            version_id,
+            policy,
+            periods,
+        )
+        assigned = _target_assignments(client, facility_id, targets)
+        from .leave import approved_leave_dates
+        shift_day = as_date(shift["date"])
+        on_leave = approved_leave_dates(
+            client,
+            facility_id,
+            shift_day + timedelta(days=1),
+            shift_day + timedelta(days=2),
+        )
+        issues = _recovery_issues(
+            staff,
+            targets,
+            setup_issues,
+            assigned,
+            on_leave,
+        )
+        if issues:
+            raise ValueError(
+                "replacement cannot satisfy mandatory night recovery: "
+                + "; ".join(issues)
+            )
+    return period, due_period, policy, targets
+
+
+def _materialize_night_recovery(
+    client,
+    facility_id: str,
+    shift: dict,
+    staff: dict,
+    targets: list[_RecoveryTarget],
+    *,
+    incident_id: str | None = None,
+) -> list[dict]:
+    """Persist configured sleeping-day/day-off cells after emergency night cover."""
+    assigned = _target_assignments(client, facility_id, targets)
+    created: list[dict] = []
+    for target in targets:
+        existing = assigned.get((staff["id"], target.day), [])
+        conflicting = [
+            row for row in existing
+            if str(row.get("shift_type") or "").upper() != target.code
+        ]
+        if conflicting:
+            raise ValueError(
+                f"mandatory {target.code} recovery on {target.day} "
+                "became unavailable"
+            )
+        if existing:
+            continue
+        definition = target.definition
+        recovery_shift = (
+            client.table("shifts")
+            .insert({
+                "facility_id": facility_id,
+                "roster_version_id": target.version_id,
+                "date": target.day.isoformat(),
+                "shift_type": target.code,
+                "start_time": definition.get("start_time"),
+                "end_time": definition.get("end_time"),
+                "cross_midnight": bool(definition.get("cross_midnight")),
+                "unit_id": shift.get("unit_id"),
+                "required_rank": None,
+                "required_count": 1,
+                "is_working": False,
+                "segments": definition.get("segments"),
+                "paid_minutes": int(definition.get("paid_minutes") or 0),
+            })
+            .execute()
+            .data[0]
+        )
+        assignment_payload = {
+            "facility_id": facility_id,
+            "shift_id": recovery_shift["id"],
+            "staff_id": staff["id"],
+            "role": staff.get("rank"),
+            "status": "assigned",
+            "is_agency": False,
+        }
+        if incident_id:
+            assignment_payload.update({
+                "source_incident_id": incident_id,
+                "incident_assignment_kind": "recovery",
+            })
+        assignment = (
+            client.table("shift_assignments")
+            .insert(assignment_payload)
+            .execute()
+            .data[0]
+        )
+        created.append({
+            "date": target.day.isoformat(),
+            "shift_type": target.code,
+            "shift_id": recovery_shift["id"],
+            "shift_assignment_id": assignment["id"],
+        })
+    return created
+
+
+def _record_cover_debts(
+    client,
+    facility_id: str,
+    incident_id: str,
+    shift: dict,
+    staff: dict,
+    due_period: dict,
+    policy: _NightPolicy,
+    debt_hours: float,
+) -> list[dict]:
+    shift_type = str(shift.get("shift_type") or "").upper()
+    due_details = {
+        "due_period_start": iso(due_period["period_start"]),
+        "due_period_end": iso(due_period["period_end"]),
+        "shift_type": shift_type,
+    }
+
+    def insert(
+        debt_type: str,
+        quantity: float,
+        unit: str,
+        note: str,
+        details: dict,
+    ) -> dict:
+        return (
+            client.table("future_debt_ledger")
+            .insert({
+                "facility_id": facility_id,
+                "staff_id": staff["id"],
+                "debt_type": debt_type,
+                "quantity": quantity,
+                "unit": unit,
+                "due_period_id": due_period["id"],
+                "source_incident_id": incident_id,
+                "source_shift_id": shift["id"],
+                "status": "open",
+                "note": note,
+                "details_json": {**due_details, **details},
+                "resolution_key": f"{incident_id}:{debt_type}",
+            })
+            .execute()
+            .data[0]
+        )
+
+    debts = [insert(
+        "TOIL",
+        debt_hours,
+        "hours",
+        "emergency cover - compensate next cycle",
+        {"policy": "emergency_cover_toil"},
+    )]
+    if shift_type not in policy.night_types:
+        return debts
+
+    debts.append(insert(
+        "OT",
+        1,
+        "hours",
+        f"standalone {shift_type} cover - mandatory +1 hour overtime",
+        {"policy": "phase5_long_night"},
+    ))
+    if str(staff.get("rank") or "").upper() in policy.cooldown_ranks:
+        debts.append(insert(
+            "NIGHT_COOLDOWN",
+            1,
+            "period",
+            "nurse night cover - block night duty next period",
+            {
+                "rank": str(staff.get("rank") or "").upper(),
+                "policy": "phase5_nurse_cooldown",
+            },
+        ))
+    return debts
+
+
 def resolve_incident(client, facility_id: str, incident_id: str, *,
                      replacement_staff_id: str, profile_id: str | None = None,
                      auto: bool = True, note: str | None = None) -> dict:
@@ -448,29 +1117,65 @@ def resolve_incident(client, facility_id: str, incident_id: str, *,
     if incident["replacement_status"] == "resolved":
         raise ValueError("incident is already resolved")
 
-    candidates = {c["candidate_staff_id"]: c for c in
-                  list_candidates(client, facility_id, incident_id, compliance_checked=False,
-                                  limit=1000)}
+    _require_profile(client, facility_id, profile_id)
+    candidates = {
+        candidate["candidate_staff_id"]: candidate
+        for candidate in build_candidates(client, facility_id, incident)
+    }
     chosen = candidates.get(replacement_staff_id)
-    if chosen and not chosen["compliance_ok"]:
-        raise ValueError("replacement fails the compliance check: "
-                         + "; ".join(chosen["blocked_reasons"]))
+    if not chosen:
+        raise ValueError("replacement must be one of the current candidate IDs")
+    if not chosen["compliance_ok"]:
+        raise ValueError(
+            "replacement fails the compliance check: "
+            + "; ".join(chosen["blocked_reasons"])
+        )
+    replacement = _require_active_staff(
+        client,
+        facility_id,
+        replacement_staff_id,
+    )
 
+    if incident.get("facility_id") not in (None, facility_id):
+        raise ValueError("incident does not belong to this facility")
     shift_id = incident.get("shift_id")
-    debt_hours = 0.0
+    if not shift_id:
+        raise ValueError("incident has no roster shift to cover")
+    shift_rows = (
+        client.table("shifts")
+        .select("*")
+        .eq("facility_id", facility_id)
+        .eq("id", shift_id)
+        .execute()
+        .data
+    )
+    if not shift_rows:
+        raise ValueError("incident shift does not belong to this facility")
+    shift = shift_rows[0]
+    _, due_period, policy, recovery_targets = _resolve_recovery_plan(
+        client,
+        facility_id,
+        shift,
+        replacement,
+    )
+    debt_hours = round(shift_minutes(shift) / 60, 2)
+    absent_assignments = (
+        client.table("shift_assignments")
+        .select("*")
+        .eq("facility_id", facility_id)
+        .eq("shift_id", shift_id)
+        .eq("staff_id", incident["staff_id"])
+        .execute()
+        .data
+    )
+    if not any(
+        row.get("status") != "cancelled" for row in absent_assignments
+    ):
+        raise ValueError("absent staff no longer owns the incident shift")
+
     if shift_id:
-        # SQL: select * from shifts where id = :shift_id
-        shift = client.table("shifts").select("*").eq("id", shift_id).execute().data[0]
-        debt_hours = round(shift_minutes(shift) / 60, 2)
-        # Keep the absent person's row for audit; add the cover as a new assignment.
-        #
-        # SQL: update shift_assignments set status = 'cancelled'
-        #      where facility_id = :facility_id and shift_id = :shift_id
-        #        and staff_id = :absent_staff_id
-        #      returning *
-        (client.table("shift_assignments").update({"status": "cancelled"})
-         .eq("facility_id", facility_id).eq("shift_id", shift_id)
-         .eq("staff_id", incident["staff_id"]).execute())
+        # Keep the absent person's row for audit and add cover before cancelling
+        # it, so a failed intermediate write cannot create an uncovered shift.
         # SQL: insert into shift_assignments
         #        (facility_id, shift_id, staff_id, role, status, is_agency)
         #      values (:facility_id, :shift_id, :replacement_staff_id,
@@ -481,9 +1186,8 @@ def resolve_incident(client, facility_id: str, incident_id: str, *,
             "staff_id": replacement_staff_id, "role": shift.get("required_rank"),
             "status": "assigned", "is_agency": False,
         }).execute().data[0]
-        # These three writes are separate statements, not one transaction — PostgREST
-        # has no multi-statement transaction, so a failure between them leaves the
-        # cancel applied without its override-log entry.
+        # PostgREST exposes these as separate statements. All reads and policy
+        # checks have completed before this deliberately coverage-safe sequence.
         #
         # SQL: insert into manual_override_log
         #        (facility_id, roster_version_id, shift_assignment_id, action,
@@ -500,6 +1204,33 @@ def resolve_incident(client, facility_id: str, incident_id: str, *,
             "changed_by": profile_id,
             "reason": f'emergency cover for {incident["incident_type"]} incident',
         }).execute()
+        recovery = _materialize_night_recovery(
+            client,
+            facility_id,
+            shift,
+            replacement,
+            recovery_targets,
+        )
+        debts = _record_cover_debts(
+            client,
+            facility_id,
+            incident_id,
+            shift,
+            replacement,
+            due_period,
+            policy,
+            debt_hours,
+        )
+        # Cancel last: if a preceding PostgREST write fails, the original staff
+        # member remains assigned and the roster never acquires an uncovered gap.
+        (
+            client.table("shift_assignments")
+            .update({"status": "cancelled"})
+            .eq("facility_id", facility_id)
+            .eq("shift_id", shift_id)
+            .eq("staff_id", incident["staff_id"])
+            .execute()
+        )
 
     reported = datetime.fromisoformat(str(incident["reported_at"]).replace("Z", "+00:00"))
     minutes = max(0, round((datetime.now(timezone.utc) - reported).total_seconds() / 60))
@@ -517,29 +1248,18 @@ def resolve_incident(client, facility_id: str, incident_id: str, *,
         "resolution_minutes": minutes, "auto_resolved": auto, "notes": note,
     }).eq("facility_id", facility_id).eq("id", incident_id).execute().data[0])
 
-    debt = None
-    if debt_hours:
-        period = resolve_period(client, facility_id, None)
-        # SQL: insert into future_debt_ledger
-        #        (facility_id, staff_id, debt_type, quantity, unit, due_period_id,
-        #         source_incident_id, status, note)
-        #      values (:facility_id, :replacement_staff_id, 'TOIL', :debt_hours, 'hours',
-        #              :period_id, :incident_id, 'open', :note)
-        #      returning *
-        debt = client.table("future_debt_ledger").insert({
-            "facility_id": facility_id, "staff_id": replacement_staff_id,
-            "debt_type": "TOIL", "quantity": debt_hours, "unit": "hours",
-            "due_period_id": period["id"] if period else None,
-            "source_incident_id": incident_id, "status": "open",
-            "note": "emergency cover — compensate next cycle",
-        }).execute().data[0]
-
     notify.push(client, facility_id, staff_id=replacement_staff_id,
                 event_type="cover_assigned", title="You have been assigned emergency cover",
                 body=f'+{debt_hours}h TOIL recorded' if debt_hours else None,
                 related_type="sl_incident", related_id=incident_id)
 
-    return {"incident": updated, "future_debt": debt, "resolution_minutes": minutes}
+    return {
+        "incident": updated,
+        "future_debt": debts[0] if debts else None,
+        "future_debts": debts,
+        "night_recovery": recovery,
+        "resolution_minutes": minutes,
+    }
 
 
 def list_future_debt(client, facility_id: str, *, staff_id: str | None = None,
@@ -576,7 +1296,7 @@ def active_alerts(client, facility_id: str) -> list[dict]:
         alerts.append({
             "id": f'incident:{inc["id"]}',
             "kind": "cover", "urgent": True,
-            "title": f'{inc["incident_type"]} — cover required',
+            "title": f'{inc["incident_type"]} - cover required',
             "detail": (f'{inc["name_en"] or inc["name"]} ({inc["rank"]}) · '
                        f'{inc["shift_type"] or "shift"} {inc["shift_window"] or ""}').strip(),
             "unit_name": inc["unit_name"], "date": inc["date"],
@@ -618,7 +1338,7 @@ def active_alerts(client, facility_id: str) -> list[dict]:
                 alerts.append({
                     "id": f'ratio:{r.label}',
                     "kind": "ratio", "urgent": True,
-                    "title": f'Staffing ratio below minimum — {r.label}',
+                    "title": f'Staffing ratio below minimum - {r.label}',
                     "detail": f'{r.actual} on duty, {r.required} required '
                               f'for {r.residents} residents',
                     "unit_name": None, "date": today.isoformat(),
@@ -647,8 +1367,8 @@ def _hour_overruns(client, facility_id: str, period: dict | None) -> list[dict]:
     by_id = {s["id"]: s for s in shifts}
     # SQL: select shift_id, staff_id, status from shift_assignments
     #      where shift_id = any(:shift_ids)
-    assigns = (client.table("shift_assignments").select("shift_id,staff_id,status")
-               .in_("shift_id", list(by_id)).execute().data)
+    assigns = assignments_for_shifts(client, by_id,
+                                     select="shift_id,staff_id,status")
     booked: dict[str, int] = {}
     for a in assigns:
         if not a.get("staff_id") or a.get("status") == "cancelled":
@@ -674,7 +1394,7 @@ def _hour_overruns(client, facility_id: str, period: dict | None) -> list[dict]:
         out.append({
             "id": f"hours:{sid}",
             "kind": "hours", "urgent": True,
-            "title": f'Hours over contract — {st.get("name_en") or st.get("name")}',
+            "title": f'Hours over contract - {st.get("name_en") or st.get("name")}',
             "detail": f'{round(minutes / 60)}h rostered vs {round(cap / 60)}h maximum '
                       f'this period',
             "unit_name": (st.get("unit") or {}).get("name"),

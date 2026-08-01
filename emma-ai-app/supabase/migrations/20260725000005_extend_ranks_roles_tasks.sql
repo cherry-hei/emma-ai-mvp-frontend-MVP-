@@ -2,7 +2,7 @@
 -- Emma AI · extend ranks + roles, add facility-configurable task codes
 -- Client feedback (Phase 1.1 RBAC + task-code configurability):
 --   • staff_rank enum was missing SW / PT / OT (therapists + social worker).
---   • users_profile.role CHECK admitted only superintendent/admin/staff — add
+--   • users_profile.role CHECK admitted only superintendent/admin/staff - add
 --     scheduler / hr / auditor.
 --   • task codes must live in the DB per facility, not be hardcoded → task_definitions.
 --

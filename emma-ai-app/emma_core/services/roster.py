@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 
 from ..constants import AssignmentStatus, OverrideAction, PublishEvent, RosterStatus
 from ..models import RosterCell, RosterGrid, RosterRow, ShiftDef, StaffLite
+from ._common import assignments_for_shifts
 
 
 def _now() -> str:
@@ -70,9 +71,7 @@ def get_roster_grid(client, facility_id: str, period_id: str | None = None, *,
 
     assigns = []
     if shift_ids:
-        # SQL: select * from shift_assignments where shift_id = any(:shift_ids)
-        assigns = (client.table("shift_assignments").select("*")
-                   .in_("shift_id", shift_ids).execute().data)
+        assigns = assignments_for_shifts(client, shift_ids)
 
     # SQL: select s.*, jsonb_build_object('name', u.name) as unit
     #      from staff s
@@ -218,9 +217,8 @@ def set_cell(client, *, facility_id, roster_version_id, staff_id, date, shift_ty
     if existing_shift_ids:
         # SQL: select * from shift_assignments
         #      where shift_id = any(:existing_shift_ids) and staff_id = :staff_id
-        found = (client.table("shift_assignments").select("*")
-                 .in_("shift_id", existing_shift_ids).eq("staff_id", staff_id)
-                 .execute().data)
+        found = assignments_for_shifts(client, existing_shift_ids,
+                                       staff_id=staff_id)
         old = found[0] if found else None
         for a in found:  # clear any prior cell for this staff/day
             # SQL: delete from shift_assignments where id = :assignment_id
@@ -286,8 +284,7 @@ def clear_cell(client, *, facility_id, roster_version_id, staff_id, date, change
         return
     # SQL: select * from shift_assignments
     #      where shift_id = any(:shift_ids) and staff_id = :staff_id
-    found = (client.table("shift_assignments").select("*")
-             .in_("shift_id", ids).eq("staff_id", staff_id).execute().data)
+    found = assignments_for_shifts(client, ids, staff_id=staff_id)
     for a in found:
         # SQL: delete from shift_assignments where id = :assignment_id
         client.table("shift_assignments").delete().eq("id", a["id"]).execute()
@@ -307,13 +304,72 @@ def clear_cell(client, *, facility_id, roster_version_id, staff_id, date, change
 
 # ── publish workflow ────────────────────────────────────────────────────────
 def publish_version(client, *, facility_id, roster_version_id, created_by=None):
-    # SQL: update roster_versions
-    #      set status = 'published', published_at = now()
-    #      where id = :roster_version_id
-    #      returning *
-    (client.table("roster_versions")
-     .update({"status": RosterStatus.PUBLISHED, "published_at": _now()})
-     .eq("id", roster_version_id).execute())
+    """Make one validated version operative for its period.
+
+    Production clients use the database function so archiving the old
+    operative version, publishing the target and writing its audit event are
+    one transaction. The small fallback keeps in-memory/offline adapters useful
+    while preserving the same single-operative semantics.
+    """
+    rpc = getattr(client, "rpc", None)
+    if callable(rpc):
+        result = rpc(
+            "publish_roster_version",
+            {
+                "p_facility_id": facility_id,
+                "p_roster_version_id": roster_version_id,
+                "p_created_by": created_by,
+            },
+        ).execute()
+        rows = result.data or []
+        if isinstance(rows, dict):
+            return rows
+        if not rows:
+            raise ValueError("roster version not found")
+        return rows[0]
+
+    # Offline adapter fallback. The production RPC above is atomic; here the
+    # explicit facility/period predicates still prevent cross-tenant updates.
+    target_rows = (
+        client.table("roster_versions")
+        .select("*")
+        .eq("id", roster_version_id)
+        .eq("facility_id", facility_id)
+        .limit(1)
+        .execute()
+        .data
+    )
+    if not target_rows:
+        raise ValueError("roster version not found")
+    target = target_rows[0]
+    period_id = target.get("period_id")
+    if not period_id:
+        raise ValueError("a roster period is required for publication")
+    prior = (
+        client.table("roster_versions")
+        .update({"status": RosterStatus.ARCHIVED})
+        .eq("facility_id", facility_id)
+        .eq("period_id", period_id)
+        .eq("status", RosterStatus.PUBLISHED)
+        .execute()
+        .data
+    )
+    _ = prior  # returned rows are useful to richer adapters, but not required here
+    published_at = _now()
+    updated = (
+        client.table("roster_versions")
+        .update({
+            "status": RosterStatus.PUBLISHED,
+            "published_at": published_at,
+        })
+        .eq("id", roster_version_id)
+        .eq("facility_id", facility_id)
+        .eq("period_id", period_id)
+        .execute()
+        .data
+    )
+    if not updated:
+        raise ValueError("roster version not found")
     # SQL: insert into roster_publish_events
     #        (facility_id, roster_version_id, event_type, created_by)
     #      values (:facility_id, :roster_version_id, 'publish', :created_by)
@@ -322,6 +378,7 @@ def publish_version(client, *, facility_id, roster_version_id, created_by=None):
         "facility_id": facility_id, "roster_version_id": roster_version_id,
         "event_type": PublishEvent.PUBLISH, "created_by": created_by,
     }).execute()
+    return updated[0]
 
 
 def save_draft(client, *, facility_id, roster_version_id, created_by=None):

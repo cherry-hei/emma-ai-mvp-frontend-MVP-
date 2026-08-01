@@ -4,7 +4,7 @@
 #
 # The frontend is a separate Next.js app (repo `main`); this container serves
 # ONLY the JSON API. The ECS Express Mode load balancer terminates HTTPS and
-# forwards to the container port — no reverse proxy or static-file serving is
+# forwards to the container port - no reverse proxy or static-file serving is
 # needed, so there is no Caddy here.
 #
 # Config comes from environment variables (ECS task definition):
@@ -23,7 +23,7 @@ ENV PYTHONUNBUFFERED=1 \
 WORKDIR /app
 
 # ── Python deps (separate layer so code changes don't re-install everything).
-#    ortools / psycopg[binary] / supabase ship manylinux wheels — no apt build
+#    ortools / psycopg[binary] / supabase ship manylinux wheels - no apt build
 #    toolchain required on the slim image. ──
 COPY emma-ai-app/requirements.txt ./requirements.txt
 RUN pip install -r requirements.txt

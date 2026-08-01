@@ -1,0 +1,60 @@
+code,category,name_en,name_zh,window,needs_location,notes
+#,duty,Duty supervisor,當值主管,,false,"Per-shift responsibility marker, not a role. Grants no extra approval rights. Per-person quota per cycle."
+(#),duty,Acting duty supervisor,暫代當值/接更,,false,Deputises or takes over the duty-supervisor marker mid-cycle.
+^,medication,Dispense medication,給葯,,false,Nursing/HW only.
+*,medication,Assist medication round,協助給藥,"07:30,12:00,17:00,20:30",false,"Four rounds. Assigned to a second person when only one nurse is on A7."
+e,care,Laundry and ointment,洗衣+搽葯,,false,The E position. Cannot be scheduled the day after A230.
+清,housekeeping,Clean dormitory area,清潔宿舍範圍,,false,
+洗,housekeeping,Clean toilets,洗廁所,,false,"Morning: male toilets. Afternoon: female and staff toilets. Rooms 1-15."
+約,records,Restraint records,約束紀錄,,false,"Also written © . Two-hourly check and signature. A7 清 covers 07:00-15:00, A1030 約 covers 10:00-18:30, P2 心 covers 15:00-21:00."
+心,care,Dining hall supervision,飯堂當值,,false,P-shift position. Paired with restraint records and ground-floor toilet cleaning.
+肌,therapy,Muscle exercise,肌能運動,,false,"Times vary by roster day (am/pm, 14:00-15:00, 10:00-15:00). P2*9肌 pairs it with the 21:00 medication round."
+廚,kitchen,Kitchen duty,廚房工作,13:30-21:30,false,"Shift code A130. Assigned every Sunday and whenever fewer than 2 cooks work. Cannot fall on consecutive days with A230e."
+餐,care,Meal care,照顧用膳,,false,
+飯,housekeeping,Clean dining hall,清潔飯堂,21:00-22:00,false,
+巡,safety,Environment safety patrol,環境安全巡查,10:00-11:00,false,Also written as an AM patrol without fixed hours.
+天,housekeeping,Clear sky-net rubbish,清天網垃圾,10:00-11:00,false,
+辦,admin,Office duty,辦公室當值,,false,
+bp,clinical,Blood pressure round,量血壓,,false,PM round.
+f,escort,Medical follow-up escort,覆診/就診,,true,"Carries a location code from naac_escort_locations.csv. The location is per assignment, not per definition (Cherry, 31 Jul)."
+陪,escort,Escort attendant,陪診員,,true,
+vo,visit,Visiting doctor,到訪醫生服務,,false,
+vp,visit,Visiting doctor (named),到訪醫生服務（指定）,,false,"Roster writes the doctor's name after the code, e.g. vp = 2p 張醫生."
+家,escort,Family takes resident to appointment,家人帶診,,true,No staff escort required; recorded so the appointment is not double-staffed.
+os,visit,Occupational therapy visiting service,OT到訪服務,,false,
+pt,visit,Physiotherapy visiting service,PT到訪服務,,false,
+st,visit,Speech therapy visiting service,ST到訪服務,,false,
+cp,visit,Clinical psychology visiting service,CP到訪服務,,false,
+sv,social_work,Outreach visit,探路,,false,
+hv,social_work,Home visit,家訪,,false,
+ip,social_work,Individual training,個別訓練,,false,
+cc,social_work,Case conference,個案會議,,false,
+app,social_work,Assessment,評估,,false,
+sup,social_work,Supervision,督導,,false,
+m,social_work,Meeting,會議,,false,
+in,social_work,Case intake,接案,,false,
+nt,therapy,Narrative therapy,叙事治療,09:00-14:00,false,
+z,training,Training activity,培訓活動,,false,
+z1,training,Supervisor course (full day),主管課程（全日）,,false,
+執,activity,Tidy resident room,執房,13:00-14:30,false,"Parametric: 執1 … 執15 name the room. 執6 also appears at 15:00-16:00."
+d,activity,Room activity,房間活動,,false,"Parametric: d1, d5, d6, d14 name the room. dn/dx = joint-room activity (聯房活動)."
+電,activity,Voice/video call,語音/視像致電,19:15-00:00,false,
+零,activity,Snack distribution,派零食,20:15-00:00,false,
+刷,activity,Assist tooth brushing,協助刷牙,20:30-00:00,false,
+手,activity,Handicraft class,手工班,19:15-20:15,false,
+繪,activity,Painting class,繪畫班,19:00-20:00,false,
+煮,activity,Cooking class,煮食班,19:00-20:00,false,
+茗,activity,Tea appreciation class,茗茶班,19:00-20:00,false,
+Q,activity,High-fibre tea session,高纖茶座,19:00-20:00,false,
+銀,activity,Silver walk,銀色散步,08:00-10:00,false,
+散,activity,Outdoor walk,外出散步,19:15-20:30,false,
+音,activity,Room music,房間音樂,18:15-19:00,false,
+舍,activity,Residents' meeting,舍友大會,19:30-20:30,false,
+@,activity,Birthday greeting / outing,生日祝福／外出活動,,false,"Overloaded in the source legend: 19:00-20:00 birthday greeting on some weeks, outdoor activity on others. Disambiguated per roster week, not globally."
+%,activity,In-hostel activity,宿舍內活動,,false,Also used for 回歸活動.
+站,activity,Station outing,站外出,09:30-12:00,false,Also 09:30-16:00 on longer weeks.
+假,activity,Holiday outing,假日活動,10:00-14:00,false,"Yum cha or karaoke depending on the week. Every Sunday morning one WA escorts the outdoor holiday activity."
+海,activity,Ocean Park outing,海洋公園,09:00-17:00,false,
+參,activity,External visit to TAH,參觀,,false,
+頌,activity,Praise-parents session,頌親恩,,false,
+飲,activity,Prepare drinks,沖飲品,,false,"09:30 or 11:00 depending on the week."

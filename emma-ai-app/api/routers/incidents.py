@@ -1,4 +1,4 @@
-"""/sl-incidents, /replacement-candidates, /alerts, /future-debt — the Alert
+"""/sl-incidents, /replacement-candidates, /alerts, /future-debt - the Alert
 centre and emergency-cover loop (spec 4.3 / 4.5 / 3.8)."""
 from __future__ import annotations
 

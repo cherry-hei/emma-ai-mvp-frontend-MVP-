@@ -1,4 +1,4 @@
-"""/me/* — the staff mobile app (spec 4.1).
+"""/me/* - the staff mobile app (spec 4.1).
 
 Every route resolves the staff record from the caller's own profile, so there is
 no path where a staff token reads another person's roster, tasks or attendance.
@@ -10,7 +10,12 @@ from datetime import date as Date
 from fastapi import APIRouter, Depends, Query
 
 from api.deps import AuthCtx, api_error, get_ctx
-from emma_core.models import ClockRequest, TaskStatusRequest
+from emma_core.models import (
+    ClockRequest,
+    PushSubscriptionRequest,
+    TaskExceptionRequest,
+    TaskStatusRequest,
+)
 from emma_core.services import attendance as att
 from emma_core.services import me as svc
 from emma_core.services import notifications as notify
@@ -56,6 +61,34 @@ def set_task_status(task_assignment_id: str, body: TaskStatusRequest,
                     ctx: AuthCtx = Depends(get_ctx)):
     return task_svc.set_status(ctx.client, ctx.facility_id, task_assignment_id,
                                status=body.status, staff_id=_staff_id(ctx))
+
+
+@router.post("/me/tasks/{task_assignment_id}/exception", status_code=201)
+def report_task_exception(task_assignment_id: str, body: TaskExceptionRequest,
+                          ctx: AuthCtx = Depends(get_ctx)):
+    """"I could not do this, and here is why" (spec SA.3).
+
+    Separate from the PATCH above because it is a different act: a status change
+    says what the task is now, an exception says what happened. Only the second
+    one is evidence.
+    """
+    return task_svc.report_exception(
+        ctx.client, ctx.facility_id, task_assignment_id,
+        reason_code=body.reason_code, note=body.note, staff_id=_staff_id(ctx),
+    )
+
+
+@router.post("/me/push-subscriptions", status_code=201)
+def register_push_device(body: PushSubscriptionRequest,
+                         ctx: AuthCtx = Depends(get_ctx)):
+    """Register this device for push (spec SA.4). Re-registering the same token
+    refreshes the row rather than adding a second one, so a reinstalled app does
+    not double every notification."""
+    return notify.register_device(
+        ctx.client, ctx.facility_id, token=body.token, platform=body.platform,
+        user_agent=body.user_agent, staff_id=_staff_id(ctx),
+        profile_id=ctx.profile_id,
+    )
 
 
 @router.get("/me/attendance")

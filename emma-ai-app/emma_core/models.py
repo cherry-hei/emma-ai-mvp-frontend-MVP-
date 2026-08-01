@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from datetime import date as Date, datetime as DateTime
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from .constants import EmploymentType, JobStatus, PlanMode, Rank, Role, SolveStatus
 
@@ -109,8 +109,8 @@ class RatioResult(BaseModel):
     window_start: str
     window_end: str
     residents: int
-    required: int
-    actual: int
+    required: float
+    actual: float
     passes: bool
 
 
@@ -118,8 +118,9 @@ class RatioResult(BaseModel):
 # Request/response for POST /optimize-roster.
 class SolverLimitsModel(BaseModel):
     model_config = ConfigDict(extra="ignore")
-    max_seconds: float = 10.0
-    workers: int = 8
+    # Keep caller-controlled solver resources inside an API-safe envelope.
+    max_seconds: float = Field(default=10.0, gt=0, le=120)
+    workers: int = Field(default=8, ge=1, le=32)
     seed: int = 42
 
 
@@ -195,7 +196,7 @@ class LoginRequest(BaseModel):
 
 
 class SessionOut(BaseModel):
-    """Serializable auth session — never expose the live Supabase client."""
+    """Serializable auth session - never expose the live Supabase client."""
     access_token: str
     refresh_token: str | None = None
     token_type: str = "bearer"
@@ -314,10 +315,13 @@ class ViolationOut(BaseModel):
     model_config = ConfigDict(extra="ignore")
     rule_code: str
     shift_id: str | None = None
+    staff_id: str | None = None
     date: Date | None = None
     unit_id: str | None = None
     task_assignment_id: str | None = None
     event_id: str | None = None
+    validation_run_id: str | None = None
+    rule_definition_id: str | None = None
     severity: str = "hard"
     message: str | None = None
     details: dict = Field(default_factory=dict)
@@ -340,21 +344,47 @@ class OptionScoreOut(BaseModel):
 
 
 class ValidationOut(BaseModel):
+    model_config = ConfigDict(extra="ignore")
     roster_version_id: str
-    method: str                       # 'solver-scored' | 'ratio-check'
+    method: str
     passes: bool
     hard_violation_count: int = 0
     constraint_score: int | None = None
     violations: list[ViolationOut] = Field(default_factory=list)
     ratio_checks: list[RatioResult] = Field(default_factory=list)
+    validation_run_id: str | None = None
+    input_digest: str | None = None
+
+
+class RuleDefinitionCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    rule_code: str = Field(min_length=1)
+    name: str | None = None
+    description: str | None = None
+    severity: str = Field(default="hard", pattern="^(hard|soft)$")
+    config_json: dict = Field(default_factory=dict)
+    config_version: int = Field(default=1, ge=1)
+    effective_from: Date | None = None
+    effective_to: Date | None = None
+    active: bool = True
+
+
+class RuleDefinitionOut(RuleDefinitionCreate):
+    model_config = ConfigDict(extra="ignore")
+    id: str
+    facility_id: str | None = None
+    created_at: DateTime | None = None
+    updated_at: DateTime | None = None
 
 
 # ── Phase 3 request bodies ──────────────────────────────────────────────────
-# Phase 3 responses are dicts assembled by the services — they are aggregates of
+# Phase 3 responses are dicts assembled by the services - they are aggregates of
 # many tables that change shape as screens evolve, and pinning a response_model
 # to each one buys nothing but drift. Request bodies stay typed: those are the
 # trust boundary.
 class LeaveRequestCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     staff_id: str | None = None       # None => the caller's own staff record
     leave_type: str                   # AL|special|marriage|DO|duty_request|SL|DSL|urgent|late
     date_start: Date
@@ -364,10 +394,65 @@ class LeaveRequestCreate(BaseModel):
     requested_shift_type: str | None = None
     document_url: str | None = None
 
+    @model_validator(mode="after")
+    def validate_request_semantics(self):
+        if self.date_end < self.date_start:
+            raise ValueError("date_end must be on or after date_start")
+        positive_duty = self.leave_type in {"duty_request", "shift_swap"}
+        if positive_duty and not self.requested_shift_type:
+            raise ValueError(
+                "requested_shift_type is required for a duty request or shift swap"
+            )
+        if not positive_duty and self.requested_shift_type:
+            raise ValueError(
+                "requested_shift_type is only valid for a duty request or shift swap"
+            )
+        return self
+
 
 class LeaveDecisionRequest(BaseModel):
-    decision: str                     # approve|reject|review
+    model_config = ConfigDict(extra="forbid")
+
+    decision: str = Field(pattern="^(approve|reject|review)$")
     note: str | None = None
+    ballot_approved: bool | None = None
+
+    @model_validator(mode="after")
+    def validate_ballot_decision(self):
+        if self.ballot_approved is not None and self.decision != "approve":
+            raise ValueError("ballot_approved is only valid when approving")
+        return self
+
+
+class RecommendationRequest(BaseModel):
+    """A first-pass review by an R-grade role (spec 1.1).
+
+    `reason` is required and non-blank: the RBAC definition specifies
+    "suggest-approve/suggest-reject **with reason**", and a bare vote gives the
+    approver nothing to weigh when two reviewers disagree."""
+    model_config = ConfigDict(extra="forbid")
+
+    recommendation: str = Field(pattern="^(approve|reject)$")
+    reason: str = Field(min_length=1, max_length=2000)
+
+    @model_validator(mode="after")
+    def reason_is_not_whitespace(self):
+        if not self.reason.strip():
+            raise ValueError("reason cannot be blank")
+        return self
+
+
+class RevokeRequest(BaseModel):
+    """Withdrawing an approval already given. OWNER only."""
+    model_config = ConfigDict(extra="forbid")
+
+    reason: str = Field(min_length=1, max_length=2000)
+
+    @model_validator(mode="after")
+    def reason_is_not_whitespace(self):
+        if not self.reason.strip():
+            raise ValueError("reason cannot be blank")
+        return self
 
 
 class IncidentCreate(BaseModel):
@@ -394,12 +479,122 @@ class TaskStatusRequest(BaseModel):
     status: str                       # pending|done|skipped
 
 
+class TaskExceptionRequest(BaseModel):
+    """"Could not do this task, and here is why" (spec SA.3).
+
+    `reason_code` is a closed list so the answer to "how often is personal care
+    refused on 2/F?" is a count rather than a reading exercise. The pattern is
+    kept in step with the database check constraint by
+    `test_mvp_staff_app.py::test_exception_reasons_match_the_migration`.
+    """
+    model_config = ConfigDict(extra="forbid")
+
+    reason_code: str = Field(pattern="^(resident_refused|resident_absent|clinical_hold"
+                                     "|equipment_unavailable|insufficient_time"
+                                     "|staff_reassigned|other)$")
+    note: str | None = Field(default=None, max_length=2000)
+
+    @model_validator(mode="after")
+    def other_needs_a_note(self):
+        if self.reason_code == "other" and not (self.note or "").strip():
+            raise ValueError("a note is required when reason_code is 'other'")
+        return self
+
+
+# ── shift swap (spec SA.6) ───────────────────────────────────────────────────
+class SwapCreateRequest(BaseModel):
+    """Staff A proposes. `requester_staff_id` is never accepted from the body -
+    the caller's own staff record is used, so nobody can propose on another
+    person's behalf."""
+    model_config = ConfigDict(extra="forbid")
+
+    requester_shift_id: str
+    counterparty_staff_id: str
+    counterparty_shift_id: str
+    reason: str | None = Field(default=None, max_length=2000)
+
+
+class SwapPeerResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    accept: bool
+    note: str | None = Field(default=None, max_length=2000)
+
+
+class SwapDecisionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    decision: str = Field(pattern="^(approve|reject)$")
+    note: str | None = Field(default=None, max_length=2000)
+
+
+class PushSubscriptionRequest(BaseModel):
+    """A device registering for push (spec SA.4). Valid before FCM is
+    provisioned - delivery is the worker's problem, registration is not."""
+    model_config = ConfigDict(extra="forbid")
+
+    token: str = Field(min_length=1, max_length=4096)
+    platform: str = Field(default="web", pattern="^(web|ios|android)$")
+    user_agent: str | None = Field(default=None, max_length=500)
+
+
+# ── staff writes (spec 2.1) ──────────────────────────────────────────────────
+class StaffCreate(BaseModel):
+    """Create a staff record. `facility_id` is not accepted from the body: it
+    comes from the caller's profile, so a write can never land in another home."""
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(min_length=1, max_length=200)
+    name_en: str | None = Field(default=None, max_length=200)
+    rank: Rank
+    employment_type: EmploymentType
+    primary_unit_id: str | None = None
+    contracted_hours: float | None = Field(default=None, ge=0, le=168)
+    is_audited_for_medication: bool = False
+    is_mentor: bool = False
+    gender: str | None = Field(default=None, pattern="^(M|F)$")
+    status: str = Field(default="active", pattern="^(active|inactive)$")
+
+    @model_validator(mode="after")
+    def name_is_not_whitespace(self):
+        if not self.name.strip():
+            raise ValueError("name cannot be blank")
+        return self
+
+
+class StaffUpdate(BaseModel):
+    """Every field optional - a PATCH that omits a field leaves it alone.
+    `rank` and `employment_type` are included because both are correctable data
+    entry, and both feed the rule engine, so a wrong one has to be fixable."""
+    model_config = ConfigDict(extra="forbid")
+
+    name: str | None = Field(default=None, min_length=1, max_length=200)
+    name_en: str | None = Field(default=None, max_length=200)
+    rank: Rank | None = None
+    employment_type: EmploymentType | None = None
+    primary_unit_id: str | None = None
+    contracted_hours: float | None = Field(default=None, ge=0, le=168)
+    is_audited_for_medication: bool | None = None
+    is_mentor: bool | None = None
+    gender: str | None = Field(default=None, pattern="^(M|F)$")
+    status: str | None = Field(default=None, pattern="^(active|inactive)$")
+
+    @model_validator(mode="after")
+    def at_least_one_field(self):
+        if not self.model_dump(exclude_unset=True):
+            raise ValueError("provide at least one field to update")
+        return self
+
+
 class TaskAssignmentCreate(BaseModel):
     shift_assignment_id: str
     task_id: str
     start_at: DateTime | None = None
     end_at: DateTime | None = None
     source_type: str = "manual"
+    # Where this escort is going, on this date, for this staff member. Per
+    # assignment and not per task definition - Cherry, ClickUp 4.1, 31 Jul 2026.
+    escort_location: str | None = Field(default=None, max_length=32)
 
 
 class TaskAssignmentPatch(BaseModel):
@@ -407,6 +602,7 @@ class TaskAssignmentPatch(BaseModel):
     start_at: DateTime | None = None
     end_at: DateTime | None = None
     source_type: str | None = None
+    escort_location: str | None = Field(default=None, max_length=32)
 
 
 class TaskAssignmentOut(BaseModel):
@@ -422,6 +618,55 @@ class TaskAssignmentOut(BaseModel):
     source_type: str = "manual"
     task_status: str = "pending"
     completed_at: DateTime | None = None
+    escort_location: str | None = None
+    escort_location_id: str | None = None
+
+
+class EscortLocationOut(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    id: str
+    facility_id: str | None = None
+    code: str
+    name_en: str | None = None
+    name_zh: str | None = None
+    aliases: list[str] = Field(default_factory=list)
+    active: bool = True
+
+
+class EscortLocationRequest(BaseModel):
+    code: str = Field(min_length=1, max_length=16)
+    name_en: str | None = None
+    name_zh: str | None = None
+    aliases: list[str] | None = None
+
+
+class EscortLocationAssign(BaseModel):
+    """`null` clears the destination; the endpoint is how an escort is cancelled."""
+
+    escort_location: str | None = Field(default=None, max_length=32)
+
+
+class CertificateUpsert(BaseModel):
+    cert_type: str = Field(min_length=1, max_length=64)
+    expiry_date: Date | None = None
+    file_url: str | None = None
+    # Set to correct a certificate in place; omit to add or renew by type.
+    certificate_id: str | None = None
+
+
+class CertificateOut(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    id: str
+    staff_id: str
+    cert_type: str
+    expiry_date: Date | None = None
+    file_url: str | None = None
+    # Derived on read, never stored: a stored `days_left` is wrong by definition
+    # the morning after it is written.
+    days_left: int | None = None
+    is_expired: bool = False
+    stage: str | None = None
+    notified_stage: str | None = None
 
 
 class StaffingRequirementIn(BaseModel):
@@ -546,3 +791,55 @@ class ReportGenerateRequest(BaseModel):
     period_id: str | None = None
     date_from: Date | None = None
     date_to: Date | None = None
+
+
+class ReportRequest(BaseModel):
+    """Body of the named report endpoints, which fix the report_type themselves."""
+
+    period_id: str | None = None
+    date_from: Date | None = None
+    date_to: Date | None = None
+
+
+# ── MVP foundation request bodies (spec 1.4 / 1.5 / 1.6 / 2.2 / 2.3) ─────────
+class CalendarDayRequest(BaseModel):
+    day_date: Date
+    day_type: str = "public_holiday"       # normal|public_holiday|statutory_holiday|special_pay
+    holiday_name: str | None = None
+    is_agency_allowed: bool = True
+    agency_cost_multiplier: float = Field(default=1.0, ge=0)
+    staff_cost_multiplier: float = Field(default=1.0, ge=0)
+    notes: str | None = None
+
+
+class FacilityConfigRequest(BaseModel):
+    config_key: str = Field(min_length=1, max_length=64)
+    config_json: dict
+    description: str | None = None
+    effective_from: Date | None = None
+
+
+class ShiftSegmentIn(BaseModel):
+    start: str = Field(pattern=r"^\d{2}:\d{2}(:\d{2})?$")
+    end: str = Field(pattern=r"^\d{2}:\d{2}(:\d{2})?$")
+
+
+class ShiftDefinitionRequest(BaseModel):
+    """A duty code. `segments` carries a split shift's two windows (A/N, A+P)."""
+
+    shift_type: str = Field(min_length=1, max_length=16)
+    label: str | None = None
+    start_time: str | None = Field(default=None, pattern=r"^\d{2}:\d{2}(:\d{2})?$")
+    end_time: str | None = Field(default=None, pattern=r"^\d{2}:\d{2}(:\d{2})?$")
+    segments: list[ShiftSegmentIn] | None = None
+    is_working: bool = True
+    weighting_factor: float = Field(default=1.0, ge=0)
+    paid_minutes: int | None = Field(default=None, ge=0)
+    source_note: str | None = None
+
+
+class EvidenceStatusRequest(BaseModel):
+    status: str                            # pending|pass|fail|not_applicable
+    sample_output: str | None = None
+    notes: str | None = None
+    checked_on: Date | None = None

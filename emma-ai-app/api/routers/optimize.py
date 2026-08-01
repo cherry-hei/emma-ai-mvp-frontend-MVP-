@@ -21,11 +21,11 @@ from emma_core.models import (
     ViolationOut,
 )
 from emma_core.services import optimize as opt
-from emma_core.services import scheduling as scheduling_svc
-from emma_core.services.compliance import compute_ratios
-from emma_core.services.roster import get_roster_grid
+from emma_core.services import validation as validation_svc
 
 router = APIRouter(tags=["optimize"])
+VALIDATION_WRITE_ROLES = {"superintendent", "admin", "scheduler"}
+OPTIMIZE_WRITE_ROLES = {"superintendent", "admin", "scheduler"}
 
 
 class ValidateRequest(BaseModel):
@@ -59,21 +59,36 @@ def _to_option_score_out(row: dict, *, with_violations: bool = True) -> OptionSc
 # ── generate (async) + poll ──────────────────────────────────────────────────
 def _authorize_optimize(req: OptimizeRequest, ctx: AuthCtx) -> None:
     """Stamp the tenant from the token and authorize caller-supplied ids under RLS
-    before the service-role solver touches them — else a foreign source_version_id
+    before the service-role solver touches them - else a foreign source_version_id
     would leak another facility's roster."""
+    if str(ctx.profile.role) not in OPTIMIZE_WRITE_ROLES:
+        raise api_error(
+            403,
+            "forbidden",
+            "Only a superintendent, admin or scheduler may optimize a roster.",
+        )
     req.facility_id = ctx.facility_id
-    if req.created_by is None:
-        req.created_by = ctx.profile_id
-    # Both probes run on ctx.client (RLS), so a foreign id comes back as zero rows —
+    # Identity is always server-derived. A client-supplied UUID must never be
+    # trusted as the author of generated versions or audit rows.
+    req.created_by = ctx.profile_id
+    # Both probes run on ctx.client (RLS), so a foreign id comes back as zero rows -
     # that empty result IS the authorization check, not just a existence check.
     #
     # SQL: select id from roster_periods where id = :period_id
-    if not ctx.client.table("roster_periods").select("id").eq("id", req.period_id).execute().data:
+    if not (
+        ctx.client.table("roster_periods").select("id")
+        .eq("id", req.period_id)
+        .eq("facility_id", ctx.facility_id)
+        .execute().data
+    ):
         raise api_error(404, "not_found", "roster period not found")
     # SQL: select id from roster_versions where id = :source_version_id
     if req.source_version_id and not (
             ctx.client.table("roster_versions").select("id")
-            .eq("id", req.source_version_id).execute().data):
+            .eq("id", req.source_version_id)
+            .eq("facility_id", ctx.facility_id)
+            .eq("period_id", req.period_id)
+            .execute().data):
         raise api_error(404, "not_found", "source roster version not found")
 
 
@@ -114,7 +129,7 @@ def optimization_job(job_id: str, ctx: AuthCtx = Depends(get_ctx)):
         uuid.UUID(job_id)
     except ValueError:
         raise api_error(404, "not_found", "optimization job not found")
-    row = opt.get_job(ctx.client, job_id)   # RLS-scoped — only own-facility jobs
+    row = opt.get_job(ctx.client, job_id)   # RLS-scoped - only own-facility jobs
     if not row:
         raise api_error(404, "not_found", "optimization job not found")
     return JobView.model_validate(row)
@@ -139,36 +154,32 @@ def option_scores(roster_version_id: str, ctx: AuthCtx = Depends(get_ctx)):
 # ── validate ──────────────────────────────────────────────────────────────────
 @router.post("/validate-roster", response_model=ValidationOut)
 def validate_roster(body: ValidateRequest, ctx: AuthCtx = Depends(get_ctx)):
-    vid = body.roster_version_id
-    phase4_rows = scheduling_svc.validate_roster_rules(
-        ctx.client, ctx.facility_id, vid, persist=True)
-    phase4 = [ViolationOut.model_validate(row) for row in phase4_rows]
-    phase4_codes = {row.rule_code for row in phase4}
-    # Solver option: return its persisted hard-constraint result.
-    score = opt.get_option_scores(ctx.client, vid)
-    if score is not None:
-        out = _to_option_score_out(score)
-        solver_violations = [
-            row for row in out.violations if row.rule_code not in phase4_codes
-        ]
-        hard_count = out.hard_violation_count + len(phase4)
-        # passes == no hard violations; the publish threshold is enforced at publish time.
-        return ValidationOut(
-            roster_version_id=vid, method="solver-scored+operational",
-            passes=(hard_count == 0), constraint_score=out.constraint_score,
-            hard_violation_count=hard_count,
-            violations=[*solver_violations, *phase4],
+    persist = str(ctx.profile.role) in VALIDATION_WRITE_ROLES
+    # Authorize the caller-supplied version with the user's RLS client before
+    # allowing the service client to persist authoritative audit evidence.
+    if not (
+        ctx.client.table("roster_versions").select("id")
+        .eq("facility_id", ctx.facility_id)
+        .eq("id", body.roster_version_id)
+        .execute().data
+    ):
+        raise api_error(404, "not_found", "roster version not found")
+    validation_client = get_service_client() if persist else ctx.client
+    try:
+        result = validation_svc.validate_roster(
+            validation_client,
+            ctx.facility_id,
+            body.roster_version_id,
+            validated_by=ctx.profile_id if persist else None,
+            persist=persist,
         )
-    # Manual roster (no solver score): live SWD ratio check across its dated shifts.
-    grid = get_roster_grid(ctx.client, ctx.facility_id, version_id=vid, version_type=None)
-    checks = []
-    for d in grid.dates:
-        checks.extend(compute_ratios(ctx.client, ctx.facility_id, d, roster_version_id=vid))
-    breaches = [c for c in checks if not c.passes]
-    return ValidationOut(
-        roster_version_id=vid, method="ratio+operational",
-        # an empty roster covers nothing — not a vacuous pass.
-        passes=bool(grid.dates) and not breaches and not phase4,
-        hard_violation_count=len(breaches) + len(phase4),
-        ratio_checks=checks, violations=phase4,
-    )
+    except ValueError as exc:
+        raise api_error(404, "not_found", str(exc)) from exc
+
+    # The deterministic run is the hard-constraint source of truth. A solver
+    # score remains useful review metadata, but never substitutes for a fresh
+    # validation after edits.
+    score = opt.get_option_scores(ctx.client, body.roster_version_id)
+    if score is not None:
+        result["constraint_score"] = int(score.get("constraint_score") or 0)
+    return ValidationOut.model_validate(result)

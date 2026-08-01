@@ -6,26 +6,42 @@ Three request categories map to the Approval page's sub-tabs:
     sick  sick, urgent, lateness       (SL, DSL, urgent, late)
 
 A `sick` request for an imminent shift is also an operational emergency, so
-creating one opens an sl_incident (spec 4.3) — that is what puts the case on the
+creating one opens an sl_incident (spec 4.3) - that is what puts the case on the
 Alert centre and into the A2 ROI count.
 """
 from __future__ import annotations
 
 from datetime import date as Date
 
+from . import audit
 from . import notifications as notify
+from . import roster_locks
+from . import validation
+from ..permissions import Feature
 from ._common import iso, month_bounds, now_iso, staff_brief, staff_by_id
 
 # leave_type -> category, so callers can post either and stay consistent.
 TYPE_CATEGORY = {
-    "AL": "al", "special": "al", "marriage": "al", "maternity": "al", "unpaid": "al",
+    "AL": "al", "PH": "al", "CL": "al", "medical_fu": "al",
+    "special": "al", "marriage": "al", "maternity": "al", "unpaid": "al",
     "DO": "duty", "duty_request": "duty", "shift_swap": "duty",
     "SL": "sick", "DSL": "sick", "urgent": "sick", "late": "sick",
 }
 INCIDENT_TYPES = {"SL", "DSL", "urgent", "late"}   # also raise an sl_incident
+NIGHT_SHIFT_TYPES = {"AN", "N", "7P"}
 
 PENDING_STATES = ("pending", "reviewed")
 DECIDED_STATES = ("approved", "rejected")
+
+
+# Which permission feature gates each category, so a submitted request reaches
+# the queue that actually owns it. The matrix grants these separately - an
+# allied-health lead reviews duty swaps but not sick notes.
+_APPROVAL_FEATURE = {
+    "al": Feature.APPROVE_LEAVE,
+    "duty": Feature.APPROVE_DUTY_DO,
+    "sick": Feature.APPROVE_SICK,
+}
 
 
 def category_for(leave_type: str) -> str:
@@ -33,6 +49,232 @@ def category_for(leave_type: str) -> str:
     if not cat:
         raise ValueError(f"unknown leave_type {leave_type!r}")
     return cat
+
+
+def _effective_leave_policy(
+    rows: list[dict],
+    facility_id: str,
+    on_date: Date,
+) -> tuple[dict, str]:
+    """Select the policy frozen at the target roster-period boundary."""
+    candidates = [
+        row for row in rows
+        if row.get("rule_code") == "leave_rules"
+        and row.get("active", True)
+        and row.get("facility_id") in (None, facility_id)
+        and (
+            not row.get("effective_from")
+            or Date.fromisoformat(iso(row["effective_from"])) <= on_date
+        )
+        and (
+            not row.get("effective_to")
+            or Date.fromisoformat(iso(row["effective_to"])) >= on_date
+        )
+    ]
+    candidates.sort(
+        key=lambda row: (
+            row.get("facility_id") == facility_id,
+            int(row.get("config_version") or 1),
+            str(row.get("effective_from") or ""),
+        ),
+        reverse=True,
+    )
+    policy = dict(validation.DEFAULT_LEAVE_POLICY)
+    if not candidates:
+        return policy, "hard"
+    policy.update(candidates[0].get("config_json") or {})
+    return policy, str(candidates[0].get("severity") or "hard")
+
+
+def _policy_context(
+    client,
+    facility_id: str,
+    *,
+    staff_id: str,
+    date_start: Date,
+    date_end: Date,
+) -> dict:
+    """Load the bounded DB evidence used by the pure Phase 5 leave rules."""
+    facilities = (
+        client.table("facilities").select("*")
+        .eq("id", facility_id).execute().data
+    )
+    if not facilities:
+        raise ValueError("facility not found")
+
+    facility_staff = (
+        client.table("staff").select("*")
+        .eq("facility_id", facility_id).execute().data
+    )
+    staff = next((row for row in facility_staff if row["id"] == staff_id), None)
+    if staff is None:
+        raise ValueError("staff member not found")
+    active_staff = [
+        row for row in facility_staff
+        if row.get("status", "active") == "active"
+    ]
+
+    month_start, _ = month_bounds(date_start)
+    _, month_end = month_bounds(date_end)
+    existing_requests = (
+        client.table("leave_requests").select("*")
+        .eq("facility_id", facility_id)
+        .lte("date_start", month_end).gte("date_end", month_start)
+        .execute().data
+    )
+    calendar_days = (
+        client.table("calendar_days").select("*")
+        .or_(f"facility_id.eq.{facility_id},facility_id.is.null")
+        .gte("date", str(month_start)).lte("date", str(month_end))
+        .execute().data
+    )
+
+    assignment_rows = (
+        client.table("shift_assignments")
+        .select(
+            "status,shift:shifts(date,shift_type,is_working,"
+            "version:roster_versions(version_type,status))"
+        )
+        .eq("facility_id", facility_id).eq("staff_id", staff_id)
+        .execute().data
+    )
+    assigned_night_shifts: dict[Date, str] = {}
+    for assignment in assignment_rows:
+        shift = assignment.get("shift") or {}
+        version = shift.get("version") or {}
+        if assignment.get("status") == "cancelled" or not shift.get("is_working"):
+            continue
+        is_operative = (
+            version.get("status") == "published"
+            or (
+                version.get("version_type") == "manual"
+                and version.get("status") == "draft"
+            )
+        )
+        if not is_operative:
+            continue
+        if (
+            shift.get("shift_type") not in NIGHT_SHIFT_TYPES
+            or not shift.get("date")
+        ):
+            continue
+        shift_date = Date.fromisoformat(iso(shift.get("date")))
+        if date_start <= shift_date <= date_end:
+            assigned_night_shifts[shift_date] = str(
+                shift.get("shift_type") or "").upper()
+
+    periods = (
+        client.table("roster_periods").select("id,period_start,period_end")
+        .eq("facility_id", facility_id)
+        .lte("period_start", str(date_end)).gte("period_end", str(date_start))
+        .execute().data
+    )
+    balances = []
+    for period in periods:
+        period_balances = (
+            client.table("leave_balances").select("*")
+            .eq("facility_id", facility_id).eq("staff_id", staff_id)
+            .eq("period_id", period["id"])
+            .execute().data
+        )
+        balances.extend({
+            **row,
+            "period_start": period["period_start"],
+            "period_end": period["period_end"],
+        } for row in period_balances)
+
+    rule_rows = (
+        client.table("rule_definitions").select("*")
+        .eq("rule_code", "leave_rules").execute().data
+    )
+    leave_policy, leave_policy_severity = _effective_leave_policy(
+        rule_rows,
+        facility_id,
+        min(
+            (
+                Date.fromisoformat(iso(period["period_start"]))
+                for period in periods
+            ),
+            default=date_start,
+        ),
+    )
+    return {
+        "facility": facilities[0],
+        "staff": staff,
+        "active_staff": active_staff,
+        "existing_requests": existing_requests,
+        "calendar_days": calendar_days,
+        "assigned_night_shifts": assigned_night_shifts,
+        "balances": balances,
+        "balance_periods": periods,
+        "leave_policy": leave_policy,
+        "leave_policy_severity": leave_policy_severity,
+    }
+
+
+def _evaluate_request_policy(
+    client,
+    facility_id: str,
+    request: dict,
+    *,
+    submitted_on: Date,
+) -> tuple[str, str, dict]:
+    start = Date.fromisoformat(iso(request["date_start"]))
+    end = Date.fromisoformat(iso(request["date_end"]))
+    context = _policy_context(
+        client,
+        facility_id,
+        staff_id=request["staff_id"],
+        date_start=start,
+        date_end=end,
+    )
+    priority, priority_reason = validation.leave_priority(
+        request["leave_type"], request.get("reason"))
+    issues = validation.leave_request_policy_issues(
+        request=request,
+        staff=context["staff"],
+        facility=context["facility"],
+        existing_requests=context["existing_requests"],
+        active_staff=context["active_staff"],
+        calendar_days=context["calendar_days"],
+        assigned_night_shifts=context["assigned_night_shifts"],
+        submitted_on=submitted_on,
+        policy=context["leave_policy"],
+        policy_severity=context["leave_policy_severity"],
+    )
+    issues.extend(validation.leave_balance_issues(
+        request=request,
+        balances=context["balances"],
+        periods=context["balance_periods"],
+    ))
+    policy_result = {
+        "passes": not any(row.get("severity") == "hard" for row in issues),
+        "issues": issues,
+        "priority_weight": validation.leave_priority_weight(
+            request["leave_type"],
+            request.get("reason"),
+        ),
+    }
+    prior_policy = request.get("policy_result_json") or {}
+    if prior_policy.get("ballot_approved"):
+        policy_result.update({
+            key: prior_policy[key]
+            for key in (
+                "ballot_approved",
+                "ballot_decided_by",
+                "ballot_decided_at",
+            )
+            if key in prior_policy
+        })
+    return priority, priority_reason, policy_result
+
+
+def _hard_issue_codes(policy_result: dict) -> list[str]:
+    return [
+        str(row.get("code") or "leave_policy")
+        for row in policy_result.get("issues") or []
+        if row.get("severity") == "hard"
+    ]
 
 
 def _row_out(row: dict, staff: dict[str, dict]) -> dict:
@@ -47,6 +289,9 @@ def _row_out(row: dict, staff: dict[str, dict]) -> dict:
         "reason": row.get("reason"),
         "remark": row.get("remark"),
         "document_url": row.get("document_url"),
+        "priority": row.get("priority", "normal"),
+        "priority_reason": row.get("priority_reason"),
+        "policy_result_json": row.get("policy_result_json") or {},
         "status": row["status"],
         "reviewed": bool(row.get("reviewed_at")),
         "decided_at": row.get("decided_at"),
@@ -69,7 +314,7 @@ def list_requests(client, facility_id: str, *, group: str | None = None,
     #        [and date_end   >= :date_from]              -- overlap, not containment
     #        [and date_start <= :date_to]
     #      order by created_at desc
-    # `search` and `unit_id` are NOT pushed down — both need the staff row, so they
+    # `search` and `unit_id` are NOT pushed down - both need the staff row, so they
     # are applied in the Python loop below against staff_by_id().
     q = client.table("leave_requests").select("*").eq("facility_id", facility_id)
     if group == "pending":
@@ -107,19 +352,49 @@ def create_request(client, facility_id: str, *, staff_id: str, leave_type: str,
                    document_url: str | None = None) -> dict:
     if date_end < date_start:
         raise ValueError("date_end is before date_start")
+    positive_duty = leave_type in {"duty_request", "shift_swap"}
+    if positive_duty and not requested_shift_type:
+        raise ValueError(
+            "requested_shift_type is required for a duty request or shift swap"
+        )
+    if not positive_duty and requested_shift_type:
+        raise ValueError(
+            "requested_shift_type is only valid for a duty request or shift swap"
+        )
     category = category_for(leave_type)
+    request = {
+        "facility_id": facility_id,
+        "staff_id": staff_id,
+        "category": category,
+        "leave_type": leave_type,
+        "date_start": str(date_start),
+        "date_end": str(date_end),
+        "requested_shift_type": requested_shift_type,
+        "reason": reason,
+        "remark": remark,
+        "document_url": document_url,
+        "status": "pending",
+    }
+    priority, priority_reason, policy_result = _evaluate_request_policy(
+        client,
+        facility_id,
+        request,
+        submitted_on=Date.today(),
+    )
     # SQL: insert into leave_requests
     #        (facility_id, staff_id, category, leave_type, date_start, date_end,
-    #         requested_shift_type, reason, remark, document_url, status)
+    #         requested_shift_type, reason, remark, document_url, status,
+    #         priority, priority_reason, policy_result_json)
     #      values (:facility_id, :staff_id, :category, :leave_type, :date_start,
     #              :date_end, :requested_shift_type, :reason, :remark,
-    #              :document_url, 'pending')
+    #              :document_url, 'pending', :priority, :priority_reason,
+    #              :policy_result_json)
     #      returning *
     row = client.table("leave_requests").insert({
-        "facility_id": facility_id, "staff_id": staff_id, "category": category,
-        "leave_type": leave_type, "date_start": str(date_start), "date_end": str(date_end),
-        "requested_shift_type": requested_shift_type, "reason": reason, "remark": remark,
-        "document_url": document_url, "status": "pending",
+        **request,
+        "priority": priority,
+        "priority_reason": priority_reason,
+        "policy_result_json": policy_result,
     }).execute().data[0]
 
     if leave_type in INCIDENT_TYPES:
@@ -128,11 +403,23 @@ def create_request(client, facility_id: str, *, staff_id: str, leave_type: str,
             client, facility_id, staff_id=staff_id, incident_type=leave_type,
             on_date=date_start, reason=reason, leave_request_id=row["id"],
         )
+
+    # Tell whoever can act on it (spec SA.1: "manager receives real-time
+    # notification"). Which feature gates the request decides who is told - a
+    # sick note and a day-off request do not go to the same queue.
+    notify.push_to_approvers(
+        client, facility_id, _APPROVAL_FEATURE[category],
+        event_type="request_submitted",
+        title=f"New {leave_type} request",
+        body=f'{iso(date_start)} – {iso(date_end)}' + (f' · {reason}' if reason else ""),
+        related_type="leave_request", related_id=row["id"],
+    )
     return row
 
 
 def decide(client, facility_id: str, request_id: str, *, decision: str,
-           profile_id: str | None, note: str | None = None) -> dict:
+           profile_id: str | None, note: str | None = None,
+           ballot_approved: bool | None = None) -> dict:
     """decision: 'approve' | 'reject' | 'review'. 'review' only flags the request as
     read by the superintendent; it stays in the pending queue."""
     # SQL: select * from leave_requests
@@ -154,17 +441,62 @@ def decide(client, facility_id: str, request_id: str, *, decision: str,
     else:
         raise ValueError(f"unknown decision {decision!r}")
 
+    if decision == "approve":
+        if ballot_approved is not None:
+            current = {
+                **current,
+                "policy_result_json": {
+                    **(current.get("policy_result_json") or {}),
+                    "ballot_approved": ballot_approved,
+                    "ballot_decided_by": profile_id,
+                    "ballot_decided_at": now_iso(),
+                },
+            }
+        submitted_on = Date.fromisoformat(
+            iso(current.get("created_at") or Date.today()))
+        priority, priority_reason, policy_result = _evaluate_request_policy(
+            client,
+            facility_id,
+            current,
+            submitted_on=submitted_on,
+        )
+        policy_patch = {
+            "priority": priority,
+            "priority_reason": priority_reason,
+            "policy_result_json": policy_result,
+        }
+        hard_codes = _hard_issue_codes(policy_result)
+        if hard_codes:
+            # Persist the current evidence while leaving the workflow state open.
+            (client.table("leave_requests").update(policy_patch)
+             .eq("facility_id", facility_id).eq("id", request_id).execute())
+            raise ValueError(
+                "leave request cannot be approved: " + ", ".join(hard_codes))
+        patch.update(policy_patch)
+
     # SQL: update leave_requests
     #      set <the keys of `patch` above>   -- 'review': status, reviewed_at
     #                                        -- approve/reject: status, reviewed_at,
-    #                                        --   decided_by, decided_at, decision_note
+    #                                        --   decided_by, decided_at, decision_note,
+    #                                        --   and current Phase 5 policy evidence
     #      where facility_id = :facility_id and id = :request_id
     #      returning *
     row = (client.table("leave_requests").update(patch)
            .eq("facility_id", facility_id).eq("id", request_id).execute().data[0])
 
+    if decision == "approve":
+        # Auto-lock the roster cell (spec SA.5). Deliberately after the status
+        # update: a lock that outlives a failed approval would hold a cell for a
+        # decision nobody made. The reverse failure - approved but unlocked - is
+        # visible to the approver and fixable by re-approving, which is
+        # idempotent.
+        roster_locks.apply_for_request(client, facility_id, row,
+                                       profile_id=profile_id)
+
     if decision in ("approve", "reject"):
         verdict = "approved" if decision == "approve" else "rejected"
+        _record_decision(client, facility_id, row, decision=decision,
+                         note=note, profile_id=profile_id)
         notify.push(
             client, facility_id, staff_id=row["staff_id"], event_type="leave_decided",
             title=f'{row["leave_type"]} request {verdict}',
@@ -172,6 +504,90 @@ def decide(client, facility_id: str, request_id: str, *, decision: str,
                  + (f' · {note}' if note else ""),
             related_type="leave_request", related_id=row["id"],
         )
+    return row
+
+
+def _record_decision(client, facility_id: str, row: dict, *, decision: str,
+                     note: str | None, profile_id: str | None) -> None:
+    """Audit the final decision, and what the reviewers had said at the time.
+
+    Cherry, 1 Aug 2026: after deciding a disputed item the approver records their
+    reasoning, "and this goes into the audit log."
+
+    The recommendation state is captured alongside it, because the note only
+    means anything next to what it was answering. "Spoke with staff directly" is
+    an unremarkable line on its own and the whole story when the row beside it
+    says the reviewers were split one-all and the approver went with the
+    minority. Reconstructing that later from the recommendations table would
+    require trusting that nobody withdrew one afterwards.
+    """
+    from . import recommendations as rec   # local: keeps the import graph acyclic
+
+    try:
+        summary = rec.summarise(
+            rec.for_request(client, facility_id, row["id"], include_withdrawn=False))
+    except Exception:  # noqa: BLE001
+        # Same reasoning as `recommendations.attach`: if the table is unreachable
+        # the decision must still be audited, just without the review context.
+        summary = None
+
+    audit.record(
+        client,
+        facility_id=facility_id,
+        action=f"leave.{decision}",
+        entity_table="leave_requests",
+        entity_id=row["id"],
+        after={
+            "status": row.get("status"),
+            "decision_note": note,
+            "recommendation_summary": summary,
+            # Called out explicitly rather than left for a reader to derive from
+            # the summary: "approved over a split recommendation" is the row an
+            # auditor searches for.
+            "decided_against_split": bool(summary and summary.get("split")),
+        },
+        reason=note or f"leave {decision}",
+        actor_profile_id=profile_id,
+    )
+
+
+def revoke(client, facility_id: str, request_id: str, *, profile_id: str | None,
+           reason: str) -> dict:
+    """Withdraw an approval already given (spec 1.1: "APPROVE may be REVOKED").
+
+    The original `decided_by` / `decided_at` / `decision_note` are left in place.
+    Revocation is additive, so "approved on the 3rd, withdrawn on the 5th because
+    the cover fell through" stays readable - overwriting the decision would erase
+    the fact that it was ever made, which is the part an auditor asks about.
+    """
+    rows = (client.table("leave_requests").select("*")
+            .eq("facility_id", facility_id).eq("id", request_id).execute().data)
+    if not rows:
+        raise ValueError("leave request not found")
+    if rows[0].get("status") != "approved":
+        raise ValueError(
+            f"only an approved request can be revoked (this one is "
+            f"{rows[0].get('status')!r})")
+
+    row = (client.table("leave_requests").update({
+        "status": "revoked",
+        "revoked_by": profile_id,
+        "revoked_at": now_iso(),
+        "revoke_reason": reason.strip(),
+    }).eq("facility_id", facility_id).eq("id", request_id).execute().data[0])
+
+    # The promise is withdrawn, so the cell goes back to the optimiser (spec SA.5).
+    roster_locks.release_for(
+        client, facility_id, source_table="leave_requests", source_id=request_id,
+        profile_id=profile_id, reason=reason.strip(),
+    )
+
+    notify.push(
+        client, facility_id, staff_id=row["staff_id"], event_type="leave_revoked",
+        title=f'{row["leave_type"]} approval withdrawn',
+        body=f'{iso(row["date_start"])} – {iso(row["date_end"])} · {reason.strip()}',
+        related_type="leave_request", related_id=row["id"],
+    )
     return row
 
 
@@ -202,7 +618,7 @@ def stats(client, facility_id: str, on: Date | None = None) -> dict:
 
 
 def approved_leave_dates(client, facility_id: str, start: Date, end: Date) -> set[tuple[str, str]]:
-    """{(staff_id, 'YYYY-MM-DD')} for approved leave overlapping [start, end] — the
+    """{(staff_id, 'YYYY-MM-DD')} for approved leave overlapping [start, end] - the
     availability filter used by roster edits and replacement suggestions."""
     # SQL: select staff_id, date_start, date_end from leave_requests
     #      where facility_id = :facility_id
@@ -210,11 +626,15 @@ def approved_leave_dates(client, facility_id: str, start: Date, end: Date) -> se
     #        and date_start <= :end and date_end >= :start   -- range overlap
     # The per-day expansion into (staff_id, date) pairs happens in Python below;
     # in SQL it would be a `generate_series(date_start, date_end, '1 day')` join.
-    rows = (client.table("leave_requests").select("staff_id,date_start,date_end")
+    rows = (client.table("leave_requests").select(
+                "staff_id,date_start,date_end,leave_type"
+            )
             .eq("facility_id", facility_id).eq("status", "approved")
             .lte("date_start", str(end)).gte("date_end", str(start)).execute().data)
     out: set[tuple[str, str]] = set()
     for r in rows:
+        if r.get("leave_type") in {"duty_request", "shift_swap"}:
+            continue
         d, last = Date.fromisoformat(iso(r["date_start"])), Date.fromisoformat(iso(r["date_end"]))
         while d <= last:
             if start <= d <= end:

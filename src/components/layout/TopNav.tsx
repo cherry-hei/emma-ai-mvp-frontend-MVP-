@@ -109,7 +109,7 @@ export function TopNav() {
           </div>
           <div className="hidden sm:block text-left leading-tight max-w-[150px]">
             <div className="text-[11px] font-semibold text-gray-800 truncate">
-              {user?.facilityName ?? '—'}
+              {user?.facilityName ?? '-'}
             </div>
             <div className="text-[9px] text-gray-400 truncate">
               {roleLabel(user?.role, isZH) || user?.email}
@@ -128,7 +128,7 @@ export function TopNav() {
             <div className="absolute right-0 top-full mt-1 w-60 rounded-xl border border-gray-200 bg-white shadow-lg z-50 p-1">
               <div className="px-3 py-2">
                 <div className="text-[10px] text-gray-400">{isZH ? '已登入' : 'Signed in as'}</div>
-                <div className="text-xs font-semibold text-gray-800 truncate">{user?.email ?? '—'}</div>
+                <div className="text-xs font-semibold text-gray-800 truncate">{user?.email ?? '-'}</div>
                 <div className="text-[10px] text-gray-500 mt-0.5 truncate">
                   {user?.facilityName}{user?.role ? ` · ${roleLabel(user.role, isZH)}` : ''}
                 </div>

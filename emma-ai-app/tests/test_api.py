@@ -2,7 +2,7 @@
 
 Split in two:
   • Offline (no DB): app wiring, OpenAPI surface, the bearer-token auth guard and
-    the JWT `sub` extractor — always run.
+    the JWT `sub` extractor - always run.
   • DB-backed: real login → token → RLS-scoped endpoint calls. These need the
     seeded local Supabase (`supabase start` + `scripts/seed.py`); they skip
     cleanly when it isn't reachable.
@@ -15,6 +15,7 @@ from fastapi.testclient import TestClient
 
 from api.deps import _jwt_sub
 from api.main import app
+from tests._dbstate import require
 
 # raise_server_exceptions=False → unexpected server errors come back as real 500
 # responses (as over HTTP), instead of re-raising into the test process.
@@ -151,9 +152,11 @@ def test_staff_directory(token):
 
 def test_staff_exposes_cert_expiry(token):
     # Certifications compliance view relies on cert_type + expiry_date per staff.
+    # A roster spreadsheet does not record credentials, so an imported facility has
+    # none until they are entered.
     rows = client.get("/staff", headers=_auth(token)).json()
-    certs = [c for s in rows for c in s.get("certificates", [])]
-    assert certs, "expected seeded certificates"
+    certs = require([c for s in rows for c in s.get("certificates", [])],
+                    "staff certificates")
     assert all("cert_type" in c for c in certs)
     assert any(c.get("expiry_date") for c in certs), "expected at least one cert with an expiry date"
 
@@ -210,7 +213,7 @@ def test_optimize_sync_path(token):
         from emma_core.db import get_service_client
         # SQL: delete from optimization_jobs where id = :job_id
         get_service_client().table("optimization_jobs").delete().eq("id", data["job_id"]).execute()
-    except Exception:  # noqa: BLE001 — cleanup best-effort
+    except Exception:  # noqa: BLE001 - cleanup best-effort
         pass
 
 
@@ -238,7 +241,7 @@ def test_optimize_rejects_cross_facility_source_version(token):
     body = {
         "facility_id": "x",                       # overridden from the token
         "period_id": periods_a[0]["id"],          # a valid Home A period
-        "source_version_id": ver_b[0]["id"],      # a Home B version — the attack
+        "source_version_id": ver_b[0]["id"],      # a Home B version - the attack
         "plan_mode": "C",
         "writeback": {"persist": False},
     }

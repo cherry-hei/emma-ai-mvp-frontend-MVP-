@@ -1,15 +1,16 @@
-"""Staff directory reads enriched for the Staff Portfolio. Derived fields (scheduled_hours, contracted_period_hours, status, certs) are scoped to the current roster period — the one covering today, else the most recent — so a future period's blank roster never zeroes out the live directory."""
+"""Staff directory reads enriched for the Staff Portfolio. Derived fields (scheduled_hours, contracted_period_hours, status, certs) are scoped to the current roster period - the one covering today, else the most recent - so a future period's blank roster never zeroes out the live directory."""
 from __future__ import annotations
 
 from datetime import date as Date
 
 from ..shifttime import paid_minutes
+from ._common import assignments_for_shifts
 
 LEAVE_CODES = {"AL", "SL", "DSL"}   # non-working leave shift codes
 
 
 def _duration(shift: dict) -> int:
-    """Paid shift minutes — segment-aware (see emma_core.shifttime), so a split
+    """Paid shift minutes - segment-aware (see emma_core.shifttime), so a split
     A/N shift counts its two duty windows, not the elapsed span between them."""
     return paid_minutes(shift)
 
@@ -19,20 +20,10 @@ def _iso(v) -> str:
 
 
 def _current_period(client, facility_id: str) -> dict | None:
-    """The period covering today, else the most recent by start date."""
-    # SQL: select * from roster_periods
-    #      where facility_id = :facility_id
-    #      order by period_start desc
-    periods = (client.table("roster_periods").select("*")
-               .eq("facility_id", facility_id)
-               .order("period_start", desc=True).execute().data)
-    if not periods:
-        return None
-    today = Date.today().isoformat()
-    for p in periods:                       # newest-first
-        if _iso(p["period_start"]) <= today <= _iso(p["period_end"]):
-            return p
-    return periods[0]
+    """The rostered period covering today - see ``_common.current_period``."""
+    from ._common import current_period
+
+    return current_period(client, facility_id)
 
 
 def _manual_version(client, facility_id: str, period_id: str) -> dict | None:
@@ -72,8 +63,8 @@ def _roster_stats(client, facility_id: str) -> dict:
     if shift_by:
         # SQL: select shift_id, staff_id from shift_assignments
         #      where shift_id = any(:shift_ids)
-        assigns = (client.table("shift_assignments").select("shift_id,staff_id")
-                   .in_("shift_id", list(shift_by)).execute().data)
+        assigns = assignments_for_shifts(client, shift_by,
+                                         select="shift_id,staff_id")
     for a in assigns:
         sh, sid = shift_by.get(a["shift_id"]), a.get("staff_id")
         if not sh or not sid:
@@ -163,7 +154,7 @@ def list_staff(client, facility_id: str, *, search: str | None = None,
     #      left join facility_units u on u.id = s.primary_unit_id
     #      where s.facility_id = :facility_id
     #      order by s.created_at
-    # `search` and `rank` are NOT pushed down — they are applied in the Python loop
+    # `search` and `rank` are NOT pushed down - they are applied in the Python loop
     # below (a rank filter would be `and s.rank = :rank`, search an ilike on
     # s.name / s.name_en).
     rows = (client.table("staff").select("*, unit:facility_units(name)")
@@ -236,3 +227,80 @@ def get_staff_detail(client, facility_id: str, staff_id: str) -> dict | None:
     history.sort(key=lambda h: h["date"] or "", reverse=True)
     detail["shift_history"] = history[:10]
     return detail
+
+
+# ── writes (spec 2.1) ────────────────────────────────────────────────────────
+# The directory was read-only, which is why the Staff Portfolio's "Add staff"
+# button had nothing to call. Both writes are audited: `staff.rank` and
+# `staff.employment_type` feed the rule engine, so changing one silently changes
+# which compliance violations a roster produces.
+
+def create_staff(client, facility_id: str, payload: dict, *,
+                 actor_profile_id: str | None = None,
+                 actor_email: str | None = None) -> dict:
+    """Insert a staff record into the caller's own facility."""
+    from . import audit
+
+    row = {k: v for k, v in payload.items() if v is not None}
+    row["facility_id"] = facility_id
+    row["name"] = str(row["name"]).strip()
+    if row.get("name_en"):
+        row["name_en"] = str(row["name_en"]).strip()
+
+    _check_unit(client, facility_id, row.get("primary_unit_id"))
+
+    # SQL: insert into staff (facility_id, name, name_en, rank, employment_type,
+    #        primary_unit_id, contracted_hours, is_audited_for_medication,
+    #        is_mentor, gender, status)
+    #      values (...) returning *
+    created = client.table("staff").insert(row).execute().data[0]
+    audit.record(client, facility_id=facility_id, action="create",
+                 entity_table="staff", entity_id=created["id"],
+                 after=created, actor_profile_id=actor_profile_id,
+                 actor_email=actor_email)
+    return created
+
+
+def update_staff(client, facility_id: str, staff_id: str, patch: dict, *,
+                 actor_profile_id: str | None = None,
+                 actor_email: str | None = None) -> dict:
+    """Patch a staff record. Only the fields present are touched."""
+    from . import audit
+
+    if not patch:
+        raise ValueError("provide at least one field to update")
+
+    # SQL: select * from staff where facility_id = :facility_id and id = :staff_id
+    rows = (client.table("staff").select("*")
+            .eq("facility_id", facility_id).eq("id", staff_id).execute().data)
+    if not rows:
+        raise ValueError("staff member not found")
+    before = rows[0]
+
+    if "primary_unit_id" in patch:
+        _check_unit(client, facility_id, patch["primary_unit_id"])
+    if "name" in patch and patch["name"] is not None:
+        patch = {**patch, "name": str(patch["name"]).strip()}
+
+    # SQL: update staff set <patch keys>
+    #      where facility_id = :facility_id and id = :staff_id returning *
+    after = (client.table("staff").update(patch)
+             .eq("facility_id", facility_id).eq("id", staff_id).execute().data[0])
+    audit.record(client, facility_id=facility_id, action="update",
+                 entity_table="staff", entity_id=staff_id,
+                 before=before, after=after, actor_profile_id=actor_profile_id,
+                 actor_email=actor_email)
+    return after
+
+
+def _check_unit(client, facility_id: str, unit_id: str | None) -> None:
+    """A unit from another home would pass RLS on `staff` and then read as this
+    home's floor everywhere the roster groups by unit."""
+    if not unit_id:
+        return
+    # SQL: select id from facility_units
+    #      where facility_id = :facility_id and id = :unit_id
+    rows = (client.table("facility_units").select("id")
+            .eq("facility_id", facility_id).eq("id", unit_id).execute().data)
+    if not rows:
+        raise ValueError("primary_unit_id does not belong to this facility")

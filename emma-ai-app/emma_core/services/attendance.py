@@ -2,11 +2,11 @@
 
 Worked time is derived by pairing each clock_in with the next clock_out, so an
 unpaired clock_in (still on shift) contributes nothing until the staff member
-clocks out — the month total never over-reports.
+clocks out - the month total never over-reports.
 """
 from __future__ import annotations
 
-from datetime import date as Date, datetime, timezone
+from datetime import date as Date, datetime
 
 from ._common import month_bounds, now_iso
 
@@ -101,7 +101,3 @@ def recent(client, facility_id: str, staff_id: str, limit: int = 20) -> list[dic
     return (client.table("attendance_events").select("*")
             .eq("facility_id", facility_id).eq("staff_id", staff_id)
             .order("event_at", desc=True).limit(limit).execute().data)
-
-
-def utcnow() -> datetime:
-    return datetime.now(timezone.utc)

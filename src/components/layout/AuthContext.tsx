@@ -2,6 +2,7 @@
 import { createContext, useCallback, useContext, useEffect, useState, ReactNode } from 'react'
 import { useRouter } from 'next/navigation'
 import { api, login as apiLogin, logout as apiLogout, getToken, getSession, onUnauthorized } from '@/lib/api'
+import { normaliseRole } from '@/lib/permissions'
 
 export interface AuthUser {
   userId: string
@@ -107,16 +108,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
 export const useAuth = () => useContext(Ctx)
 
+// Display names for the seven system roles. zh uses the homes' own titles: 院長 is
+// what a Salvation Army superintendent is called and 主任 the NAAC equivalent, both
+// OWNER - the label shows the SA wording since the mapping is per-facility and the
+// facility name sits directly beneath it in the sidebar.
 const ROLE_LABELS: Record<string, { en: string; zh: string }> = {
-  superintendent: { en: 'Superintendent', zh: '院長' },
-  admin:          { en: 'Admin',          zh: '管理員' },
-  staff:          { en: 'Staff',          zh: '員工' },
-  scheduler:      { en: 'Scheduler',      zh: '排更員' },
-  hr:             { en: 'HR',             zh: '人事' },
-  auditor:        { en: 'Auditor',        zh: '審計' },
+  OWNER:         { en: 'Superintendent',   zh: '院長' },
+  NURSE_MGR:     { en: 'Nursing Officer',  zh: '護理主任' },
+  ALLIED_HEALTH: { en: 'Allied Health',    zh: '治療師' },
+  ADMIN_CLERK:   { en: 'Admin Clerk',      zh: '文員' },
+  SCHEDULER:     { en: 'Scheduler',        zh: '排更員' },
+  FRONTLINE:     { en: 'Staff',            zh: '員工' },
+  HR_AUDITOR:    { en: 'HR / Audit',       zh: '人事及審計' },
 }
 
 export function roleLabel(role: string | null | undefined, isZH: boolean): string {
-  if (!role) return ''
-  return ROLE_LABELS[role]?.[isZH ? 'zh' : 'en'] ?? role
+  const resolved = normaliseRole(role)
+  if (!resolved) return ''
+  return ROLE_LABELS[resolved][isZH ? 'zh' : 'en']
 }
