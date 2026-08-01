@@ -207,27 +207,60 @@ jobs:
               --scaling-target '{"minTaskCount": 1, "maxTaskCount": 1}'
           fi
 
-      - name: Wait for deployment and print service URL
+      - name: Wait for the new image to actually be serving
+        env:
+          IMAGE_URI: ${{ steps.build.outputs.image_uri }}
         run: |
           set -euo pipefail
           SERVICE_ARN="arn:aws:ecs:${AWS_REGION}:${AWS_ACCOUNT_ID}:service/${ECS_CLUSTER}/${ECS_SERVICE}"
 
-          echo "Waiting for the service to stabilise (first run can take ~8-12 min)..."
+          # This step used to wait on `service.status == ACTIVE` and stop there.
+          # ACTIVE describes the service, which was already active before the
+          # deploy - so the loop broke on its first poll and the job went green
+          # while the previous image was still answering requests. On 1 Aug the
+          # pipeline reported a successful deploy and the old build served for
+          # at least five minutes afterwards. A deploy step that cannot tell
+          # "shipped" from "exists" is worse than no check at all, because
+          # someone reads the tick and tells the client it is live.
+          #
+          # So the gate is now the running container's image digest.
+          echo "Waiting for the service to report ${IMAGE_URI}..."
+          DEPLOYED=""
           for i in $(seq 1 60); do
-            STATUS=$(aws ecs describe-express-gateway-service \
-              --service-arn "$SERVICE_ARN" --region "$AWS_REGION" \
-              --query 'service.status' --output text 2>/dev/null || echo "PENDING")
-            echo "[$i/60] status: $STATUS"
-            if [ "$STATUS" = "ACTIVE" ]; then
+            DESCRIBE=$(aws ecs describe-express-gateway-service \
+              --service-arn "$SERVICE_ARN" --region "$AWS_REGION" 2>/dev/null || echo '{}')
+            STATUS=$(printf '%s' "$DESCRIBE" | jq -r '.service.status // "PENDING"')
+            RUNNING=$(printf '%s' "$DESCRIBE" | jq -r '
+              [.. | objects | .image? // empty] | first // ""')
+            echo "[$i/60] status: ${STATUS}  image: ${RUNNING:-unknown}"
+            if [ "$STATUS" = "ACTIVE" ] && [ "$RUNNING" = "$IMAGE_URI" ]; then
+              DEPLOYED="yes"
               break
             fi
             sleep 20
           done
 
-          URL=$(aws ecs describe-express-gateway-service \
-            --service-arn "$SERVICE_ARN" --region "$AWS_REGION" \
-            --query 'service.ingressPaths[0].endpoint' --output text 2>/dev/null || true)
+          # The endpoint field was queried as `service.ingressPaths[0].endpoint`,
+          # which resolved to None - the shape is not what that path assumed, and
+          # a wrong guess printed as "Service endpoint: None" under a green tick.
+          # Search the response for the first URL rather than guessing again, and
+          # dump the whole document when nothing is found so the next run has the
+          # schema in the log instead of another silent None.
+          URL=$(printf '%s' "$DESCRIBE" | jq -r '
+            [.. | strings | select(startswith("http"))] | first // ""')
           echo "=================================================="
-          echo "Service endpoint: $URL"
-          echo "Health check:     curl <endpoint>/health"
+          if [ -n "$URL" ]; then
+            echo "Service endpoint: $URL"
+            echo "Health:           $(curl -fsS --max-time 20 "$URL/health" || echo unreachable)"
+          else
+            echo "Service endpoint could not be read. Full describe response:"
+            printf '%s\n' "$DESCRIBE" | jq '.'
+          fi
           echo "=================================================="
+
+          if [ -z "$DEPLOYED" ]; then
+            echo "::error::The service is not serving ${IMAGE_URI}. The image was" \
+                 "built and pushed, but the rollout did not complete - do not" \
+                 "report this deploy as live."
+            exit 1
+          fi
