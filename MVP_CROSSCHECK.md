@@ -182,20 +182,33 @@ started, and it is assigned to Cherry.
 
 1. ~~NAAC config files never arrived~~ — **cleared 1 Aug.** Attached to ClickUp
    2.2 and 4.1 as comment links; 2.2, 2.3 and 4.1 are built against them.
-2. **Nothing is deployed yet — but the path is now built.** Status at end of
-   1 Aug:
+2. **Nothing is deployed yet — but the DB side is done and the code is ready.**
+   Correction to an earlier note in this doc: there is **one Supabase project**,
+   not a separate dev/test/prod split — `SETUP_SUPABASE_DB.md`'s `emma-test` /
+   `emma-prod` two-project layout describes a setup that was never actually
+   built. The database this repo has been developed and tested against **is**
+   the one the live API uses. So "rehearse on a clone before touching
+   production" doesn't apply; there is nothing to clone. Status at end of 1 Aug:
 
    | Step | State |
    |---|---|
+   | Migrations 10–20 applied to the (only) database | ✅ done, verified — ledger at 20, schema objects present, suite green |
    | Merge MVP work onto `main` | ✅ done locally, commit `25846ac`, **not pushed** |
    | CI migration step | ✅ added — read secret → pre-flight → migrate → build → deploy |
-   | Migrations 18–20 rehearsed | ✅ on **dev**; ledger at 20, schema verified |
-   | Migrations 10–20 rehearsed on a **production clone** | ❌ **not done** |
-   | `secretsmanager:GetSecretValue` on the deploy role | ❌ not granted |
-   | `git push origin main` | ⛔ blocked on the two rows above |
+   | `secretsmanager:GetSecretValue` on the deploy role | ❌ not granted — **Cherry/AWS**, not Kien |
+   | `git push origin main` | ready on the DB/code side; deploy step will fail cleanly at "read secret" until the row above is done |
 
-   Migrations run **before** the image on purpose: additive schema with old code
-   survives the minute it lasts, new code on old schema is the 500s.
+   Ownership split: Kien owns Supabase/DB/code (all done). GitHub repo settings
+   and AWS IAM are Cherry's. The push itself is safe to do at any time — the
+   worst case if the IAM grant isn't in yet is the deploy job stops at that one
+   step and nothing ships, not a partial or broken deploy.
+
+   Migrations run **before** the image build in CI, on purpose: additive schema
+   with old code survives the minute it lasts, new code on old schema is the
+   500s. On a single-database setup this step is now mostly a repeat-safety net
+   — `apply_migrations.py` is idempotent, so a CI run after this push will find
+   all 20 already applied and do nothing — but it stays in the pipeline for the
+   next migration, so this gap can't reopen.
 
    `scripts/preflight_migrations.py` is read-only and checks the two things in
    10–20 that can only fail against a database with real history — **ten unique

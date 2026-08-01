@@ -18,7 +18,17 @@ This is the database half of the deployment. It pairs with:
 
 ## Environments
 
-Two **isolated** cloud projects, one per environment (plus your local dev DB):
+> **Reality as of 1 Aug 2026: there is one Supabase project, not the three below.**
+> `.env` here holds `DATABASE_URL`/`SUPABASE_URL` for `eadisvkosqdnikhzmndz` -
+> that is the same project the deployed API uses. The `emma-test` / `emma-prod`
+> split this section describes was never actually created. Do not stand up a
+> second project by following this table literally; the single-project setup is
+> the current, intentional state, confirmed with Kien and Cherry. The table is
+> left below as a record of the originally-planned layout, in case a real
+> test/prod split is wanted later - it is not a live setup guide right now.
+
+Originally-planned layout - two **isolated** cloud projects, one per environment
+(plus a local dev DB), never built:
 
 | Environment | `APP_ENV`    | env file          | Supabase project |
 |-------------|--------------|-------------------|------------------|
