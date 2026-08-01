@@ -229,7 +229,12 @@ jobs:
           for i in $(seq 1 60); do
             DESCRIBE=$(aws ecs describe-express-gateway-service \
               --service-arn "$SERVICE_ARN" --region "$AWS_REGION" 2>/dev/null || echo '{}')
-            STATUS=$(printf '%s' "$DESCRIBE" | jq -r '.service.status // "PENDING"')
+            # `service.status` is an object - {"statusCode": "ACTIVE"} - not a
+            # string. The old step read it with `--query service.status --output
+            # text`, which flattened it to ACTIVE and hid the shape.
+            STATUS=$(printf '%s' "$DESCRIBE" | jq -r '
+              .service.status | if type == "object" then (.statusCode // "UNKNOWN")
+              else (. // "PENDING") end')
             RUNNING=$(printf '%s' "$DESCRIBE" | jq -r '
               [.. | objects | .image? // empty] | first // ""')
             echo "[$i/60] status: ${STATUS}  image: ${RUNNING:-unknown}"
