@@ -182,11 +182,28 @@ started, and it is assigned to Cherry.
 
 1. ~~NAAC config files never arrived~~ — **cleared 1 Aug.** Attached to ClickUp
    2.2 and 4.1 as comment links; 2.2, 2.3 and 4.1 are built against them.
-2. **Nothing is deployed.** CI deploys only from `main`, with no migration step.
-   `main` has migrations 1–9; the work is now on 10–19. Every "500 on production"
-   report traces to this. **This is the single largest risk to acceptance** — the
-   client cannot accept what they cannot see, and none of the last month's work
-   is visible to them.
+2. **Nothing is deployed yet — but the path is now built.** Status at end of
+   1 Aug:
+
+   | Step | State |
+   |---|---|
+   | Merge MVP work onto `main` | ✅ done locally, commit `25846ac`, **not pushed** |
+   | CI migration step | ✅ added — read secret → pre-flight → migrate → build → deploy |
+   | Migrations 18–20 rehearsed | ✅ on **dev**; ledger at 20, schema verified |
+   | Migrations 10–20 rehearsed on a **production clone** | ❌ **not done** |
+   | `secretsmanager:GetSecretValue` on the deploy role | ❌ not granted |
+   | `git push origin main` | ⛔ blocked on the two rows above |
+
+   Migrations run **before** the image on purpose: additive schema with old code
+   survives the minute it lasts, new code on old schema is the 500s.
+
+   `scripts/preflight_migrations.py` is read-only and checks the two things in
+   10–20 that can only fail against a database with real history — **ten unique
+   indexes** over existing data (`if not exists` prevents a second run, not a
+   first-run collision, and a failure aborts the push half-way leaving the
+   recorded schema version untrue) and **one DELETE** in migration 13 against
+   `agency_assignments`. It fails the CI build rather than letting a partial
+   push through.
 3. **3.3 reporting format is unresolved.** The task says Excel/PDF; the signed
    scope says Phase 7 is data-only, JSON and CSV. Asked on 31 Jul, unanswered. If
    the demo expects a PDF, 3.3 / 7.1 / 7.2 fail acceptance on a disagreement
