@@ -12,8 +12,8 @@ if not exist "%ROOT%node_modules" (
   pushd "%ROOT%" && call npm install && popd
 )
 
-echo [dev] Backend  -^> http://localhost:8000  ^(docs /docs^)
+@REM echo [dev] Backend  -^> http://localhost:8000  ^(docs /docs^)
 echo [dev] Frontend -^> http://localhost:3001
-start "emma-api" cmd /k "cd /d "%ROOT%emma-ai-app" && uvicorn api.main:app --reload"
+@REM start "emma-api" cmd /k "cd /d "%ROOT%emma-ai-app" && uvicorn api.main:app --reload"
 start "emma-web" cmd /k "cd /d "%ROOT%" && npm run dev"
 endlocal

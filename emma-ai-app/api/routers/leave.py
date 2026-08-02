@@ -23,8 +23,9 @@ from api.deps import (
 from emma_core.db import get_service_client
 from emma_core.models import (
     LeaveDecisionRequest, LeaveRequestCreate, RecommendationRequest, RevokeRequest,
+    WithdrawRequest,
 )
-from emma_core.permissions import Feature, can_read, is_self_only
+from emma_core.permissions import Feature, can_decide, can_read, is_self_only
 from emma_core.services import leave as svc
 from emma_core.services import recommendations as rec_svc
 from emma_core.services.me import resolve_staff_id
@@ -94,9 +95,10 @@ def create_request(body: LeaveRequestCreate, ctx: AuthCtx = Depends(get_ctx)):
 @router.patch("/leave-requests/{request_id}")
 def decide_request(request_id: str, body: LeaveDecisionRequest,
                    ctx: AuthCtx = Depends(require_decide(Feature.APPROVE_LEAVE))):
-    """Final approve/reject/cancel - OWNER only (院長/副院長 at SA, 主任/副主任 at
+    """Final approve/reject/review - OWNER only (院長/副院長 at SA, 主任/副主任 at
     NAAC). A nursing officer or clerk reaching this gets 403; their first-pass
-    review belongs on the recommendation endpoint."""
+    review belongs on the recommendation endpoint, and taking a request back
+    belongs on `/withdraw`."""
     # Resolve the request through the caller's RLS boundary first. Approval
     # then uses the service role because status transitions and balance usage
     # are authoritative workflow writes, not client-editable table fields.
@@ -160,6 +162,43 @@ def withdraw_recommendation(request_id: str,
     n = rec_svc.withdraw_own(ctx.client, ctx.facility_id, request_id,
                              profile_id=ctx.profile_id)
     return {"withdrawn": n}
+
+
+@router.post("/leave-requests/{request_id}/withdraw")
+def withdraw_request(request_id: str, body: WithdrawRequest | None = None,
+                     ctx: AuthCtx = Depends(get_ctx)):
+    """The requester takes back a request nobody has decided yet.
+
+    Authorised by *identity* for a frontline caller and by role for an approver,
+    the same split as `/swap-requests/{id}/cancel`: a care worker may withdraw
+    their own request and no one else's, an OWNER may cancel any of them. The
+    outcome is `cancelled`, not `rejected` - a withdrawn request must not be
+    counted as a refusal in the stats or read as one in the history.
+    """
+    # Resolved through the caller's own client first, so RLS decides what they
+    # can see before the service role is used to write the transition.
+    if not (
+        ctx.client.table("leave_requests").select("id")
+        .eq("facility_id", ctx.facility_id)
+        .eq("id", request_id)
+        .execute().data
+    ):
+        raise api_error(404, "not_found", "leave request not found")
+    reason = body.reason if body else None
+    own_staff_id = None
+    if not can_decide(ctx.profile.role, Feature.APPROVE_LEAVE):
+        # Anyone who is not the final approver may only act on their own request,
+        # whatever their role - resolved from the caller's profile, never the body.
+        own_staff_id = resolve_staff_id(ctx.profile)
+    try:
+        return svc.withdraw(get_service_client(), ctx.facility_id, request_id,
+                            profile_id=ctx.profile_id, staff_id=own_staff_id,
+                            reason=reason)
+    except PermissionError as exc:
+        raise api_error(403, "forbidden", str(exc)) from exc
+    except ValueError as exc:
+        code = "not_found" if "not found" in str(exc) else "not_withdrawable"
+        raise api_error(404 if code == "not_found" else 422, code, str(exc)) from exc
 
 
 @router.post("/leave-requests/{request_id}/revoke")

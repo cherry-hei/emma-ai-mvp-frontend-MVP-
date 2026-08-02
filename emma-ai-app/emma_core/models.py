@@ -455,6 +455,16 @@ class RevokeRequest(BaseModel):
         return self
 
 
+class WithdrawRequest(BaseModel):
+    """Taking back a request that has not been decided. Reason is optional -
+    unlike a revocation, nobody has been promised anything yet, so requiring an
+    explanation to undo your own pending request would be friction for its own
+    sake."""
+    model_config = ConfigDict(extra="forbid")
+
+    reason: str | None = Field(default=None, max_length=2000)
+
+
 class IncidentCreate(BaseModel):
     staff_id: str | None = None       # None => the caller's own staff record
     incident_type: str = "SL"         # SL|DSL|urgent|late

@@ -26,7 +26,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { api } from './api'
 import type {
   ApiStaff, DashboardSummary, FacilityEvent, KpiExternalWorkforce,
-  KpiStaffingRatioCompliance, RosterCell, RosterGrid, ShiftDef,
+  KpiStaffingRatioCompliance, KpiTaskCompletion, RosterCell, RosterGrid, ShiftDef,
 } from './apiTypes'
 import type { DayEntry, RosterRow, ShiftType, Staff } from './types'
 
@@ -307,9 +307,13 @@ export function useRosterView(opts?: {
  *   otHours       there is no OT figure for the operative roster. The optimiser
  *                 reports OT per candidate option (`KpiSummary.ot_hours`), which
  *                 is a projection for a draft, not hours anyone has worked.
- *   completion    'completion' is unstated. Task completion, roster completion
- *                 and compliance pass rate are three different numbers and the
- *                 mock's 94% does not say which. Flagged to Cherry on 3.1.
+ *                 Cherry confirmed on 2 Aug 2026 that a dash here is fine for now.
+ *
+ * `completion` was the fifth. It is live as of 2 Aug 2026: Cherry settled the
+ * ambiguity as task completion - "% of assigned tasks marked done per shift" -
+ * which `GET /kpi/overview` now reports as `task_completion`. It stays null when
+ * the period rosters no task codes, because a home with nothing to tick has not
+ * failed to tick it.
  *
  * `staffingRatio` is the SWD ratio-compliance pass rate, not the mock's '1:20'
  * literal - a home has one ratio rule per rank and window, so a single ratio
@@ -334,6 +338,7 @@ export function toKpiView(
   dashboard?: DashboardSummary | null,
   externalWorkforce?: Partial<KpiExternalWorkforce> | null,
   ratioCompliance?: Partial<KpiStaffingRatioCompliance> | null,
+  taskCompletion?: Partial<KpiTaskCompletion> | null,
 ): KpiView {
   const pct = (v: number | undefined | null) =>
     typeof v === 'number' ? `${Math.round(v)}%` : null
@@ -344,8 +349,8 @@ export function toKpiView(
     otDelta: null,
     agencyShifts: externalWorkforce?.agency_shifts ?? null,
     agencyDelta: null,
-    completion: typeof dashboard?.kpis?.compliance_rate_pct === 'number'
-      ? Math.round(dashboard.kpis.compliance_rate_pct)
+    completion: typeof taskCompletion?.completion_pct === 'number'
+      ? Math.round(taskCompletion.completion_pct)
       : null,
   }
 }
@@ -377,7 +382,8 @@ export function useKpiView(periodId?: string): UseKpiView {
       setState({
         key,
         kpi: toKpiView(dashboard, overview?.external_workforce,
-                       overview?.staffing_ratio_compliance),
+                       overview?.staffing_ratio_compliance,
+                       overview?.task_completion),
         error: !dashboard && !overview
           ? 'KPIs are unavailable for this account' : null,
       })

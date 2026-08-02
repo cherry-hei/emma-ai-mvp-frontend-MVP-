@@ -91,3 +91,69 @@ def test_roi_spend_excludes_generated_draft_purchase():
 
     assert result["shifts"] == 1
     assert result["monthly_cost"] == 957
+
+
+# ── 3.1 · the KPI strip's "Completion" card ─────────────────────────────────
+# Cherry settled the ambiguity on 2 Aug 2026: task completion, "% of assigned
+# tasks marked done per shift" - not roster completion, not the compliance pass
+# rate.
+
+def _store_with_tasks(statuses: list[str]):
+    store = build_store()
+    store.data["roster_versions"][0]["status"] = "published"
+    assignment = store.data["shift_assignments"][0]
+    store.data["task_assignments"] = [
+        {"id": f"t{i}", "facility_id": "f1",
+         "shift_assignment_id": assignment["id"], "task_status": status}
+        for i, status in enumerate(statuses)
+    ]
+    return store
+
+
+def test_task_completion_is_the_share_of_assigned_tasks_ticked_off():
+    result = kpi.task_completion(_store_with_tasks(
+        ["done", "done", "done", "pending"]), "f1", "p1")
+    assert (result["assigned"], result["done"]) == (4, 3)
+    assert result["completion_pct"] == 75.0
+
+
+def test_an_untouched_task_counts_against_completion():
+    """The denominator is every assigned task, not just the ones somebody
+    opened - a medication round nobody looked at is not done."""
+    result = kpi.task_completion(_store_with_tasks(["pending", "pending"]), "f1", "p1")
+    assert result["completion_pct"] == 0.0 and result["done"] == 0
+
+
+def test_exceptions_are_reported_separately_rather_than_counted_as_done():
+    """A task refused for a stated clinical reason is a different failure from
+    one silently skipped; one percentage would hide which a home is looking at."""
+    result = kpi.task_completion(_store_with_tasks(
+        ["done", "exception", "skipped", "done"]), "f1", "p1")
+    assert result["exceptions"] == 1
+    assert result["completion_pct"] == 50.0
+
+
+def test_a_roster_with_no_task_codes_reports_no_percentage_rather_than_zero():
+    """A home that rosters nothing to tick has not failed to tick it, and a red
+    0% would say it did."""
+    result = kpi.task_completion(_store_with_tasks([]), "f1", "p1")
+    assert result["completion_pct"] is None
+    assert (result["assigned"], result["done"]) == (0, 0)
+
+
+def test_task_completion_breaks_down_per_shift_type():
+    store = _store_with_tasks(["done", "pending"])
+    other = store.data["shift_assignments"][1]          # a P shift, not the A above
+    store.data["task_assignments"].append(
+        {"id": "t9", "facility_id": "f1",
+         "shift_assignment_id": other["id"], "task_status": "done"})
+    by_shift = {s["shift_type"]: s
+                for s in kpi.task_completion(store, "f1", "p1")["by_shift"]}
+    assert by_shift["A"]["completion_pct"] == 50.0
+    assert by_shift["P"]["completion_pct"] == 100.0
+
+
+def test_task_completion_is_part_of_the_one_call_overview():
+    """The strip reads GET /kpi/overview, so a KPI missing from that payload is
+    invisible however correctly it computes."""
+    assert "task_completion" in kpi.__all__

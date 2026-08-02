@@ -528,6 +528,18 @@ export interface KpiStaffingRatioCompliance {
 
 /** Every KPI screen in one call. The four this app does not render yet are
  *  typed loosely on purpose - narrowing them here would be a guess. */
+/** 3.1 — the KPI strip's "Completion" card: assigned task codes that were
+ *  ticked off. `completion_pct` is null when the period rosters no task codes
+ *  at all, which is not the same as 0% done. */
+export interface KpiTaskCompletion {
+  period_id?: string | null
+  assigned: number
+  done: number
+  exceptions: number
+  completion_pct: number | null
+  by_shift: { shift_type: string; assigned: number; done: number; completion_pct?: number }[]
+}
+
 export interface KpiOverview {
   conflict_rate: Record<string, unknown>
   an_gini: Record<string, unknown>
@@ -535,6 +547,7 @@ export interface KpiOverview {
   ai_acceptance: Record<string, unknown>
   external_workforce: KpiExternalWorkforce
   staffing_ratio_compliance: KpiStaffingRatioCompliance
+  task_completion: KpiTaskCompletion
 }
 
 export interface DashboardSummary {

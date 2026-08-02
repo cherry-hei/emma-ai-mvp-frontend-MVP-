@@ -1,26 +1,23 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { api } from '@/lib/api'
+import type { FacilityEventType } from '@/lib/apiTypes'
 
 const PINK = '#E8187A'
 
-const EVENT_TYPES_ZH = [
-  { value: 'meeting', label: '會議', icon: '👥' },
-  { value: 'training', label: '培訓', icon: '📘' },
-  { value: 'lecture', label: '講座', icon: '🎤' },
-  { value: 'visit', label: '探訪', icon: '🏠' },
-  { value: 'haircut', label: '剪髮', icon: '✂️' },
-  { value: 'other', label: '其他', icon: '📝' },
-]
-const EVENT_TYPES_EN = [
-  { value: 'meeting', label: 'Meeting', icon: '👥' },
-  { value: 'training', label: 'Training', icon: '📘' },
-  { value: 'lecture', label: 'Seminar', icon: '🎤' },
-  { value: 'visit', label: 'Visit', icon: '🏠' },
-  { value: 'haircut', label: 'Haircut', icon: '✂️' },
-  { value: 'other', label: 'Others', icon: '📝' },
-]
+// The picker reads GET /facility-events/types, so it can only offer a type the
+// API will accept. The list used to be hardcoded here, and three of its six
+// entries - 'lecture', 'visit', 'other' - were not event types at all, while
+// 'haircut' was an alias of 'hair_cutting'. A picker that can post a rejected
+// value is worse than no picker: the error arrives after the manager has filled
+// the form in.
+const ICONS: Record<string, string> = {
+  hair_cutting: '✂️', cgat: '🩺', pgt: '📋',
+  medication_board_checking: '💊', medication_record_checking: '📒',
+  podiatry: '🦶', monthly_weighing: '⚖️', visiting: '🏠', meeting_training: '👥',
+}
+const DEFAULT_ICON = '📌'
 
 // Care ranks recognised by the backend (emma_core.constants.CARE_RANKS).
 const RANKS = ['RN', 'EN', 'HW', 'HCA', 'CW', 'PCW', 'AW']
@@ -35,7 +32,10 @@ export interface CreateEventModalProps {
 }
 
 export function CreateEventModal({ isZH, defaultDate, onClose, onCreated }: CreateEventModalProps) {
-  const EVENT_TYPES = isZH ? EVENT_TYPES_ZH : EVENT_TYPES_EN
+  const [types, setTypes] = useState<FacilityEventType[]>([])
+  const EVENT_TYPES = types.map((t) => ({
+    value: t.code, label: isZH ? t.label_zh : t.label_en, icon: ICONS[t.code] ?? DEFAULT_ICON,
+  }))
   const L = {
     title: isZH ? '建立特殊事件' : 'Create Special Event',
     subtitle: isZH ? 'AI 智能排更調整' : 'AI Intelligent Scheduling',
@@ -56,7 +56,8 @@ export function CreateEventModal({ isZH, defaultDate, onClose, onCreated }: Crea
     save: isZH ? '儲存更改' : 'Save Changes',
   }
 
-  const [eventType, setEventType] = useState('meeting')
+  // No hardcoded default: the first type is whatever this facility publishes.
+  const [eventType, setEventType] = useState('')
   const [title, setTitle] = useState('')
   const [remark, setRemark] = useState('')
   const [date, setDate] = useState(defaultDate)
@@ -66,6 +67,18 @@ export function CreateEventModal({ isZH, defaultDate, onClose, onCreated }: Crea
   const [needs, setNeeds] = useState<StaffingRow[]>([{ id: '1', rank: 'RN', count: '1' }])
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
+
+  useEffect(() => {
+    let cancelled = false
+    api.facilityEventTypes()
+      .then((rows) => {
+        if (cancelled) return
+        setTypes(rows)
+        setEventType((prev) => prev || rows[0]?.code || '')
+      })
+      .catch((e) => { if (!cancelled) setErr(e instanceof Error ? e.message : 'Could not load event types') })
+    return () => { cancelled = true }
+  }, [])
 
   const addNeed = () => needs.length < 8 && setNeeds((prev) => [
     ...prev, { id: `${prev.length + 1}-${prev.length}`, rank: 'CW', count: '1' },
@@ -192,7 +205,7 @@ export function CreateEventModal({ isZH, defaultDate, onClose, onCreated }: Crea
 
         <div className="px-6 py-4 border-t border-gray-100 flex gap-2 justify-end flex-shrink-0">
           <button onClick={onClose} className="px-3 py-1.5 text-xs rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50">{L.cancel}</button>
-          <button onClick={handleSave} disabled={busy}
+          <button onClick={handleSave} disabled={busy || !eventType}
             className="px-4 py-1.5 text-xs rounded-lg text-white font-semibold disabled:opacity-60" style={{ background: PINK }}>
             {busy ? '…' : L.save}
           </button>

@@ -224,6 +224,19 @@ export const api = {
 
   staffDetail: (id: string) => apiFetch<StaffDetail>(`/staff/${id}`),
 
+  // `facility_id` is deliberately not in the body: the API takes it from the
+  // caller's profile, so a write can never land in another home.
+  createStaff: (body: {
+    name: string; name_en?: string; rank: string; employment_type: string
+    primary_unit_id?: string; contracted_hours?: number
+    is_audited_for_medication?: boolean; is_mentor?: boolean
+    gender?: 'M' | 'F'; status?: 'active' | 'inactive'
+    // POST returns the raw staff row, not the enriched directory shape - the
+    // page re-reads GET /staff afterwards rather than splicing this in.
+  }) => apiFetch<{ id: string; name: string }>('/staff', {
+    method: 'POST', body: JSON.stringify(body),
+  }),
+
   publish: (versionId: string) =>
     apiFetch<{ roster_version_id: string; status: string }>(
       `/rosters/${versionId}/publish`, { method: 'POST' }),

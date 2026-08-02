@@ -43,9 +43,12 @@ def _tell_the_floor_managers(client, facility_id: str, *, event_type: str,
 
     So: every exception, plus completion of the tasks already tagged
     `priority = 'high'` - medication, wound care, vitals, ICP. Routine tasks
-    change the roster cell and stay off the feed. Flagged to Cherry on the SA.3
-    ticket for confirmation; the rule lives here, in one function, so changing
-    her mind is a one-line change.
+    change the roster cell and stay off the feed. Confirmed by Cherry on 2 Aug
+    2026: "exceptions + high-priority task completions only, routine ticks stay
+    off the feed", and ADMIN_CLERK is not paged - which `push_to_responders`
+    already gives, since the clerk holds V on `task_codes` and this fans out to
+    F and E. The rule lives here, in one function, so changing it stays a
+    one-line change.
 
     Failure is swallowed for the same reason `audit.record`'s is: a care worker
     who ticked a task off at the bedside must not see it fail because a

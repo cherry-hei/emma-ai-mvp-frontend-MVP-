@@ -686,3 +686,69 @@ def test_approved_duty_request_is_not_reported_as_leave_unavailability():
     )
 
     assert unavailable == {("staff-1", "2026-09-04")}
+
+
+# ── withdraw: the requester takes a pending request back ────────────────────
+# Encoding this as a rejection - which the approval screen did before the
+# endpoint existed - makes the staff member look refused in every status count.
+def _withdraw_client(status: str = "pending"):
+    return FakeClient({
+        "leave_requests": [{
+            "id": "req-1", "facility_id": "facility-1", "staff_id": "staff-1",
+            "leave_type": "AL", "status": status,
+            "date_start": "2026-09-20", "date_end": "2026-09-20",
+        }],
+    }, now="2026-08-02T00:00:00Z")
+
+
+def test_withdrawing_a_pending_request_cancels_it_rather_than_rejecting_it():
+    client = _withdraw_client()
+    row = leave.withdraw(client, "facility-1", "req-1",
+                         profile_id="p-1", staff_id="staff-1",
+                         reason="Changed my mind")
+    assert row["status"] == "cancelled"
+    assert row["decision_note"] == "Changed my mind"
+    assert row["decided_at"]
+
+
+def test_withdrawing_without_a_reason_still_records_who_ended_it():
+    row = leave.withdraw(_withdraw_client(), "facility-1", "req-1",
+                         profile_id="p-1", staff_id="staff-1")
+    assert row["status"] == "cancelled"
+    assert row["decision_note"] == "Withdrawn by requester"
+    assert row["decided_by"] == "p-1"
+
+
+def test_a_staff_member_cannot_withdraw_someone_elses_request():
+    with pytest.raises(PermissionError):
+        leave.withdraw(_withdraw_client(), "facility-1", "req-1",
+                       profile_id="p-2", staff_id="staff-2")
+
+
+def test_an_approver_may_withdraw_without_owning_the_request():
+    """`staff_id=None` is the manager path - the route decides which applies."""
+    row = leave.withdraw(_withdraw_client(), "facility-1", "req-1",
+                         profile_id="p-owner", staff_id=None)
+    assert row["status"] == "cancelled"
+
+
+@pytest.mark.parametrize("status", ["approved", "rejected", "cancelled", "revoked"])
+def test_a_decided_request_cannot_be_withdrawn(status):
+    """Undoing an approval is `revoke`, and it has its own reason and audit
+    trail; silently reusing `withdraw` for it would lose both."""
+    with pytest.raises(ValueError, match="awaiting a decision"):
+        leave.withdraw(_withdraw_client(status), "facility-1", "req-1",
+                       profile_id="p-1", staff_id="staff-1")
+
+
+def test_a_reviewed_request_is_still_withdrawable():
+    """'reviewed' means the approver has read it, not decided it."""
+    row = leave.withdraw(_withdraw_client("reviewed"), "facility-1", "req-1",
+                         profile_id="p-1", staff_id="staff-1")
+    assert row["status"] == "cancelled"
+
+
+def test_withdrawing_an_unknown_request_is_not_found():
+    with pytest.raises(ValueError, match="not found"):
+        leave.withdraw(_withdraw_client(), "facility-1", "nope",
+                       profile_id="p-1", staff_id="staff-1")

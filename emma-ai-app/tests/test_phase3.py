@@ -450,7 +450,7 @@ def test_kpi_overview_covers_every_metric(token):
     body = client.get("/kpi/overview", headers=_auth(token)).json()
     assert set(body) == {
         "conflict_rate", "an_gini", "shift_fairness", "ai_acceptance",
-        "external_workforce", "staffing_ratio_compliance",
+        "external_workforce", "staffing_ratio_compliance", "task_completion",
     }
     ratio = body["staffing_ratio_compliance"]
     assert ratio["checks"] > 0

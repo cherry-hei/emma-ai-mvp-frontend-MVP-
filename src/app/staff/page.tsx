@@ -1,10 +1,13 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import type { Staff } from '@/lib/types'
 import { api } from '@/lib/api'
 import type { ApiStaff, StaffAiAnalysis, StaffDetail } from '@/lib/apiTypes'
 import { useLang } from '@/components/layout/LanguageContext'
+import { useAuth } from '@/components/layout/AuthContext'
+import { canWrite } from '@/lib/permissions'
+import { AddStaffModal } from '@/components/staff/AddStaffModal'
 
 // UI staff = demo shape + optional links to the real API record.
 type StaffType = Staff & { apiId?: string; apiStatus?: string }
@@ -385,14 +388,24 @@ function ProfileModal({ staff, idx, onClose }: { staff: StaffType; idx: number; 
 export default function StaffPage() {
   const { lang } = useLang()
   const isZH = lang === 'zh'
+  const { user } = useAuth()
   const [search, setSearch] = useState('')
   const [filterRole, setFilterRole] = useState<string>('ALL')
   const [selected, setSelected] = useState<{ staff: StaffType; idx: number } | null>(null)
+  const [addOpen, setAddOpen] = useState(false)
+  const [notice, setNotice] = useState('')
+  // Per the RBAC matrix, OWNER and ADMIN_CLERK may write a staff profile; the
+  // API enforces it too, so this only avoids offering a door that won't open.
+  const canAddStaff = canWrite(user?.role, 'staff.profile_write')
 
   // Pull the real staff directory from the API; fall back to demo data if the
   // API is unreachable or no dev creds are configured, so the page never breaks.
   // Always real: the directory is the live API record set (null = still loading).
   const [liveStaff, setLiveStaff] = useState<StaffType[] | null>(null)
+  const reloadStaff = useCallback(
+    () => api.listStaff().then((rows) => setLiveStaff(mapApiStaff(rows))),
+    [],
+  )
   useEffect(() => {
     let cancelled = false
     api.listStaff()
@@ -428,9 +441,15 @@ export default function StaffPage() {
           <h1 className="text-xl font-bold text-gray-900">{L.title}</h1>
           <p className="text-xs text-gray-500 mt-0.5">{L.subtitle}</p>
         </div>
-        <button className="px-4 py-2 text-white text-xs font-semibold rounded-xl" style={{ background: PINK }}>
-          {L.add_staff}
-        </button>
+        <div className="flex items-center gap-3">
+          {notice && <span className="text-xs font-medium text-emerald-600">{notice}</span>}
+          {canAddStaff && (
+            <button onClick={() => setAddOpen(true)}
+              className="px-4 py-2 text-white text-xs font-semibold rounded-xl" style={{ background: PINK }}>
+              {L.add_staff}
+            </button>
+          )}
+        </div>
       </div>
 
       <div className="flex gap-3 flex-wrap">
@@ -513,6 +532,19 @@ export default function StaffPage() {
       )}
 
       {selected && <ProfileModal staff={selected.staff} idx={selected.idx} onClose={() => setSelected(null)} />}
+
+      {addOpen && (
+        <AddStaffModal
+          isZH={isZH}
+          onClose={() => setAddOpen(false)}
+          onCreated={(name) => {
+            setAddOpen(false)
+            setNotice(isZH ? `已新增 ${name}` : `${name} added`)
+            window.setTimeout(() => setNotice(''), 3000)
+            reloadStaff().catch(() => {})
+          }}
+        />
+      )}
     </div>
   )
 }

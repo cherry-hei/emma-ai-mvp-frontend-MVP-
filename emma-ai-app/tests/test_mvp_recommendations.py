@@ -425,3 +425,37 @@ def test_names_survive_an_unreachable_directory():
     out = rec_svc.attach(db, "f1", [{"id": "r1"}])
     assert len(out[0]["recommendations"]) == 1
     assert out[0]["recommendations"][0]["recommended_by_name"] is None
+
+
+# ── the shape the approval screen reads ─────────────────────────────────────
+def test_each_recommendation_carries_the_approval_screen_aliases():
+    """`recommender_name` / `recommender_role` / `decision` are what the screen
+    binds to; the columns are named after the table. Both travel, so neither the
+    schema nor the screen has to be renamed to match the other."""
+    rows = [{**_rec("p-nurse", "approve"), "leave_request_id": "r1",
+             "recommended_role": "NURSE_MGR", "reason": "cover is fine"}]
+    rec = rec_svc.attach(_directory(rows), "f1", [{"id": "r1"}])[0]["recommendations"][0]
+    assert rec["recommender_name"] == "李美玲"
+    assert rec["recommender_role"] == "NURSE_MGR"
+    assert rec["decision"] == "approve"
+    # The canonical names stay - the aliases are additive, not a rename.
+    assert (rec["recommended_role"], rec["recommendation"]) == ("NURSE_MGR", "approve")
+    assert rec["reason"] and rec["created_at"]
+
+
+# ── withdraw: authorised by identity, not by role ───────────────────────────
+@pytest.mark.parametrize("role", ["FRONTLINE", "NURSE_MGR", "ADMIN_CLERK", "OWNER"])
+def test_withdraw_is_not_a_role_gate(as_role, role):
+    """Unlike the decision, `/withdraw` refuses nobody at the door: a care worker
+    withdraws their own request, an OWNER cancels any. Whose request it is gets
+    decided in the handler, where the data can answer it - so the only thing that
+    must not happen here is a 403 on the way in."""
+    r = as_role(role).post("/leave-requests/req-1/withdraw", json={})
+    assert r.status_code != 403, f"{role} must reach the withdraw handler"
+
+
+def test_withdraw_takes_an_optional_reason():
+    from emma_core.models import WithdrawRequest
+
+    assert WithdrawRequest().reason is None
+    assert WithdrawRequest(reason="changed my mind").reason == "changed my mind"

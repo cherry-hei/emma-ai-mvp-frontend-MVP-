@@ -7,10 +7,47 @@ import type {
   ShiftDef, TaskDefOut, ValidationOut, VersionOut,
 } from '@/lib/apiTypes'
 import { useLang } from '@/components/layout/LanguageContext'
+import { CreateShiftModal } from '@/components/modals/CreateShiftModal'
+import { canSeeTask, reasonText } from '@/lib/shiftRules'
 import { AiOptionsModal } from './AiOptionsModal'
 import { CreateEventModal } from './CreateEventModal'
 
 const PINK = '#E8187A'
+
+// Which period the scheduler was last working on. Without this the board reopens
+// on `periods[0]`, and `list_periods` orders by `period_start desc` - so a home
+// that has planned a future cycle lands on that empty cycle every time and the
+// current period's saved draft reads as "my edits are gone". The draft was never
+// lost; the board was simply pointed at a different period.
+const PERIOD_KEY = 'emma.roster.periodId'
+const LOG_KEY = 'emma.roster.saveLog'
+
+function today(): string {
+  const d = new Date()
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
+
+/**
+ * Last period the user chose, if it still exists; else the period containing
+ * today; else the most recent one that has already started; else the newest.
+ *
+ * The fallbacks matter on a fresh browser (or after the remembered period is
+ * deleted): "the cycle we are living in" is the one a scheduler means by
+ * "the roster", not the furthest-out one that happens to sort first.
+ */
+function pickPeriod(ps: PeriodOut[]): string {
+  if (!ps.length) return ''
+  let remembered: string | null = null
+  try { remembered = window.localStorage.getItem(PERIOD_KEY) } catch { /* private mode */ }
+  if (remembered && ps.some((p) => p.id === remembered)) return remembered
+  const now = today()
+  const current = ps.find((p) => p.period_start <= now && now <= p.period_end)
+  if (current) return current.id
+  // `ps` is already newest-first by period_start, so the first one that has
+  // started is the most recent past period.
+  const started = ps.find((p) => p.period_start <= now)
+  return (started ?? ps[0]).id
+}
 
 // Cell colors mirror emma_core.constants.SHIFT_STYLE (backend), with a neutral default.
 const SHIFT_STYLE: Record<string, { bg: string; fg: string }> = {
@@ -53,7 +90,6 @@ type EditState = {
   date: string
   shiftType: string
   tasks: string[]
-  isNew?: boolean
   wasWorking?: boolean
 }
 
@@ -63,87 +99,6 @@ type SaveItem = {
   title: string
   subtitle: string
   createdAt: string
-}
-
-// Turn one machine reason into something a manager can act on. Anything the UI
-// has no wording for still shows its reason code rather than being swallowed —
-// a silent rejection is worse than an ugly one.
-function reasonText(issue: RuleIssue, isZH: boolean): string {
-  switch (issue.reason) {
-    case 'rank':
-      return isZH
-        ? `職級不符（需 ${issue.required}，實為 ${issue.actual}）`
-        : `wrong rank — needs ${issue.required}, this is ${issue.actual}`
-    case 'shift_type':
-      return isZH
-        ? `更別不符（此任務屬 ${issue.required} 更）`
-        : `wrong shift — that code belongs to the ${issue.required} shift`
-    case 'medication_audit':
-      return isZH ? '未通過藥物審核' : 'not medication-audited'
-    case 'unaudited_external':
-      return isZH
-        ? `未審核外援僅可做 ${issue.allowed_task_codes?.join(' / ')}`
-        : `unaudited external staff may only do ${issue.allowed_task_codes?.join(' / ')}`
-    case 'qualification_all_of':
-      return isZH
-        ? `缺少資格：${issue.missing?.join('、')}`
-        : `missing qualification: ${issue.missing?.join(', ')}`
-    case 'qualification_any_of':
-      return isZH ? '缺少任一必要資格' : 'missing one of the required qualifications'
-    case 'qualification_none_of':
-      return isZH
-        ? `資格互斥：${issue.blocked?.join('、')}`
-        : `blocked by qualification: ${issue.blocked?.join(', ')}`
-    case 'new_staff_restricted':
-      return isZH ? '新入職員工需導師陪同' : 'new staff need a mentor for this duty'
-    case 'unknown_task':
-      return isZH ? '任務不在任務字典內' : 'not in the task dictionary'
-    case 'unit':
-    case 'shift_unit':
-      return isZH ? '單位不符' : 'wrong unit'
-    default:
-      return issue.message || issue.reason || (isZH ? '不符合規則' : 'not allowed')
-  }
-}
-
-function toMinutes(hhmm?: string | null): number | null {
-  if (!hhmm) return null
-  const [h, m] = hhmm.slice(0, 5).split(':').map(Number)
-  return Number.isFinite(h) && Number.isFinite(m) ? h * 60 + m : null
-}
-
-/**
- * Mirrors `shift_type_matches` on the server.
- *
- * A split shift (A/N) is two duty windows, so a morning code genuinely belongs
- * on that cell. Filtering it out of the picker would hide a duty the rules
- * accept — the manager would think it was forbidden rather than simply absent.
- */
-function shiftCovers(required: string | null | undefined, shiftType: string,
-                     defs: ShiftDef[]): boolean {
-  if (!required || required === shiftType) return true
-  const actual = defs.find((d) => d.shift_type === shiftType)
-  if (!actual?.segments?.length) return false
-  const target = defs.find((d) => d.shift_type === required)
-  const start = toMinutes(target?.start_time)
-  const end = toMinutes(target?.end_time)
-  if (start === null || end === null) return false
-  return actual.segments.some((seg) => {
-    const segStart = toMinutes(seg.start)
-    if (segStart === null) return false
-    // The window may wrap past midnight, in which case it is two spans.
-    return end <= start
-      ? segStart >= start || segStart < end
-      : segStart >= start && segStart < end
-  })
-}
-
-function canSeeTask(actualRank: string, task: TaskDefOut, shiftType: string,
-                    defs: ShiftDef[]): boolean {
-  if (!shiftCovers(task.shift_type, shiftType, defs)) return false
-  if (!task.required_rank || task.required_rank === actualRank) return true
-  return new Set([actualRank, task.required_rank]).size === 2
-    && [actualRank, task.required_rank].every((rank) => rank === 'CW' || rank === 'HCA')
 }
 
 export function RealRosterBoard() {
@@ -177,12 +132,16 @@ export function RealRosterBoard() {
   const [publishedIds, setPublishedIds] = useState<Set<string>>(new Set())
   const [publishError, setPublishError] = useState('')
   const [createEventOpen, setCreateEventOpen] = useState(false)
+  const [createShiftOpen, setCreateShiftOpen] = useState(false)
   const [pendingLog, setPendingLog] = useState<SaveItem[]>([])
   const [publishedLog, setPublishedLog] = useState<SaveItem[]>([])
   const [showSaveList, setShowSaveList] = useState(false)
   const [showPublishList, setShowPublishList] = useState(false)
   const gridRequestRef = useRef(0)
   const validationRequestRef = useRef(0)
+  // Which period's logs are currently in state, so the writer below never saves
+  // an empty initial state over a stored list before the reader has run.
+  const logsHydrated = useRef('')
 
   const T = {
     period: isZH ? '週期' : 'Period', newPeriod: isZH ? '＋ 新週期' : '＋ New period',
@@ -211,8 +170,6 @@ export function RealRosterBoard() {
     actionCreate: isZH ? '新增更次' : 'New shift',
     actionDelete: isZH ? '刪除更次' : 'Delete shift',
     actionEvent: isZH ? '新增特別事項' : 'New special event',
-    staffLabel: isZH ? '員工' : 'Staff',
-    dateLabel: isZH ? '日期' : 'Date',
   }
 
   const flash = (m: string) => { setNotice(m); setError(''); window.setTimeout(() => setNotice(''), 2500) }
@@ -235,9 +192,37 @@ export function RealRosterBoard() {
 
   useEffect(() => {
     api.rosterPeriods()
-      .then((ps) => { setPeriods(ps); setPeriodId((prev) => prev || (ps[0]?.id ?? '')) })
+      .then((ps) => { setPeriods(ps); setPeriodId((prev) => prev || pickPeriod(ps)) })
       .catch((e) => setError(e instanceof Error ? e.message : 'Failed to load periods'))
   }, [])
+
+  // Remember the choice so leaving the page - or signing out and back in -
+  // returns to the same period rather than to whichever one sorts first.
+  useEffect(() => {
+    if (!periodId) return
+    try { window.localStorage.setItem(PERIOD_KEY, periodId) } catch { /* private mode */ }
+  }, [periodId])
+
+  // The save/publish lists are a per-period record of what this scheduler has
+  // changed since the last publish. They outlive a page navigation for the same
+  // reason the period does: a list that empties itself looks like lost work.
+  useEffect(() => {
+    if (!periodId) return
+    let stored: { pending?: SaveItem[]; published?: SaveItem[] } = {}
+    try { stored = JSON.parse(window.localStorage.getItem(`${LOG_KEY}:${periodId}`) || '{}') } catch { /* ignore */ }
+    setPendingLog(Array.isArray(stored.pending) ? stored.pending : [])
+    setPublishedLog(Array.isArray(stored.published) ? stored.published : [])
+    logsHydrated.current = periodId
+  }, [periodId])
+
+  useEffect(() => {
+    if (!periodId || logsHydrated.current !== periodId) return
+    try {
+      window.localStorage.setItem(`${LOG_KEY}:${periodId}`, JSON.stringify({
+        pending: pendingLog.slice(0, 100), published: publishedLog.slice(0, 100),
+      }))
+    } catch { /* quota or private mode - the lists are a convenience, not a record */ }
+  }, [periodId, pendingLog, publishedLog])
 
   const loadVersions = useCallback(async (pid: string) => {
     const vs = await api.rosterVersions(pid)
@@ -422,14 +407,13 @@ export function RealRosterBoard() {
     } catch (e) { setPublishError(e instanceof Error ? e.message : 'Publish failed') } finally { setPublishingId('') }
   }
 
+  // "➕ Create Shift" opens the full dialog - staff, day, shift type and a task
+  // schedule with times. Clicking a cell still opens the quick inline editor
+  // below; that one is for changing a code in two clicks, this one is for
+  // planning a shift's work.
   function handleCreateShift() {
     if (!grid?.rows.length || !columns.length) return
-    const first = grid.rows[0].staff
-    setCellIssues([])
-    setEditing({
-      staffId: first.id, staffName: first.name_en || first.name, staffRank: first.rank,
-      date: columns[0], shiftType: '', tasks: [], isNew: true, wasWorking: false,
-    })
+    setCreateShiftOpen(true)
   }
 
   function handleEventCreated(title: string) {
@@ -692,48 +676,9 @@ export function RealRosterBoard() {
         <div className="fixed inset-0 z-50 flex items-center justify-center p-6" style={{ background: 'rgba(0,0,0,0.4)' }}
           onClick={() => setEditing(null)}>
           <div className="bg-white w-full max-w-md rounded-2xl shadow-2xl p-6" onClick={(e) => e.stopPropagation()}>
-            <div className="text-sm font-bold text-gray-900">{editing.isNew ? T.createShift : T.edit}</div>
+            <div className="text-sm font-bold text-gray-900">{T.edit}</div>
 
-            {editing.isNew ? (
-              <div className="grid grid-cols-2 gap-2 mb-4 mt-2">
-                <label className="block">
-                  <span className="text-[10px] font-bold uppercase tracking-wider text-gray-400">{T.staffLabel}</span>
-                  <select
-                    value={editing.staffId}
-                    onChange={(e) => {
-                      const s = grid?.rows.find((r) => r.staff.id === e.target.value)?.staff
-                      if (!s) return
-                      const cell = cellLookup.get(s.id)?.get(editing.date)
-                      setEditing({
-                        ...editing, staffId: s.id, staffName: s.name_en || s.name, staffRank: s.rank,
-                        shiftType: cell?.shift_type ?? '', tasks: cell?.tasks ?? [], wasWorking: !!cell?.shift_type,
-                      })
-                    }}
-                    className="w-full mt-1 px-2 py-1.5 rounded-lg border border-gray-200 text-xs bg-white">
-                    {grid?.rows.map((r) => (
-                      <option key={r.staff.id} value={r.staff.id}>{r.staff.name_en || r.staff.name}</option>
-                    ))}
-                  </select>
-                </label>
-                <label className="block">
-                  <span className="text-[10px] font-bold uppercase tracking-wider text-gray-400">{T.dateLabel}</span>
-                  <select
-                    value={editing.date}
-                    onChange={(e) => {
-                      const cell = cellLookup.get(editing.staffId)?.get(e.target.value)
-                      setEditing({
-                        ...editing, date: e.target.value,
-                        shiftType: cell?.shift_type ?? '', tasks: cell?.tasks ?? [], wasWorking: !!cell?.shift_type,
-                      })
-                    }}
-                    className="w-full mt-1 px-2 py-1.5 rounded-lg border border-gray-200 text-xs bg-white">
-                    {columns.map((iso) => <option key={iso} value={iso}>{iso}</option>)}
-                  </select>
-                </label>
-              </div>
-            ) : (
-              <div className="text-xs text-gray-500 mb-4">{editing.staffName} · {editing.date}</div>
-            )}
+            <div className="text-xs text-gray-500 mb-4">{editing.staffName} · {editing.date}</div>
 
             <div className="flex flex-wrap gap-1.5 mb-4">
               {shiftDefs.map((sd) => {
@@ -827,6 +772,24 @@ export function RealRosterBoard() {
           publishError={publishError} periodLabel={periodLabel} isZH={isZH}
           publishingId={publishingId} publishedIds={publishedIds}
           onPublish={handlePublishOption} onClose={() => setAiOpen(false)}
+        />
+      )}
+
+      {createShiftOpen && grid && (
+        <CreateShiftModal
+          open={createShiftOpen}
+          onClose={() => setCreateShiftOpen(false)}
+          versionId={activeVersionId}
+          staff={grid.rows.map((r) => r.staff)}
+          dates={columns}
+          shiftDefs={shiftDefs}
+          taskDefs={taskDefs}
+          onSaved={({ staffName, date, shiftType, wasWorking }) => {
+            logChange(wasWorking ? 'edit' : 'create',
+                      wasWorking ? T.actionEdit : T.actionCreate,
+                      `${staffName} · ${date} · ${shiftType}`)
+            loadGrid(periodId, versionId)
+          }}
         />
       )}
 

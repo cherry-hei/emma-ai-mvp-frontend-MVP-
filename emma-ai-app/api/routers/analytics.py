@@ -94,6 +94,13 @@ def external_workforce(period_id: str | None = Query(default=None),
     return kpi_svc.external_workforce(ctx.client, ctx.facility_id, period_id)
 
 
+@router.get("/kpi/task-completion")
+def task_completion(period_id: str | None = Query(default=None),
+                    ctx: AuthCtx = Depends(require_read(Feature.KPI))):
+    """The KPI strip's "Completion" card - % of assigned task codes ticked off."""
+    return kpi_svc.task_completion(ctx.client, ctx.facility_id, period_id)
+
+
 # Narrower than the other six, and narrower than compliance.
 #
 # The v1 guess put this under COMPLIANCE, reasoning that a therapist has a

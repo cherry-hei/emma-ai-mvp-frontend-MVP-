@@ -5,307 +5,199 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import { Button } from '@/components/ui/button'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { useLang } from '@/components/layout/LanguageContext'
+import { ApiRuleError, api } from '@/lib/api'
+import type { ShiftDef, StaffLite, TaskDefOut } from '@/lib/apiTypes'
+import { canSeeTask, issueLines, taskLabel } from '@/lib/shiftRules'
 
-type TaskRow = {
-  id: string
-  start: string
-  end: string
-  task: string
-  customTask: string
-}
+/**
+ * Create or edit one roster cell, with a per-task time schedule (spec 3.1).
+ *
+ * Every list here comes from the API - staff from the roster grid, ranks from
+ * those staff, shift types from `/shift-definitions`, tasks from
+ * `/task-definitions` filtered by the same eligibility rule the server enforces.
+ * The layout is unchanged; only the data behind it is. The previous version
+ * shipped a hardcoded NAAC staff roll and a NAAC shift dictionary, which meant
+ * the picker offered names and codes the other home does not have.
+ *
+ * Times are shown, not edited: the shift's hours belong to the facility's shift
+ * definition, and the API derives them from `shift_type`. An editable field the
+ * write ignores would be a lie about what was saved. Task rows carry their own
+ * times, and those are real - they post to `/task-assignments`.
+ */
 
-type ShiftFormPayload = {
-  date: string
-  position: string
-  employee: string
-  shiftCategory: string
-  timeStart: string
-  timeEnd: string
-  aiToggle: boolean
-  shiftType: string
-  tasks: { id: string; start: string; end: string; task: string; customTask: string; finalTask: string }[]
-}
+type TaskRow = { id: string; start: string; end: string; taskId: string; note: string }
 
 export interface CreateShiftModalProps {
   open: boolean
   onClose: () => void
-  mode: 'create' | 'edit'
-  initialShift: { staffId: number; dayIndex: number; shiftType: string; tasks?: string[]; mealCode?: string; note?: string } | null
-  onSaveChange: (payload: { shiftType: string }) => void
-  onDeleteShift: () => void
+  mode?: 'create' | 'edit'
+  /** The manual draft being edited. Writes are refused without it. */
+  versionId: string
+  staff: StaffLite[]
+  dates: string[]
+  shiftDefs: ShiftDef[]
+  taskDefs: TaskDefOut[]
+  /** Pre-selection when opened from a cell. */
+  initial?: { staffId?: string; date?: string; shiftType?: string; tasks?: string[] } | null
+  /** Called after the cell (and any task rows) are saved. */
+  onSaved: (summary: { staffName: string; date: string; shiftType: string; wasWorking: boolean }) => void
+  onDeleted?: (summary: { staffName: string; date: string }) => void
 }
 
-/* ---------- NAAC大興宿舍 Position & Staff Options ---------- */
+const PINK = '#E8187A'
 
-const TASK_OPTIONS_ZH = ['派藥','協助給藥','約束紀錄','清潔飯堂','清潔宿舍','清洗廁所','清洗床單搽藥','肌能運動','陪診','到訪服務','外出活動','廚房工作','文件紀錄','其他']
-const TASK_OPTIONS_EN = ['Medication','Assist Medication','Restraint Record','Clean Canteen','Clean Hostel','Clean Washrooms','Laundry & Ointment','Exercise Training','Escort Clinic','Visiting Service','Outing Activity','Kitchen Work','Documentation','Other']
-
-const POSITION_OPTIONS_ZH = [
-  { value: 'hm',   label: '主任' },
-  { value: 'sw',   label: '社工' },
-  { value: 'en',   label: '護士' },
-  { value: 'hw',   label: '保健員' },
-  { value: 'aw',   label: '家舍導師' },
-  { value: 'aaw',  label: '助理活動工作員' },
-  { value: 'pt',   label: '物理治療師' },
-  { value: 'clerk',label: '文員' },
-  { value: 'cw',   label: '助理員' },
-  { value: 'cook', label: '廚師' },
-  { value: 'ka',   label: '廚房助理' },
-  { value: 'wm',   label: '工友' },
-  { value: 'relief', label: '替假' },
-]
-
-const POSITION_OPTIONS_EN = [
-  { value: 'hm',   label: 'Home Manager' },
-  { value: 'sw',   label: 'Social Worker' },
-  { value: 'en',   label: 'Enrolled Nurse' },
-  { value: 'hw',   label: 'Health Worker' },
-  { value: 'aw',   label: 'Activity Worker (HP)' },
-  { value: 'aaw',  label: 'Asst. Activity Worker' },
-  { value: 'pt',   label: 'Physiotherapist' },
-  { value: 'clerk',label: 'Clerk' },
-  { value: 'cw',   label: 'Care Worker (WA)' },
-  { value: 'cook', label: 'Cook' },
-  { value: 'ka',   label: 'Kitchen Assistant' },
-  { value: 'wm',   label: 'Workman' },
-  { value: 'relief', label: 'Relief Staff' },
-]
-
-const EMPLOYEE_OPTIONS = [
-  { value: 'hm-main',  label: '主任（馬）',       role: 'hm' },
-  { value: 'sw1',      label: '社工 1 副主任（李）', role: 'sw' },
-  { value: 'sw2',      label: '社工 2（范）',      role: 'sw' },
-  { value: 'sw3',      label: '社工 3（鄧）',      role: 'sw' },
-  { value: 'en1',      label: '護士1（芝）',       role: 'en' },
-  { value: 'en2',      label: '護士2（余）',       role: 'en' },
-  { value: 'en3',      label: '護士3',            role: 'en' },
-  { value: 'hw1',      label: '保健員 1（芹）',    role: 'hw' },
-  { value: 'hw2',      label: '保健員 2（誠）',    role: 'hw' },
-  { value: 'aw1',      label: '家舍導師 1（媚）',  role: 'aw' },
-  { value: 'aw2',      label: '家舍導師 2（姜）',  role: 'aw' },
-  { value: 'aw3',      label: '家舍導師 3（潘）',  role: 'aw' },
-  { value: 'aw4',      label: '家舍導師 4（黎）',  role: 'aw' },
-  { value: 'aw5',      label: '家舍導師 5（姬）',  role: 'aw' },
-  { value: 'aw6',      label: '家舍導師 6（卉）',  role: 'aw' },
-  { value: 'aaw1',     label: '助理活動工作員（邱）', role: 'aaw' },
-  { value: 'pt1',      label: '物理治療師（賢）',  role: 'pt' },
-  { value: 'clerk1',   label: '文員（鄧）',        role: 'clerk' },
-  { value: 'cw1',      label: '助理員 1（蔡）',    role: 'cw' },
-  { value: 'cw2',      label: '助理員 2（梅）',    role: 'cw' },
-  { value: 'cw3',      label: '助理員 3（裕）',    role: 'cw' },
-  { value: 'cw4',      label: '助理員 4（花）',    role: 'cw' },
-  { value: 'cw5',      label: '助理員 5（儀）',    role: 'cw' },
-  { value: 'cw6',      label: '助理員 6（周）',    role: 'cw' },
-  { value: 'cw7',      label: '助理員 7（彩）',    role: 'cw' },
-  { value: 'cw8',      label: '助理員 8（慧）',    role: 'cw' },
-  { value: 'cw9',      label: '助理員 9（高）',    role: 'cw' },
-  { value: 'cw10',     label: '助理員 10（紅）',   role: 'cw' },
-  { value: 'cw11',     label: '助理員 11',         role: 'cw' },
-  { value: 'cw12',     label: '助理員 12（郭）',   role: 'cw' },
-  { value: 'cw13',     label: '助理員 13（雄）',   role: 'cw' },
-  { value: 'cw14',     label: '助理員 14',         role: 'cw' },
-  { value: 'cook1',    label: '廚師 1（和）',      role: 'cook' },
-  { value: 'cook2',    label: '廚師 2（殷）',      role: 'cook' },
-  { value: 'ka1',      label: '廚房助理（董）',    role: 'ka' },
-  { value: 'wm1',      label: '工友 1（孫）',      role: 'wm' },
-  { value: 'wm2',      label: '工友 2（津）',      role: 'wm' },
-  { value: 'relief1',  label: '替假 1',            role: 'relief' },
-  { value: 'relief2',  label: '替假 2',            role: 'relief' },
-  { value: 'relief3',  label: '替假 3',            role: 'relief' },
-  { value: 'relief4',  label: '替假 4',            role: 'relief' },
-]
-
-/* ---------- Shift Type Options (from NAAC shift codes) ---------- */
-
-// Durations match the NAAC dictionary (docs/naac/shift_codes.csv). The
-// time-of-day words that used to sit in these brackets - 早更 in A/B/G - were
-// dropped on 1 Aug: the letter carries no fixed hour, only the duration does,
-// and the start time comes from the code's digits (A7 = 07:00).
-const SHIFT_OPTIONS_ZH = [
-  { value: 'A',   label: 'A更（8小時）' },
-  { value: 'B',   label: 'B更（9小時）' },
-  { value: 'G',   label: 'G更（7小時）' },
-  { value: 'P',   label: 'P更（10pm下班）' },
-  { value: 'N',   label: 'N更（通宵 9小時）' },
-  { value: 'K',   label: 'K更（通宵 10小時）' },
-  { value: 'AN',  label: 'A/N更（A更+通宵 17小時）' },
-  { value: 'AL',  label: 'AL（年假）' },
-  { value: 'SL',  label: 'SL（病假）' },
-  { value: 'PH',  label: 'PH（公眾假期）' },
-  { value: 'CL',  label: 'CL（補假）' },
-  { value: 'OFF', label: 'O（休班日）' },
-]
-
-const SHIFT_OPTIONS_EN = [
-  { value: 'A',   label: 'A Shift (8h)' },
-  { value: 'B',   label: 'B Shift (9h)' },
-  { value: 'G',   label: 'G Shift (7h)' },
-  { value: 'P',   label: 'P Shift (ends 10pm)' },
-  { value: 'N',   label: 'N Shift (overnight 9h)' },
-  { value: 'K',   label: 'K Shift (overnight 10h)' },
-  { value: 'AN',  label: 'A/N Shift (A + overnight, 17h)' },
-  { value: 'AL',  label: 'AL (Annual Leave)' },
-  { value: 'SL',  label: 'SL (Sick Leave)' },
-  { value: 'PH',  label: 'PH (Public Holiday)' },
-  { value: 'CL',  label: 'CL (Compensatory Leave)' },
-  { value: 'OFF', label: 'O (Day Off)' },
-]
-
-const SHIFT_TYPE_MAP: Record<string, string> = {
-  A: 'A', B: 'B', E: 'A', G: 'A', P: 'P', N: 'N', K: 'N',
-  AN: 'AN', AL: 'AL', SL: 'SL', CL: 'CL', OFF: 'OFF', SLEEP: 'OFF',
-  O: 'OFF', PH: 'PH', NO: 'OFF', BDL: 'AL', FFL: 'AL',
+function hhmm(value?: string | null): string {
+  return value ? value.slice(0, 5) : '--:--'
 }
 
-/** Determine if a shiftCode represents an off/leave day */
-function isOffDay(code: string | undefined): boolean {
-  if (!code) return true
-  const c = code.toUpperCase()
-  if (c === 'O' || c === 'O,' || c === 'PH' || c === 'NO') return true
-  if (c.startsWith('AL') || c.startsWith('SL') || c.startsWith('CL') || c.startsWith('BDL') || c.startsWith('FFL')) return true
-  return false
-}
-
-/* ---------- Shift time defaults ---------- */
-const SHIFT_TIME_DEFAULTS: Record<string, { start: string; end: string }> = {
-  A:   { start: '07:00', end: '15:00' },
-  B:   { start: '07:00', end: '16:00' },
-  G:   { start: '07:00', end: '14:00' },
-  P:   { start: '14:00', end: '22:00' },
-  N:   { start: '22:00', end: '07:00' },
-  K:   { start: '22:00', end: '08:00' },
-  AN:  { start: '07:00', end: '07:00' },
-  AL:  { start: '00:00', end: '00:00' },
-  SL:  { start: '00:00', end: '00:00' },
-  PH:  { start: '00:00', end: '00:00' },
-  CL:  { start: '00:00', end: '00:00' },
-  OFF: { start: '00:00', end: '00:00' },
-}
-
-function createDefaultTasks(): TaskRow[] {
-  return [
-    { id: '1', start: '07:00', end: '09:00', task: '派藥', customTask: '' },
-    { id: '2', start: '09:00', end: '11:00', task: '文件紀錄', customTask: '' },
-  ]
-}
-
-export function CreateShiftModal({ open, onClose, mode = 'create', initialShift, onSaveChange, onDeleteShift }: CreateShiftModalProps) {
+export function CreateShiftModal({
+  open, onClose, mode = 'create', versionId, staff, dates, shiftDefs, taskDefs,
+  initial, onSaved, onDeleted,
+}: CreateShiftModalProps) {
   const { lang } = useLang()
   const isZH = lang === 'zh'
 
   const L = {
-    title_create:  isZH ? '建立更期與工作安排' : 'Create Shift & Task Plan',
-    title_edit:    isZH ? '編輯更期與工作安排' : 'Edit Shift & Task Plan',
-    ai_sub:        isZH ? 'AI 智能排更調整' : 'AI Intelligent Scheduling',
-    date:          isZH ? '日期' : 'Date',
-    position:      isZH ? '選擇職位' : 'Position',
-    employee:      isZH ? '指派員工' : 'Assign Staff',
-    no_staff:      isZH ? '此職位暫無員工' : 'No staff for this position',
-    time_range:    isZH ? '時間範圍' : 'Time Range',
-    shift_type:    isZH ? '更別類型' : 'Shift Type',
+    title_create: isZH ? '建立更期與工作安排' : 'Create Shift & Task Plan',
+    title_edit: isZH ? '編輯更期與工作安排' : 'Edit Shift & Task Plan',
+    ai_sub: isZH ? '排更與工作分配' : 'Shift & task assignment',
+    date: isZH ? '日期' : 'Date',
+    position: isZH ? '職級' : 'Rank',
+    all_positions: isZH ? '所有職級' : 'All ranks',
+    employee: isZH ? '指派員工' : 'Assign Staff',
+    no_staff: isZH ? '此職級暫無員工' : 'No staff at this rank',
+    time_range: isZH ? '時間範圍' : 'Time Range',
+    time_note: isZH ? '由更別定義，不可個別修改' : 'set by the shift definition',
+    shift_type: isZH ? '更別類型' : 'Shift Type',
+    pick_shift: isZH ? '請選擇更別' : 'Select a shift type',
     task_schedule: isZH ? '工作時間表' : 'Task Schedule',
-    adjustable:    isZH ? '可調整時間及工作內容' : 'Adjustable time & tasks',
-    to:            isZH ? '至' : 'to',
-    delete_task:   isZH ? '刪除' : 'Remove',
-    task_ph:       isZH ? '選擇工作內容' : 'Select task',
-    custom_ph:     isZH ? '輸入自訂工作內容' : 'Enter custom task',
-    extra_ph:      isZH ? '可補充工作內容' : 'Additional notes',
-    custom_opt:    isZH ? '其他（自行輸入）' : 'Other (custom)',
-    add_task:      isZH ? '+ 新增工作項目' : '+ Add Task',
-    item:          isZH ? '項目' : 'Item',
-    ai_title:      isZH ? 'Emma AI Task Optimisation' : 'Emma AI Task Optimisation',
-    ai_desc:       isZH ? '根據員工能力及更期內容提供 AI 重新編排建議' : 'AI reschedule suggestions based on staff skills',
-    delete_shift:  isZH ? '刪除更期' : 'Delete Shift',
-    cancel:        isZH ? '取消' : 'Cancel',
-    save_ai:       'Save & AI Reschedule Suggestion',
-    save:          isZH ? '儲存更改' : 'Save Changes',
+    adjustable: isZH ? '可調整時間及工作內容' : 'Adjustable time & tasks',
+    to: isZH ? '至' : 'to',
+    delete_task: isZH ? '刪除' : 'Remove',
+    task_ph: isZH ? '選擇工作內容' : 'Select task',
+    note_ph: isZH ? '備註（可選）' : 'Note (optional)',
+    add_task: isZH ? '+ 新增工作項目' : '+ Add Task',
+    item: isZH ? '項目' : 'Item',
+    no_tasks: isZH ? '此更別／職級沒有可指派的任務' : 'No tasks this rank may do on this shift',
+    delete_shift: isZH ? '刪除更期' : 'Delete Shift',
+    cancel: isZH ? '取消' : 'Cancel',
+    save: isZH ? '儲存更改' : 'Save Changes',
+    rejected: isZH ? '此更次不可指派以下任務' : 'These tasks are not allowed on this shift',
+    readonly: isZH ? '此版本不可編輯' : 'This version is not editable',
   }
 
-  const TASK_OPTIONS   = isZH ? TASK_OPTIONS_ZH   : TASK_OPTIONS_EN
-  const POSITION_OPTIONS = isZH ? POSITION_OPTIONS_ZH : POSITION_OPTIONS_EN
-  const SHIFT_OPTIONS  = isZH ? SHIFT_OPTIONS_ZH  : SHIFT_OPTIONS_EN
+  const [rank, setRank] = useState('ALL')
+  const [staffId, setStaffId] = useState('')
+  const [date, setDate] = useState('')
+  const [shiftType, setShiftType] = useState('')
+  const [rows, setRows] = useState<TaskRow[]>([])
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState('')
+  const [issues, setIssues] = useState<string[]>([])
 
-  const [aiToggle, setAiToggle] = useState(true)
-  const [date, setDate] = useState('2026-06-08')
-  const [position, setPosition] = useState('cw')
-  const [employee, setEmployee] = useState('cw1')
-  const [shiftCategory, setShiftCategory] = useState('A')
-  const [timeStart, setTimeStart] = useState('07:00')
-  const [timeEnd, setTimeEnd] = useState('15:00')
-  const [tasks, setTasks] = useState<TaskRow[]>(createDefaultTasks())
-  const [note, setNote] = useState('')
-  const [mealCode, setMealCode] = useState('')
+  const ranks = useMemo(
+    () => ['ALL', ...Array.from(new Set(staff.map((s) => s.rank))).sort()],
+    [staff],
+  )
+  const visibleStaff = useMemo(
+    () => (rank === 'ALL' ? staff : staff.filter((s) => s.rank === rank)),
+    [staff, rank],
+  )
+  const selected = staff.find((s) => s.id === staffId) ?? null
+  const def = shiftDefs.find((d) => d.shift_type === shiftType) ?? null
+
+  // Only tasks this rank may do on this shift - the same rule the server applies,
+  // so the picker cannot offer something the write would refuse.
+  const availableTasks = useMemo(() => {
+    if (!selected || !shiftType) return []
+    return taskDefs.filter((td) => canSeeTask(selected.rank, td, shiftType, shiftDefs))
+  }, [selected, shiftType, taskDefs, shiftDefs])
 
   useEffect(() => {
     if (!open) return
-    if (initialShift) {
-      // Check if it's an off day using the raw shiftType from the roster
-      const rawCode = initialShift.shiftType
-      if (isOffDay(rawCode)) {
-        // Map to the appropriate off category
-        if (rawCode === 'PH') setShiftCategory('PH')
-        else if (rawCode.startsWith('AL')) setShiftCategory('AL')
-        else if (rawCode.startsWith('SL')) setShiftCategory('SL')
-        else if (rawCode.startsWith('CL') || rawCode === 'CL-8') setShiftCategory('CL')
-        else if (rawCode.startsWith('BDL') || rawCode.startsWith('FFL')) setShiftCategory('AL')
-        else setShiftCategory('OFF')
-      } else {
-        const mapped = SHIFT_TYPE_MAP[initialShift.shiftType] || 'A'
-        setShiftCategory(mapped)
+    setErr(''); setIssues([]); setRows([])
+    setRank('ALL')
+    setStaffId(initial?.staffId || staff[0]?.id || '')
+    setDate(initial?.date || dates[0] || '')
+    setShiftType(initial?.shiftType || '')
+  }, [open, initial, staff, dates])
+
+  // A rank filter that hides the selected person would leave the form pointing
+  // at somebody the list no longer shows.
+  useEffect(() => {
+    if (staffId && !visibleStaff.some((s) => s.id === staffId)) {
+      setStaffId(visibleStaff[0]?.id || '')
+    }
+  }, [visibleStaff, staffId])
+
+  // Changing the shift changes which tasks are legal, so rows that are no longer
+  // offered are dropped rather than left to be rejected on save.
+  useEffect(() => {
+    const allowed = new Set(availableTasks.map((t) => t.id))
+    setRows((prev) => prev.filter((r) => !r.taskId || allowed.has(r.taskId)))
+  }, [availableTasks])
+
+  const addRow = () => setRows((prev) => [...prev, {
+    id: `${prev.length}-${Date.now()}`,
+    start: hhmm(def?.start_time) === '--:--' ? '' : hhmm(def?.start_time),
+    end: hhmm(def?.end_time) === '--:--' ? '' : hhmm(def?.end_time),
+    taskId: '', note: '',
+  }])
+  const updateRow = (id: string, patch: Partial<TaskRow>) =>
+    setRows((prev) => prev.map((r) => (r.id === id ? { ...r, ...patch } : r)))
+  const removeRow = (id: string) => setRows((prev) => prev.filter((r) => r.id !== id))
+
+  async function handleSave() {
+    if (!versionId) { setErr(L.readonly); return }
+    if (!selected || !date || !shiftType) return
+    setBusy(true); setErr(''); setIssues([])
+    const chosen = rows.filter((r) => r.taskId)
+    try {
+      const { assignment_id } = await api.upsertCell({
+        roster_version_id: versionId, staff_id: selected.id, date,
+        shift_type: shiftType,
+        tasks: chosen.map((r) => {
+          const td = taskDefs.find((t) => t.id === r.taskId)!
+          return taskLabel(td)
+        }),
+      })
+      // Times are the reason this dialog exists rather than the inline editor:
+      // the cell write records *which* tasks, these record *when*. Sent after the
+      // cell so a refused assignment never leaves orphan task rows behind.
+      for (const row of chosen) {
+        if (!row.start && !row.end) continue
+        await api.createTaskAssignment({
+          shift_assignment_id: assignment_id,
+          task_id: row.taskId,
+          start_at: row.start ? `${date}T${row.start}:00` : undefined,
+          end_at: row.end ? `${date}T${row.end}:00` : undefined,
+        }).catch(() => { /* the task is assigned; only its clock time is missing */ })
       }
-      const cat = isOffDay(rawCode) ? 'OFF' : (SHIFT_TYPE_MAP[rawCode] || 'A')
-      const times = SHIFT_TIME_DEFAULTS[cat] || SHIFT_TIME_DEFAULTS.A
-      setTimeStart(times.start)
-      setTimeEnd(times.end)
-      setNote(initialShift.note || '')
-      setMealCode(initialShift.mealCode || '')
-    } else {
-      setShiftCategory('A')
-      setTimeStart('07:00')
-      setTimeEnd('15:00')
-      setTasks(createDefaultTasks())
-      setNote('')
-      setMealCode('')
-    }
-  }, [open, initialShift])
+      onSaved({
+        staffName: selected.name_en || selected.name, date, shiftType,
+        wasWorking: !!initial?.shiftType,
+      })
+      onClose()
+    } catch (e) {
+      // An eligibility refusal is a list of fixable reasons, so the dialog stays
+      // open and shows them rather than closing on a one-liner.
+      if (e instanceof ApiRuleError) setIssues(issueLines(e.issues, isZH))
+      else setErr(e instanceof Error ? e.message : 'Save failed')
+    } finally { setBusy(false) }
+  }
 
-  // Update time when shift category changes
-  useEffect(() => {
-    const times = SHIFT_TIME_DEFAULTS[shiftCategory]
-    if (times) {
-      setTimeStart(times.start)
-      setTimeEnd(times.end)
-    }
-  }, [shiftCategory])
+  async function handleDelete() {
+    if (!selected || !date || !versionId) return
+    setBusy(true); setErr('')
+    try {
+      await api.clearCell(versionId, selected.id, date)
+      onDeleted?.({ staffName: selected.name_en || selected.name, date })
+      onClose()
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : 'Delete failed')
+    } finally { setBusy(false) }
+  }
 
-  const filteredEmployees = useMemo(() => {
-    return EMPLOYEE_OPTIONS.filter(item => item.role === position)
-  }, [position])
-
-  useEffect(() => {
-    if (!filteredEmployees.find(item => item.value === employee)) {
-      setEmployee(filteredEmployees[0]?.value || '')
-    }
-  }, [filteredEmployees, employee])
-
-  const buildPayload = (): ShiftFormPayload => ({
-    date, position, employee, shiftCategory, timeStart, timeEnd, aiToggle,
-    shiftType: initialShift?.shiftType || shiftCategory,
-    tasks: tasks.map(t => ({ ...t, finalTask: t.task === '__custom__' ? t.customTask : t.task })),
-  })
-
-  const updateTask = (id: string, patch: Partial<TaskRow>) =>
-    setTasks(prev => prev.map(row => row.id === id ? { ...row, ...patch } : row))
-
-  const addTaskRow = () =>
-    setTasks(prev => [...prev, { id: `${Date.now()}`, start: timeStart, end: timeEnd, task: '', customTask: '' }])
-
-  const removeTaskRow = (id: string) =>
-    setTasks(prev => prev.filter(row => row.id !== id))
-
-  const handleSave = () => { onSaveChange(buildPayload()); onClose() }
-  const handleDelete = () => { onDeleteShift(); onClose() }
   const isEditMode = mode === 'edit'
 
   return (
@@ -319,179 +211,173 @@ export function CreateShiftModal({ open, onClose, mode = 'create', initialShift,
                 <DialogTitle className="text-lg font-bold truncate">
                   {isEditMode ? L.title_edit : L.title_create}
                 </DialogTitle>
-                <p className="text-xs font-semibold mt-0.5" style={{ color: '#E8187A' }}>{L.ai_sub}</p>
+                <p className="text-xs font-semibold mt-0.5" style={{ color: PINK }}>{L.ai_sub}</p>
               </div>
             </div>
           </DialogHeader>
 
           <div className="min-w-0 px-6 py-4 overflow-y-auto">
             <div className="space-y-4 min-w-0">
-              {/* Date */}
+              {/* Date - constrained to the period being edited */}
               <div>
                 <label className="text-[9px] font-bold text-gray-500 uppercase tracking-wider">{L.date}</label>
-                <input type="date" value={date} onChange={e => setDate(e.target.value)}
-                  className="mt-1.5 w-full px-3.5 py-2.5 border border-gray-200 rounded-xl text-sm bg-gray-50 focus:outline-none focus:border-pink-400" />
+                <Select value={date} onValueChange={setDate}>
+                  <SelectTrigger className="mt-1.5 rounded-xl bg-gray-50 border-gray-200 w-full">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {dates.map((iso) => <SelectItem key={iso} value={iso}>{iso}</SelectItem>)}
+                  </SelectContent>
+                </Select>
               </div>
 
-              {/* Position + Employee */}
+              {/* Rank filter + staff */}
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 min-w-0">
                 <div className="min-w-0">
                   <label className="text-[9px] font-bold text-gray-500 uppercase tracking-wider">{L.position}</label>
-                  <Select value={position} onValueChange={setPosition}>
+                  <Select value={rank} onValueChange={setRank}>
                     <SelectTrigger className="mt-1.5 rounded-xl bg-gray-50 border-gray-200 w-full">
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      {POSITION_OPTIONS.map(item => <SelectItem key={item.value} value={item.value}>{item.label}</SelectItem>)}
+                      {ranks.map((r) => (
+                        <SelectItem key={r} value={r}>{r === 'ALL' ? L.all_positions : r}</SelectItem>
+                      ))}
                     </SelectContent>
                   </Select>
                 </div>
                 <div className="min-w-0">
                   <label className="text-[9px] font-bold text-gray-500 uppercase tracking-wider">{L.employee}</label>
-                  <Select value={employee} onValueChange={setEmployee}>
+                  <Select value={staffId} onValueChange={setStaffId}>
                     <SelectTrigger className="mt-1.5 rounded-xl bg-gray-50 border-gray-200 w-full">
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      {filteredEmployees.length === 0
-                        ? <SelectItem value="no-staff" disabled>{L.no_staff}</SelectItem>
-                        : filteredEmployees.map(item => <SelectItem key={item.value} value={item.value}>{item.label}</SelectItem>)
-                      }
+                      {visibleStaff.length === 0
+                        ? <SelectItem value="none" disabled>{L.no_staff}</SelectItem>
+                        : visibleStaff.map((s) => (
+                          <SelectItem key={s.id} value={s.id}>
+                            {(s.name_en || s.name)}（{s.rank}）
+                          </SelectItem>
+                        ))}
                     </SelectContent>
                   </Select>
                 </div>
               </div>
 
-              {/* Time + Shift Type */}
+              {/* Shift type + its hours */}
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 min-w-0">
                 <div className="min-w-0">
-                  <label className="text-[9px] font-bold text-gray-500 uppercase tracking-wider">{L.time_range}</label>
-                  <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-2 mt-1.5">
-                    <input type="time" value={timeStart} onChange={e => setTimeStart(e.target.value)}
-                      className="min-w-0 w-full px-3 py-2 border border-gray-200 rounded-xl text-sm bg-gray-50" />
-                    <span className="text-xs text-gray-400 shrink-0">{L.to}</span>
-                    <input type="time" value={timeEnd} onChange={e => setTimeEnd(e.target.value)}
-                      className="min-w-0 w-full px-3 py-2 border border-gray-200 rounded-xl text-sm bg-gray-50" />
-                  </div>
-                </div>
-                <div className="min-w-0">
                   <label className="text-[9px] font-bold text-gray-500 uppercase tracking-wider">{L.shift_type}</label>
-                  <Select value={shiftCategory} onValueChange={setShiftCategory}>
+                  <Select value={shiftType} onValueChange={setShiftType}>
                     <SelectTrigger className="mt-1.5 rounded-xl bg-gray-50 border-gray-200 w-full">
-                      <SelectValue />
+                      <SelectValue placeholder={L.pick_shift} />
                     </SelectTrigger>
                     <SelectContent>
-                      {SHIFT_OPTIONS.map(item => <SelectItem key={item.value} value={item.value}>{item.label}</SelectItem>)}
+                      {shiftDefs.map((sd) => (
+                        <SelectItem key={sd.id} value={sd.shift_type}>
+                          {sd.shift_type}{sd.label ? ` · ${sd.label}` : ''}
+                        </SelectItem>
+                      ))}
                     </SelectContent>
                   </Select>
                 </div>
+                <div className="min-w-0">
+                  <label className="text-[9px] font-bold text-gray-500 uppercase tracking-wider">{L.time_range}</label>
+                  <div className="mt-1.5 px-3.5 py-2.5 border border-gray-200 rounded-xl text-sm bg-gray-50 text-gray-700">
+                    {def
+                      ? `${hhmm(def.start_time)} ${L.to} ${hhmm(def.end_time)}${def.cross_midnight ? ' ⏭' : ''}`
+                      : '—'}
+                  </div>
+                  <div className="text-[10px] text-gray-400 mt-1">{L.time_note}</div>
+                </div>
               </div>
 
-              {/* Tasks - hidden for OFF/PH/AL/CL/SL days */}
-              {!['OFF', 'AL', 'SL', 'PH', 'CL', 'O', 'NO'].includes(shiftCategory) && !isOffDay(initialShift?.shiftType) && (
-              <div className="min-w-0">
-                <div className="flex flex-col gap-2 mb-2 sm:flex-row sm:items-center sm:justify-between">
-                  <label className="text-[9px] font-bold text-gray-500 uppercase tracking-wider">{L.task_schedule}</label>
-                  <span className="text-[9px] font-bold px-2 py-0.5 rounded w-fit" style={{ background: '#fce8f3', color: '#E8187A' }}>
-                    {L.adjustable}
-                  </span>
-                </div>
-                <div className="space-y-2 min-w-0">
-                  {tasks.map((row, index) => (
-                    <div key={row.id} className="border border-gray-200 rounded-xl p-3 bg-gray-50 min-w-0">
-                      <div className="grid grid-cols-1 gap-2 sm:grid-cols-[1fr_auto_1fr_auto] sm:items-center min-w-0">
-                        <input type="time" value={row.start} onChange={e => updateTask(row.id, { start: e.target.value })}
-                          className="min-w-0 w-full px-3 py-2 border border-gray-200 rounded-xl text-sm bg-white" />
-                        <span className="text-xs text-gray-400 shrink-0">{L.to}</span>
-                        <input type="time" value={row.end} onChange={e => updateTask(row.id, { end: e.target.value })}
-                          className="min-w-0 w-full px-3 py-2 border border-gray-200 rounded-xl text-sm bg-white" />
-                        <button type="button" onClick={() => removeTaskRow(row.id)}
-                          className="text-xs font-semibold text-red-500" disabled={tasks.length === 1}>
-                          {L.delete_task}
-                        </button>
-                      </div>
-                      <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2 min-w-0">
-                        <Select value={row.task} onValueChange={value => updateTask(row.id, { task: value })}>
-                          <SelectTrigger className="rounded-xl bg-white border-gray-200 w-full min-w-0">
-                            <SelectValue placeholder={L.task_ph} />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {TASK_OPTIONS.map(item => <SelectItem key={item} value={item}>{item}</SelectItem>)}
-                            <SelectItem value="__custom__">{L.custom_opt}</SelectItem>
-                          </SelectContent>
-                        </Select>
-                        <input type="text" value={row.customTask}
-                          onChange={e => updateTask(row.id, { customTask: e.target.value })}
-                          placeholder={row.task === '__custom__' ? L.custom_ph : L.extra_ph}
-                          className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm bg-white min-w-0" />
-                      </div>
-                      <div className="mt-2 text-[11px] text-gray-500 break-words">
-                        {L.item} {index + 1}：{row.start} - {row.end} ／
-                        {row.task === '__custom__' ? row.customTask || '—' : row.task || '—'}
-                      </div>
+              {/* Task schedule - only when the shift is a working one */}
+              {def?.is_working && (
+                <div className="min-w-0">
+                  <div className="flex flex-col gap-2 mb-2 sm:flex-row sm:items-center sm:justify-between">
+                    <label className="text-[9px] font-bold text-gray-500 uppercase tracking-wider">{L.task_schedule}</label>
+                    <span className="text-[9px] font-bold px-2 py-0.5 rounded w-fit" style={{ background: '#fce8f3', color: PINK }}>
+                      {L.adjustable}
+                    </span>
+                  </div>
+
+                  {availableTasks.length === 0 ? (
+                    <div className="text-[11px] text-gray-400 border border-dashed border-gray-200 rounded-xl p-3 text-center">
+                      {L.no_tasks}
                     </div>
-                  ))}
+                  ) : (
+                    <>
+                      <div className="space-y-2 min-w-0">
+                        {rows.map((row, index) => (
+                          <div key={row.id} className="border border-gray-200 rounded-xl p-3 bg-gray-50 min-w-0">
+                            <div className="grid grid-cols-1 gap-2 sm:grid-cols-[1fr_auto_1fr_auto] sm:items-center min-w-0">
+                              <input type="time" value={row.start} onChange={(e) => updateRow(row.id, { start: e.target.value })}
+                                className="min-w-0 w-full px-3 py-2 border border-gray-200 rounded-xl text-sm bg-white" />
+                              <span className="text-xs text-gray-400 shrink-0">{L.to}</span>
+                              <input type="time" value={row.end} onChange={(e) => updateRow(row.id, { end: e.target.value })}
+                                className="min-w-0 w-full px-3 py-2 border border-gray-200 rounded-xl text-sm bg-white" />
+                              <button type="button" onClick={() => removeRow(row.id)}
+                                className="text-xs font-semibold text-red-500">
+                                {L.delete_task}
+                              </button>
+                            </div>
+                            <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2 min-w-0">
+                              <Select value={row.taskId} onValueChange={(value) => updateRow(row.id, { taskId: value })}>
+                                <SelectTrigger className="rounded-xl bg-white border-gray-200 w-full min-w-0">
+                                  <SelectValue placeholder={L.task_ph} />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  {availableTasks.map((td) => (
+                                    <SelectItem key={td.id} value={td.id}>{taskLabel(td)}</SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+                              <input type="text" value={row.note}
+                                onChange={(e) => updateRow(row.id, { note: e.target.value })}
+                                placeholder={L.note_ph}
+                                className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm bg-white min-w-0" />
+                            </div>
+                            <div className="mt-2 text-[11px] text-gray-500 break-words">
+                              {L.item} {index + 1}：{row.start || '--:--'} - {row.end || '--:--'} ／
+                              {taskDefs.find((t) => t.id === row.taskId)
+                                ? taskLabel(taskDefs.find((t) => t.id === row.taskId)!)
+                                : '—'}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                      <button type="button" onClick={addRow}
+                        className="mt-3 text-xs font-semibold" style={{ color: PINK }}>
+                        {L.add_task}
+                      </button>
+                    </>
+                  )}
                 </div>
-                <button type="button" onClick={addTaskRow}
-                  className="mt-3 text-xs font-semibold" style={{ color: '#E8187A' }}>
-                  {L.add_task}
-                </button>
-              </div>
               )}
 
-              {/* Meal & Rest Time Blocks - only for working days */}
-              {mealCode && (
-                <div className="rounded-xl border border-orange-200 bg-orange-50 p-3">
-                  <div className="text-[9px] font-bold text-orange-700 uppercase tracking-wider mb-1">
-                    {isZH ? '🍽 用膳時間（已鎖定）' : '🍽 Meal Time (Blocked)'}
+              {issues.length > 0 && (
+                <div className="rounded-xl border p-3" style={{ background: '#fff1f2', borderColor: '#fecdd3' }}>
+                  <div className="text-[10px] font-bold uppercase tracking-wider mb-1" style={{ color: '#be123c' }}>
+                    {L.rejected}
                   </div>
-                  <div className="text-xs text-orange-800 font-semibold">
-                    {mealCode.startsWith('>') ? `${mealCode.slice(1)}pm 後用膳` : mealCode.startsWith('<') ? `${mealCode.slice(1)}pm 前用膳` : mealCode}
-                  </div>
-                  <div className="text-[10px] text-orange-600 mt-1">
-                    {isZH ? '此時段不可安排其他工作' : 'Cannot assign tasks during this period'}
-                  </div>
+                  <ul className="space-y-1">
+                    {issues.map((line, i) => (
+                      <li key={i} className="text-[11px]" style={{ color: '#9f1239' }}>{line}</li>
+                    ))}
+                  </ul>
                 </div>
               )}
-
-              {/* Note (for OFF/PH days) */}
-              <div>
-                <label className="text-[9px] font-bold text-gray-500 uppercase tracking-wider">
-                  {isZH ? '備註 / 假期原因' : 'Note / Holiday Reason'}
-                </label>
-                <input
-                  type="text"
-                  value={note}
-                  onChange={e => setNote(e.target.value)}
-                  placeholder={isZH ? '例如：補1/5、法定假期' : 'e.g. Compensatory for 1/5'}
-                  className="mt-1.5 w-full px-3.5 py-2.5 border border-gray-200 rounded-xl text-sm bg-gray-50 focus:outline-none focus:border-pink-400"
-                />
-              </div>
-
-              {/* AI Toggle - hidden for OFF/PH/AL/CL/SL days */}
-              {!['OFF', 'AL', 'SL', 'PH', 'CL', 'O', 'NO'].includes(shiftCategory) && !isOffDay(initialShift?.shiftType) && (
-              <div className="flex min-w-0 items-center gap-3 p-3 rounded-xl" style={{ background: '#fce8f3' }}>
-                <div className="w-8 h-8 rounded-lg flex items-center justify-center text-white text-sm shrink-0" style={{ background: '#E8187A' }}>🧠</div>
-                <div className="flex-1 min-w-0">
-                  <div className="text-sm font-semibold">{L.ai_title}</div>
-                  <div className="text-[10px] text-gray-500 mt-0.5">{L.ai_desc}</div>
-                </div>
-                <button type="button" onClick={() => setAiToggle(!aiToggle)}
-                  className="w-10 h-6 rounded-full transition-all relative shrink-0"
-                  style={{ background: aiToggle ? '#E8187A' : '#d1d5db' }}>
-                  <span className="absolute top-1 w-4 h-4 rounded-full bg-white transition-all"
-                    style={{ left: aiToggle ? '20px' : '4px' }} />
-                </button>
-              </div>
-              )}
+              {err && <div className="text-xs text-rose-600">{err}</div>}
             </div>
           </div>
 
           {/* Footer */}
           <div className="px-6 py-4 border-t border-gray-100 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
             <div className="w-full sm:w-auto">
-              {isEditMode ? (
-                <Button variant="outline" onClick={handleDelete}
+              {isEditMode && onDeleted ? (
+                <Button variant="outline" onClick={handleDelete} disabled={busy}
                   className="w-full sm:w-auto rounded-xl text-xs text-red-500 border-red-200 hover:bg-red-50">
                   {L.delete_shift}
                 </Button>
@@ -502,13 +388,15 @@ export function CreateShiftModal({ open, onClose, mode = 'create', initialShift,
               )}
             </div>
             <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:items-center">
-              <Button variant="outline" onClick={handleSave} className="w-full sm:w-auto rounded-xl text-xs">
-                {L.save_ai}
-              </Button>
-              <Button onClick={handleSave}
+              {isEditMode && (
+                <Button variant="outline" onClick={onClose} className="w-full sm:w-auto rounded-xl text-xs">
+                  {L.cancel}
+                </Button>
+              )}
+              <Button onClick={handleSave} disabled={busy || !staffId || !date || !shiftType}
                 className="w-full sm:w-auto rounded-xl text-xs text-white"
-                style={{ background: '#E8187A' }}>
-                {L.save}
+                style={{ background: PINK }}>
+                {busy ? '…' : L.save}
               </Button>
             </div>
           </div>

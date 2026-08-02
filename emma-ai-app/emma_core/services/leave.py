@@ -591,6 +591,56 @@ def revoke(client, facility_id: str, request_id: str, *, profile_id: str | None,
     return row
 
 
+OPEN_STATUSES = ("pending", "reviewed")
+
+
+def withdraw(client, facility_id: str, request_id: str, *,
+             profile_id: str | None, staff_id: str | None = None,
+             reason: str | None = None) -> dict:
+    """The requester takes back a request that has not been decided yet.
+
+    Distinct from `revoke`, which undoes an approval that was already given, and
+    from `decide(reject)`, which is somebody else refusing. Encoding a withdrawal
+    as a rejection - the workaround the approval screen was using before this
+    existed - makes the staff member look refused in every count and report that
+    groups by status, which is the opposite of what happened.
+
+    `staff_id` is the self-service guard: pass the caller's own staff id and only
+    their own request can be withdrawn. Omit it for a manager cancelling on
+    someone's behalf; the route decides which of the two applies.
+    """
+    rows = (client.table("leave_requests").select("*")
+            .eq("facility_id", facility_id).eq("id", request_id).execute().data)
+    if not rows:
+        raise ValueError("leave request not found")
+    current = rows[0]
+
+    if staff_id is not None and current.get("staff_id") != staff_id:
+        raise PermissionError("you may only withdraw your own request")
+    if current.get("status") not in OPEN_STATUSES:
+        raise ValueError(
+            f"only a request still awaiting a decision can be withdrawn (this "
+            f"one is {current.get('status')!r})")
+
+    note = (reason or "").strip() or "Withdrawn by requester"
+    # `decided_*` carries "who ended this, when and why". A withdrawal is the
+    # terminal event on the request, so it belongs there; `status` is what says
+    # it was withdrawn rather than refused.
+    row = (client.table("leave_requests").update({
+        "status": "cancelled",
+        "decided_by": profile_id,
+        "decided_at": now_iso(),
+        "decision_note": note,
+    }).eq("facility_id", facility_id).eq("id", request_id).execute().data[0])
+
+    audit.record(client, facility_id=facility_id, action="request.withdraw",
+                 entity_table="leave_requests", entity_id=request_id,
+                 before={"status": current.get("status")},
+                 after={"status": "cancelled"}, reason=note,
+                 actor_profile_id=profile_id)
+    return row
+
+
 def stats(client, facility_id: str, on: Date | None = None) -> dict:
     """Approval Centre header numbers for the calendar month containing `on`."""
     start, end = month_bounds(on)

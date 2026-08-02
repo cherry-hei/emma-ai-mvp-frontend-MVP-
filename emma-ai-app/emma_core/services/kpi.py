@@ -8,7 +8,9 @@ disagree with the roster it claims to describe.
 from __future__ import annotations
 
 from ..constants import PlanMode
-from ._common import as_date, assignments_for_shifts, operative_version, resolve_period
+from ._common import (
+    as_date, assignments_for_shifts, fetch_in, operative_version, resolve_period,
+)
 from .compliance import EXTERNAL_TYPES, minute_ratio_series, ratio_series
 
 DIFFICULT_SHIFTS = ("AN", "N", "7P", "P")   # fairness is reported for every type anyway
@@ -306,6 +308,79 @@ def staffing_ratio_compliance(client, facility_id: str,
     }
 
 
+# ── task completion (spec 3.1 · KPIStrip "Completion") ───────────────────────
+def task_completion(client, facility_id: str, period_id: str | None = None) -> dict:
+    """Share of the period's assigned task codes that were ticked off.
+
+    "Completion" was ambiguous on the KPI strip - task completion, roster
+    completion and compliance pass rate are three different numbers, and the
+    mock's 94% did not say which. Cherry settled it on 2 Aug 2026: task
+    completion, "% of assigned tasks marked done per shift". So the denominator
+    is every task assigned on the operative roster for the period, not just the
+    ones somebody touched: a round nobody opened is not done.
+
+    `exceptions` is reported alongside rather than folded in. A task that could
+    not be done for a stated clinical reason is not the same failure as one that
+    was silently skipped, and a single percentage hides which of the two a home
+    is looking at.
+    """
+    empty = {"period_id": None, "assigned": 0, "done": 0, "exceptions": 0,
+             "completion_pct": None, "by_shift": []}
+    period, version = _context(client, facility_id, period_id)
+    if not version:
+        return empty
+
+    by_id, assigns = _roster_rows(client, version["id"])
+    assignment_ids = [str(a["id"]) for a in assigns if a.get("id")]
+    if not assignment_ids:
+        return {**empty, "period_id": period["id"]}
+
+    # SQL: select shift_assignment_id, task_status from task_assignments
+    #      where facility_id = :facility_id
+    #        and shift_assignment_id = any(:assignment_ids)
+    #
+    # Chunked: a real 28-day roster carries well over a thousand assignments, and
+    # PostgREST puts `in_` in the query string - one list that long is a URL the
+    # server rejects, which surfaced as a db_error on the imported NAAC period.
+    rows = fetch_in(client, "task_assignments", "shift_assignment_id",
+                    assignment_ids, select="shift_assignment_id,task_status",
+                    filters={"facility_id": facility_id})
+    if not rows:
+        # No task codes on this roster at all. `None` rather than 0%: a home that
+        # rosters no tasks has not failed to complete them, and a red 0% would
+        # say it did.
+        return {**empty, "period_id": period["id"]}
+
+    shift_of = {str(a["id"]): by_id.get(a["shift_id"], {}) for a in assigns if a.get("id")}
+    by_shift: dict[str, dict] = {}
+    done = exceptions = 0
+    for row in rows:
+        status = row.get("task_status")
+        shift = shift_of.get(str(row.get("shift_assignment_id"))) or {}
+        slot = by_shift.setdefault(
+            shift.get("shift_type") or "-",
+            {"shift_type": shift.get("shift_type") or "-", "assigned": 0, "done": 0},
+        )
+        slot["assigned"] += 1
+        if status == "done":
+            done += 1
+            slot["done"] += 1
+        elif status == "exception":
+            exceptions += 1
+
+    for slot in by_shift.values():
+        slot["completion_pct"] = round(100 * slot["done"] / slot["assigned"], 1)
+
+    return {
+        "period_id": period["id"],
+        "assigned": len(rows),
+        "done": done,
+        "exceptions": exceptions,
+        "completion_pct": round(100 * done / len(rows), 1),
+        "by_shift": sorted(by_shift.values(), key=lambda s: s["shift_type"]),
+    }
+
+
 def overview(client, facility_id: str, period_id: str | None = None) -> dict:
     """Every KPI in one call - what the ROI/KPI dashboard strip renders."""
     return {
@@ -315,10 +390,11 @@ def overview(client, facility_id: str, period_id: str | None = None) -> dict:
         "ai_acceptance": ai_acceptance(client, facility_id, period_id),
         "external_workforce": external_workforce(client, facility_id, period_id),
         "staffing_ratio_compliance": staffing_ratio_compliance(client, facility_id, period_id),
+        "task_completion": task_completion(client, facility_id, period_id),
     }
 
 
 __all__ = [
     "ai_acceptance", "an_gini", "conflict_rate", "external_workforce", "gini",
-    "overview", "shift_fairness", "staffing_ratio_compliance",
+    "overview", "shift_fairness", "staffing_ratio_compliance", "task_completion",
 ]

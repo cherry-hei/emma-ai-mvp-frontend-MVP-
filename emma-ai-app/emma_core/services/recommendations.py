@@ -189,10 +189,28 @@ def _reviewer_names(client, facility_id: str,
 
 
 def _with_names(client, facility_id: str, rows: list[dict]) -> list[dict]:
+    """Add the reviewer's name, and the three aliases the approval screen reads.
+
+    `recommender_name` / `recommender_role` / `decision` are the names Cherry's
+    frontend was built against (2 Aug 2026); the columns are called
+    `recommended_by` / `recommended_role` / `recommendation` because that is what
+    the table calls them. Serving both costs three keys and means neither side
+    has to rename anything - and the API is where a naming difference between a
+    schema and a screen is cheapest to absorb.
+    """
     names = _reviewer_names(client, facility_id,
                             [r.get("recommended_by") for r in rows])
-    return [{**r, "recommended_by_name": names.get(str(r.get("recommended_by")))}
-            for r in rows]
+    out = []
+    for r in rows:
+        name = names.get(str(r.get("recommended_by")))
+        out.append({
+            **r,
+            "recommended_by_name": name,
+            "recommender_name": name,
+            "recommender_role": r.get("recommended_role"),
+            "decision": r.get("recommendation"),
+        })
+    return out
 
 
 def for_request(client, facility_id: str, request_id: str, *,
