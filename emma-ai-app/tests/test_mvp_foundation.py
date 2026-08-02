@@ -290,3 +290,32 @@ def test_unknown_named_report_is_a_404(token):
     r = client.post("/reports/not-a-report", headers=_auth(token), json={})
     assert r.status_code == 404
     assert r.json()["detail"]["code"] == "unknown_report"
+
+
+# ── the app must be startable from requirements.txt alone ───────────────────
+def test_multipart_is_declared_because_the_api_accepts_uploads():
+    """A route declaring Form or File without python-multipart is not a broken
+    endpoint - FastAPI raises at import time and the whole app fails to boot.
+
+    This is not hypothetical. /imports/roster has taken an UploadFile since
+    2d16902, python-multipart was never added to requirements.txt, and it
+    happened to be installed in the dev environment. So local ran, every image
+    built from requirements.txt crashed on startup, the new ECS task never
+    passed its health check, and production silently kept serving the 29 July
+    build while the pipeline reported success.
+    """
+    import pathlib
+    import re
+
+    root = pathlib.Path(__file__).resolve().parents[1]
+    api_source = "\n".join(
+        p.read_text(encoding="utf-8") for p in (root / "api").rglob("*.py"))
+    needs_multipart = re.search(r"\b(UploadFile|File\(|Form\()", api_source)
+
+    requirements = (root / "requirements.txt").read_text(encoding="utf-8")
+    declared = re.search(r"^\s*python-multipart\b", requirements, re.M)
+
+    if needs_multipart:
+        assert declared, (
+            "the API declares Form/File/UploadFile, so python-multipart is a "
+            "startup requirement and must be in requirements.txt")

@@ -6,6 +6,13 @@
 fastapi>=0.116
 uvicorn[standard]>=0.30
 starlette>=0.46               # ASGI toolkit fastapi builds on (pulled in by fastapi)
+# Required by /imports/roster, which takes the home's workbook as UploadFile +
+# Form fields. FastAPI raises at import time when a route declares Form or File
+# without it, so its absence is not a 500 on one endpoint - the whole app fails
+# to start. It was missing here and present in the dev environment by accident,
+# which is why local was fine and every deployed image since 2d16902 crashed on
+# boot.
+python-multipart>=0.0.9
 
 # Data + Auth (Supabase: Postgres + GoTrue + RLS)
 supabase>=2.6
