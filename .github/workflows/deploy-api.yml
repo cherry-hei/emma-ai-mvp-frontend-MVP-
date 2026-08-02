@@ -1,31 +1,22 @@
-# Deploy the Emma AI REST API (FastAPI) to AWS ECS Express Mode.
+# Deploy the Emma AI FastAPI backend to AWS ECS Express Mode.
 #
-# Flow: build repo-root Dockerfile -> push image to ECR -> create/update the
-# ECS Express Gateway service. Everything is read from repository VARIABLES
-# (Settings -> Secrets and variables -> Actions -> Variables tab); no secret
-# values live in GitHub - only Secrets Manager ARNs, which are identifiers.
-#
-# Auth: OIDC AssumeRole (no long-lived AWS keys). The IAM role
-# `github-actions-emma-api` trusts this repo on branch `main` only.
-# See SETUP_BACKEND_AWS.md for the full setup guide.
+# This workflow:
+#   1. applies Supabase migrations;
+#   2. builds and pushes a commit-specific image to ECR;
+#   3. resolves that image to an immutable ECR digest;
+#   4. creates a new ECS Express service revision with that digest;
+#   5. waits until that exact revision is the current successful deployment.
 
 name: Deploy API to AWS
 
 on:
   push:
-    branches: [main]
-    paths:
-      - "Dockerfile"
-      - "emma-ai-app/**"
-      - ".github/workflows/deploy-api.yml"
-  workflow_dispatch: {}
-
-# `emma-ai-app/**` already covers supabase/migrations/**, so a migration-only
-# commit triggers a deploy. That is intended: a schema change with no code change
-# still has to reach the database, and until 1 Aug 2026 nothing ever did.
+    branches:
+      - main
+  workflow_dispatch:
 
 permissions:
-  id-token: write # OIDC token for AssumeRoleWithWebIdentity
+  id-token: write
   contents: read
 
 concurrency:
@@ -36,6 +27,8 @@ jobs:
   deploy:
     name: Build, push and deploy
     runs-on: ubuntu-latest
+    timeout-minutes: 45
+
     env:
       AWS_REGION: ${{ vars.AWS_REGION }}
       AWS_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
@@ -45,58 +38,89 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
+
+      - name: Validate deployment variables
+        env:
+          APP_ENV: ${{ vars.APP_ENV }}
+          SUPABASE_URL: ${{ vars.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ vars.SUPABASE_ANON_KEY }}
+          CORS_ORIGINS: ${{ vars.CORS_ORIGINS }}
+          SECRET_ARN_SERVICE_ROLE_KEY: ${{ vars.SECRET_ARN_SERVICE_ROLE_KEY }}
+          SECRET_ARN_DATABASE_URL: ${{ vars.SECRET_ARN_DATABASE_URL }}
+        run: |
+          set -euo pipefail
+
+          required=(
+            AWS_REGION
+            AWS_ACCOUNT_ID
+            ECR_REPOSITORY
+            ECS_SERVICE
+            ECS_CLUSTER
+            APP_ENV
+            SUPABASE_URL
+            SUPABASE_ANON_KEY
+            CORS_ORIGINS
+            SECRET_ARN_SERVICE_ROLE_KEY
+            SECRET_ARN_DATABASE_URL
+          )
+
+          missing=0
+          for variable in "${required[@]}"; do
+            if [ -z "${!variable:-}" ]; then
+              echo "::error::Repository variable $variable is empty or missing."
+              missing=1
+            fi
+          done
+
+          if [ "$missing" -ne 0 ]; then
+            exit 1
+          fi
 
       - name: Configure AWS credentials (OIDC)
-        uses: aws-actions/configure-aws-credentials@v4
+        uses: aws-actions/configure-aws-credentials@v6
         with:
           role-to-assume: arn:aws:iam::${{ vars.AWS_ACCOUNT_ID }}:role/github-actions-emma-api
           aws-region: ${{ vars.AWS_REGION }}
 
-      # ── database migrations ─────────────────────────────────────────────
-      # Before the image, not after. Migrations here are additive, so new schema
-      # with old code is harmless for the minute it lasts; new code against old
-      # schema is the 500s we spent a month chasing. If the push fails the job
-      # stops and nothing ships.
-      #
-      # The URL is read from Secrets Manager rather than duplicated as a GitHub
-      # secret, so there is one copy of the production password and rotating it
-      # is one action. Requires `secretsmanager:GetSecretValue` on
-      # SECRET_ARN_DATABASE_URL in the github-actions-emma-api role - see
-      # SETUP_BACKEND_AWS.md.
+      # ── Database migrations ──────────────────────────────────────────────
       - name: Read DATABASE_URL from Secrets Manager
         id: dburl
         env:
           SECRET_ARN_DATABASE_URL: ${{ vars.SECRET_ARN_DATABASE_URL }}
         run: |
           set -euo pipefail
-          URL=$(aws secretsmanager get-secret-value \
-                  --secret-id "$SECRET_ARN_DATABASE_URL" \
-                  --region "$AWS_REGION" \
-                  --query SecretString --output text)
-          # Mask before it can reach a log line, including on a later failure.
-          echo "::add-mask::$URL"
-          echo "url=$URL" >> "$GITHUB_OUTPUT"
+
+          DATABASE_URL="$(
+            aws secretsmanager get-secret-value \
+              --secret-id "$SECRET_ARN_DATABASE_URL" \
+              --region "$AWS_REGION" \
+              --query SecretString \
+              --output text \
+              --no-cli-pager
+          )"
+
+          echo "::add-mask::$DATABASE_URL"
+          echo "url=$DATABASE_URL" >> "$GITHUB_OUTPUT"
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.12"
 
-      - name: Pre-flight - would any migration collide with live data?
+      - name: Pre-flight migrations
         env:
           DATABASE_URL: ${{ steps.dburl.outputs.url }}
         run: |
           set -euo pipefail
-          pip install --quiet "psycopg[binary]>=3.2"
-          # Read-only. Exits 1 on a duplicate that would abort the push half-way
-          # through and leave the schema version lying about what is applied.
+          python -m pip install --quiet "psycopg[binary]>=3.2"
           python emma-ai-app/scripts/preflight_migrations.py
 
       - name: Install Supabase CLI
-        uses: supabase/setup-cli@v1
+        uses: supabase/setup-cli@v2
         with:
           version: latest
+          github-token: ${{ github.token }}
 
       - name: Apply migrations
         env:
@@ -104,34 +128,80 @@ jobs:
         working-directory: emma-ai-app
         run: |
           set -euo pipefail
-          # --db-url avoids `supabase link`, so CI needs no personal access token
-          # and no project ref - just the connection string it already has.
-          # Session pooler (5432), never the transaction pooler (6543): DDL and
-          # advisory locks do not survive transaction pooling.
           supabase db push --db-url "$DATABASE_URL" --include-all
           echo "--- migrations now applied ---"
           supabase migration list --db-url "$DATABASE_URL"
 
-      - name: Login to Amazon ECR
-        id: ecr-login
-        uses: aws-actions/amazon-ecr-login@v2
-
+      # ── Build and push an immutable image ────────────────────────────────
       - name: Build and push image
         id: build
-        env:
-          REGISTRY: ${{ steps.ecr-login.outputs.registry }}
         run: |
-          IMAGE_URI="$REGISTRY/$ECR_REPOSITORY:${GITHUB_SHA::12}"
-          docker build -t "$IMAGE_URI" .
-          docker push "$IMAGE_URI"
-          # Also move the :latest tag for convenience.
-          docker tag "$IMAGE_URI" "$REGISTRY/$ECR_REPOSITORY:latest"
-          docker push "$REGISTRY/$ECR_REPOSITORY:latest"
-          echo "image_uri=$IMAGE_URI" >> "$GITHUB_OUTPUT"
+          set -euo pipefail
 
-      - name: Create or update ECS Express Gateway service
+          REGISTRY="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+          IMAGE_TAG="${GITHUB_SHA:0:12}"
+          IMAGE_URI="$REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
+          LATEST_URI="$REGISTRY/$ECR_REPOSITORY:latest"
+
+          aws ecr get-login-password --region "$AWS_REGION" |
+            docker login --username AWS --password-stdin "$REGISTRY"
+
+          echo "Building $IMAGE_URI"
+          docker build --pull -t "$IMAGE_URI" .
+
+          PUSH_LOG="$(mktemp)"
+          docker push "$IMAGE_URI" 2>&1 | tee "$PUSH_LOG"
+
+          IMAGE_DIGEST="$(
+            sed -nE 's/.*digest: (sha256:[0-9a-f]{64}).*/\1/p' "$PUSH_LOG" |
+              tail -n 1
+          )"
+
+          # The push normally reports the digest directly. Use ECR only as a
+          # fallback in case the Docker client output format changes.
+          if [[ "$IMAGE_DIGEST" != sha256:* ]]; then
+            for attempt in $(seq 1 12); do
+              if candidate="$(
+                aws ecr describe-images \
+                  --repository-name "$ECR_REPOSITORY" \
+                  --image-ids "imageTag=$IMAGE_TAG" \
+                  --region "$AWS_REGION" \
+                  --query 'imageDetails[0].imageDigest' \
+                  --output text \
+                  --no-cli-pager 2>/dev/null
+              )" && [[ "$candidate" == sha256:* ]]; then
+                IMAGE_DIGEST="$candidate"
+                break
+              fi
+
+              echo "Waiting for ECR to expose the image digest [$attempt/12]..."
+              sleep 5
+            done
+          fi
+
+          if [[ "$IMAGE_DIGEST" != sha256:* ]]; then
+            echo "::error::Could not resolve the ECR digest for $IMAGE_URI."
+            exit 1
+          fi
+
+          # Keep :latest only as a convenience pointer. ECS is deployed by digest.
+          docker tag "$IMAGE_URI" "$LATEST_URI"
+          docker push "$LATEST_URI"
+
+          IMAGE_REF="$REGISTRY/$ECR_REPOSITORY@$IMAGE_DIGEST"
+
+          echo "image_tag=$IMAGE_TAG" >> "$GITHUB_OUTPUT"
+          echo "image_uri=$IMAGE_URI" >> "$GITHUB_OUTPUT"
+          echo "image_ref=$IMAGE_REF" >> "$GITHUB_OUTPUT"
+
+          echo "Pushed tag:    $IMAGE_URI"
+          echo "Deploy digest: $IMAGE_REF"
+
+      # ── Create a new ECS Express service revision ────────────────────────
+      - name: Update ECS Express Gateway service
+        id: ecs-update
         env:
-          IMAGE_URI: ${{ steps.build.outputs.image_uri }}
+          IMAGE_REF: ${{ steps.build.outputs.image_ref }}
           APP_ENV: ${{ vars.APP_ENV }}
           SUPABASE_URL: ${{ vars.SUPABASE_URL }}
           SUPABASE_ANON_KEY: ${{ vars.SUPABASE_ANON_KEY }}
@@ -142,130 +212,343 @@ jobs:
           set -euo pipefail
 
           EXEC_ROLE_ARN="arn:aws:iam::${AWS_ACCOUNT_ID}:role/ecsTaskExecutionRole"
-          INFRA_ROLE_ARN="arn:aws:iam::${AWS_ACCOUNT_ID}:role/ecsInfrastructureRoleForExpressServices"
           SERVICE_ARN="arn:aws:ecs:${AWS_REGION}:${AWS_ACCOUNT_ID}:service/${ECS_CLUSTER}/${ECS_SERVICE}"
 
-          # The COMPLETE set of env vars and secrets. Never remove an entry to
-          # "keep the old value" - anything absent is dropped from the new task
-          # definition (see SETUP_BACKEND_AWS.md -> Changing configuration later).
-          #
-          # Built with jq, not a heredoc. A repository variable pasted through the
-          # GitHub UI can carry a trailing newline, and interpolating one into a
-          # hand-written JSON string produces a literal control character inside
-          # the quotes: `aws` then rejects the whole --primary-container with
-          # "Invalid control character", after the image has already been pushed.
-          # That is exactly how the 1 Aug deploy failed on CORS_ORIGINS. jq quotes
-          # and escapes every value, and `tr -d '\r\n'` strips the stray newline
-          # rather than escaping it into the container's environment.
-          clean() { printf '%s' "${1-}" | tr -d '\r\n'; }
+          clean() {
+            printf '%s' "${1-}" | tr -d '\r\n'
+          }
 
-          ENVIRONMENT=$(jq -cn \
-            --arg app_env      "$(clean "$APP_ENV")" \
-            --arg supabase_url "$(clean "$SUPABASE_URL")" \
-            --arg anon_key     "$(clean "$SUPABASE_ANON_KEY")" \
-            --arg cors         "$(clean "$CORS_ORIGINS")" \
-            '[{name: "APP_ENV",           value: $app_env},
-              {name: "SUPABASE_URL",      value: $supabase_url},
-              {name: "SUPABASE_ANON_KEY", value: $anon_key},
-              {name: "CORS_ORIGINS",      value: $cors},
-              {name: "PORT",              value: "8080"}]')
+          ENVIRONMENT="$(
+            jq -cn \
+              --arg app_env      "$(clean "$APP_ENV")" \
+              --arg supabase_url "$(clean "$SUPABASE_URL")" \
+              --arg anon_key     "$(clean "$SUPABASE_ANON_KEY")" \
+              --arg cors         "$(clean "$CORS_ORIGINS")" \
+              '[
+                {name: "APP_ENV",           value: $app_env},
+                {name: "SUPABASE_URL",      value: $supabase_url},
+                {name: "SUPABASE_ANON_KEY", value: $anon_key},
+                {name: "CORS_ORIGINS",      value: $cors},
+                {name: "PORT",              value: "8080"}
+              ]'
+          )"
 
-          SECRETS=$(jq -cn \
-            --arg service_role "$(clean "$SECRET_ARN_SERVICE_ROLE_KEY")" \
-            --arg database_url "$(clean "$SECRET_ARN_DATABASE_URL")" \
-            '[{name: "SUPABASE_SERVICE_ROLE_KEY", valueFrom: $service_role},
-              {name: "DATABASE_URL",              valueFrom: $database_url}]')
+          SECRETS="$(
+            jq -cn \
+              --arg service_role "$(clean "$SECRET_ARN_SERVICE_ROLE_KEY")" \
+              --arg database_url "$(clean "$SECRET_ARN_DATABASE_URL")" \
+              '[
+                {name: "SUPABASE_SERVICE_ROLE_KEY", valueFrom: $service_role},
+                {name: "DATABASE_URL",              valueFrom: $database_url}
+              ]'
+          )"
 
-          PRIMARY_CONTAINER=$(jq -cn \
-            --arg image "$(clean "$IMAGE_URI")" \
-            --argjson environment "$ENVIRONMENT" \
-            --argjson secrets "$SECRETS" \
-            '{image: $image, containerPort: 8080,
-              environment: $environment, secrets: $secrets}')
+          PRIMARY_CONTAINER="$(
+            jq -cn \
+              --arg image "$(clean "$IMAGE_REF")" \
+              --argjson environment "$ENVIRONMENT" \
+              --argjson secrets "$SECRETS" \
+              '{
+                image: $image,
+                containerPort: 8080,
+                environment: $environment,
+                secrets: $secrets
+              }'
+          )"
 
-          if aws ecs describe-express-gateway-service \
-               --service-arn "$SERVICE_ARN" --region "$AWS_REGION" \
-               >/dev/null 2>&1; then
-            echo "Service exists - updating..."
+          if ! BEFORE_JSON="$(
+            aws ecs describe-express-gateway-service \
+              --service-arn "$SERVICE_ARN" \
+              --region "$AWS_REGION" \
+              --output json \
+              --no-cli-pager
+          )"; then
+            echo "::error::The ECS Express service could not be described."
+            echo "::error::This workflow now updates an existing production service only; it will not hide an AWS or IAM error by attempting to create another service."
+            exit 1
+          fi
+
+          PREVIOUS_REVISION="$(
+            printf '%s' "$BEFORE_JSON" |
+              jq -r '.service.currentDeployment // empty'
+          )"
+
+          echo "Previous revision: ${PREVIOUS_REVISION:-unknown}"
+          echo "Requested image:   $IMAGE_REF"
+
+          UPDATE_JSON="$(
             aws ecs update-express-gateway-service \
               --service-arn "$SERVICE_ARN" \
               --region "$AWS_REGION" \
               --primary-container "$PRIMARY_CONTAINER" \
               --execution-role-arn "$EXEC_ROLE_ARN" \
               --health-check-path /health \
-              --scaling-target '{"minTaskCount": 1, "maxTaskCount": 1}'
-          else
-            echo "Service not found - creating..."
-            aws ecs create-express-gateway-service \
-              --service-name "$ECS_SERVICE" \
-              --cluster "$ECS_CLUSTER" \
-              --region "$AWS_REGION" \
-              --primary-container "$PRIMARY_CONTAINER" \
-              --execution-role-arn "$EXEC_ROLE_ARN" \
-              --infrastructure-role-arn "$INFRA_ROLE_ARN" \
-              --health-check-path /health \
-              --scaling-target '{"minTaskCount": 1, "maxTaskCount": 1}'
+              --scaling-target '{"minTaskCount":1,"maxTaskCount":1}' \
+              --output json \
+              --no-cli-pager
+          )"
+
+          TARGET_REVISION="$(
+            printf '%s' "$UPDATE_JSON" |
+              jq -r '.service.targetConfiguration.serviceRevisionArn // empty'
+          )"
+
+          ACCEPTED_IMAGE="$(
+            printf '%s' "$UPDATE_JSON" |
+              jq -r '.service.targetConfiguration.primaryContainer.image // empty'
+          )"
+
+          echo "--- ECS update response ---"
+          printf '%s' "$UPDATE_JSON" |
+            jq '.service | {
+              serviceArn,
+              status,
+              updatedAt,
+              targetRevision: .targetConfiguration.serviceRevisionArn,
+              targetImage: .targetConfiguration.primaryContainer.image
+            }'
+
+          if [ -z "$TARGET_REVISION" ]; then
+            echo "::error::ECS accepted the API call but did not return a target service revision."
+            exit 1
           fi
 
-      - name: Wait for the new image to actually be serving
+          if [ "$ACCEPTED_IMAGE" != "$IMAGE_REF" ]; then
+            echo "::error::ECS accepted a different image from the image requested."
+            echo "::error::Expected: $IMAGE_REF"
+            echo "::error::Accepted: ${ACCEPTED_IMAGE:-empty}"
+            exit 1
+          fi
+
+          if [ -n "$PREVIOUS_REVISION" ] && [ "$TARGET_REVISION" = "$PREVIOUS_REVISION" ]; then
+            echo "::error::ECS returned the existing revision instead of creating a new target revision."
+            exit 1
+          fi
+
+          echo "target_revision=$TARGET_REVISION" >> "$GITHUB_OUTPUT"
+          echo "previous_revision=$PREVIOUS_REVISION" >> "$GITHUB_OUTPUT"
+          echo "service_arn=$SERVICE_ARN" >> "$GITHUB_OUTPUT"
+
+      # ── Verify the exact revision, not only service.status == ACTIVE ─────
+      - name: Wait for the new revision to be serving
         env:
+          IMAGE_REF: ${{ steps.build.outputs.image_ref }}
           IMAGE_URI: ${{ steps.build.outputs.image_uri }}
+          TARGET_REVISION: ${{ steps.ecs-update.outputs.target_revision }}
+          SERVICE_ARN: ${{ steps.ecs-update.outputs.service_arn }}
         run: |
           set -euo pipefail
-          SERVICE_ARN="arn:aws:ecs:${AWS_REGION}:${AWS_ACCOUNT_ID}:service/${ECS_CLUSTER}/${ECS_SERVICE}"
 
-          # This step used to wait on `service.status == ACTIVE` and stop there.
-          # ACTIVE describes the service, which was already active before the
-          # deploy - so the loop broke on its first poll and the job went green
-          # while the previous image was still answering requests. On 1 Aug the
-          # pipeline reported a successful deploy and the old build served for
-          # at least five minutes afterwards. A deploy step that cannot tell
-          # "shipped" from "exists" is worse than no check at all, because
-          # someone reads the tick and tells the client it is live.
-          #
-          # So the gate is now the running container's image digest.
-          echo "Waiting for the service to report ${IMAGE_URI}..."
           DEPLOYED=""
-          for i in $(seq 1 60); do
-            DESCRIBE=$(aws ecs describe-express-gateway-service \
-              --service-arn "$SERVICE_ARN" --region "$AWS_REGION" 2>/dev/null || echo '{}')
-            # `service.status` is an object - {"statusCode": "ACTIVE"} - not a
-            # string. The old step read it with `--query service.status --output
-            # text`, which flattened it to ACTIVE and hid the shape.
-            STATUS=$(printf '%s' "$DESCRIBE" | jq -r '
-              .service.status | if type == "object" then (.statusCode // "UNKNOWN")
-              else (. // "PENDING") end')
-            RUNNING=$(printf '%s' "$DESCRIBE" | jq -r '
-              [.. | objects | .image? // empty] | first // ""')
-            echo "[$i/60] status: ${STATUS}  image: ${RUNNING:-unknown}"
-            if [ "$STATUS" = "ACTIVE" ] && [ "$RUNNING" = "$IMAGE_URI" ]; then
+          DESCRIBE="{}"
+          DEPLOYMENT_API_AVAILABLE="unknown"
+          DEPLOYMENT_STATUS="PENDING"
+          DEPLOYMENT_REASON=""
+          DEPLOYMENT_ARN=""
+
+          for attempt in $(seq 1 120); do
+            DESCRIBE="$(
+              aws ecs describe-express-gateway-service \
+                --service-arn "$SERVICE_ARN" \
+                --region "$AWS_REGION" \
+                --output json \
+                --no-cli-pager
+            )"
+
+            SERVICE_STATUS="$(
+              printf '%s' "$DESCRIBE" |
+                jq -r '.service.status.statusCode // "UNKNOWN"'
+            )"
+
+            SERVICE_REASON="$(
+              printf '%s' "$DESCRIBE" |
+                jq -r '.service.status.statusReason // ""'
+            )"
+
+            CURRENT_REVISION="$(
+              printf '%s' "$DESCRIBE" |
+                jq -r '.service.currentDeployment // ""'
+            )"
+
+            CURRENT_IMAGE="$(
+              printf '%s' "$DESCRIBE" |
+                jq -r '
+                  .service as $service
+                  | [
+                      $service.activeConfigurations[]?
+                      | select(.serviceRevisionArn == $service.currentDeployment)
+                      | .primaryContainer.image
+                    ][0] // ""
+                '
+            )"
+
+            TARGET_ACTIVE_IMAGE="$(
+              printf '%s' "$DESCRIBE" |
+                jq -r --arg revision "$TARGET_REVISION" '
+                  [
+                    .service.activeConfigurations[]?
+                    | select(.serviceRevisionArn == $revision)
+                    | .primaryContainer.image
+                  ][0] // ""
+                '
+            )"
+
+            if DEPLOYMENTS="$(
+              aws ecs list-service-deployments \
+                --service "$SERVICE_ARN" \
+                --cluster "$ECS_CLUSTER" \
+                --region "$AWS_REGION" \
+                --max-results 20 \
+                --output json \
+                --no-cli-pager 2>/tmp/list-service-deployments.err
+            )"; then
+              DEPLOYMENT_API_AVAILABLE="yes"
+
+              DEPLOYMENT_ARN="$(
+                printf '%s' "$DEPLOYMENTS" |
+                  jq -r --arg revision "$TARGET_REVISION" '
+                    [
+                      .serviceDeployments[]?
+                      | select(.targetServiceRevisionArn == $revision)
+                    ][0].serviceDeploymentArn // ""
+                  '
+              )"
+
+              DEPLOYMENT_STATUS="$(
+                printf '%s' "$DEPLOYMENTS" |
+                  jq -r --arg revision "$TARGET_REVISION" '
+                    [
+                      .serviceDeployments[]?
+                      | select(.targetServiceRevisionArn == $revision)
+                    ][0].status // "PENDING"
+                  '
+              )"
+
+              DEPLOYMENT_REASON="$(
+                printf '%s' "$DEPLOYMENTS" |
+                  jq -r --arg revision "$TARGET_REVISION" '
+                    [
+                      .serviceDeployments[]?
+                      | select(.targetServiceRevisionArn == $revision)
+                    ][0].statusReason // ""
+                  '
+              )"
+            elif [ "$DEPLOYMENT_API_AVAILABLE" = "unknown" ]; then
+              DEPLOYMENT_API_AVAILABLE="no"
+              echo "::warning::Could not call ecs:ListServiceDeployments. Rollout verification will continue using describe-express-gateway-service."
+              sed 's/^/  /' /tmp/list-service-deployments.err || true
+            fi
+
+            echo "[$attempt/120]"
+            echo "  service status:      $SERVICE_STATUS"
+            echo "  deployment status:   $DEPLOYMENT_STATUS"
+            echo "  current revision:    ${CURRENT_REVISION:-unknown}"
+            echo "  target revision:     $TARGET_REVISION"
+            echo "  current image:       ${CURRENT_IMAGE:-unknown}"
+            echo "  target active image: ${TARGET_ACTIVE_IMAGE:-not-active}"
+            echo "  service reason:      ${SERVICE_REASON:-none}"
+            echo "  deployment reason:   ${DEPLOYMENT_REASON:-none}"
+
+            case "$DEPLOYMENT_STATUS" in
+              ROLLBACK_REQUESTED|ROLLBACK_IN_PROGRESS|ROLLBACK_SUCCESSFUL|ROLLBACK_FAILED|STOPPED|STOP_REQUESTED)
+                echo "::error::The ECS deployment did not succeed: $DEPLOYMENT_STATUS"
+                echo "::error::${DEPLOYMENT_REASON:-AWS returned no deployment reason.}"
+
+                if [ -n "$DEPLOYMENT_ARN" ]; then
+                  aws ecs describe-service-deployments \
+                    --service-deployment-arns "$DEPLOYMENT_ARN" \
+                    --region "$AWS_REGION" \
+                    --output json \
+                    --no-cli-pager || true
+                fi
+
+                exit 1
+                ;;
+            esac
+
+            REVISION_IS_CURRENT="no"
+            IMAGE_IS_CURRENT="no"
+            DEPLOYMENT_IS_COMPLETE="no"
+
+            if [ "$CURRENT_REVISION" = "$TARGET_REVISION" ]; then
+              REVISION_IS_CURRENT="yes"
+            fi
+
+            if [ "$CURRENT_IMAGE" = "$IMAGE_REF" ]; then
+              IMAGE_IS_CURRENT="yes"
+            fi
+
+            if [ "$DEPLOYMENT_API_AVAILABLE" = "yes" ]; then
+              if [ "$DEPLOYMENT_STATUS" = "SUCCESSFUL" ]; then
+                DEPLOYMENT_IS_COMPLETE="yes"
+              fi
+            else
+              # Fallback when the role cannot list deployments.
+              if [ "$SERVICE_STATUS" = "ACTIVE" ]; then
+                DEPLOYMENT_IS_COMPLETE="yes"
+              fi
+            fi
+
+            if [ "$REVISION_IS_CURRENT" = "yes" ] && \
+               [ "$IMAGE_IS_CURRENT" = "yes" ] && \
+               [ "$DEPLOYMENT_IS_COMPLETE" = "yes" ]; then
               DEPLOYED="yes"
               break
             fi
-            sleep 20
+
+            sleep 10
           done
 
-          # The endpoint field was queried as `service.ingressPaths[0].endpoint`,
-          # which resolved to None - the shape is not what that path assumed, and
-          # a wrong guess printed as "Service endpoint: None" under a green tick.
-          # Search the response for the first URL rather than guessing again, and
-          # dump the whole document when nothing is found so the next run has the
-          # schema in the log instead of another silent None.
-          URL=$(printf '%s' "$DESCRIBE" | jq -r '
-            [.. | strings | select(startswith("http"))] | first // ""')
-          echo "=================================================="
-          if [ -n "$URL" ]; then
-            echo "Service endpoint: $URL"
-            echo "Health:           $(curl -fsS --max-time 20 "$URL/health" || echo unreachable)"
-          else
-            echo "Service endpoint could not be read. Full describe response:"
-            printf '%s\n' "$DESCRIBE" | jq '.'
-          fi
-          echo "=================================================="
-
           if [ -z "$DEPLOYED" ]; then
-            echo "::error::The service is not serving ${IMAGE_URI}. The image was" \
-                 "built and pushed, but the rollout did not complete - do not" \
-                 "report this deploy as live."
+            echo "::error::The target ECS revision did not become the current successful deployment."
+            echo "::error::Expected image: $IMAGE_REF"
+            echo "::error::Expected revision: $TARGET_REVISION"
+            printf '%s\n' "$DESCRIBE" | jq '.'
             exit 1
           fi
+
+          ENDPOINT="$(
+            printf '%s' "$DESCRIBE" |
+              jq -r '
+                .service as $service
+                | [
+                    $service.activeConfigurations[]?
+                    | select(.serviceRevisionArn == $service.currentDeployment)
+                    | .ingressPaths[]?.endpoint
+                  ][0] // ""
+              '
+          )"
+
+          echo "Deployment verified."
+          echo "  image tag: $IMAGE_URI"
+          echo "  image digest: $IMAGE_REF"
+          echo "  revision: $TARGET_REVISION"
+          echo "  endpoint: ${ENDPOINT:-not reported}"
+
+          if [ -n "$ENDPOINT" ]; then
+            HEALTH_URL="${ENDPOINT%/}/health"
+            echo "Checking $HEALTH_URL"
+
+            for attempt in $(seq 1 12); do
+              if HEALTH_RESPONSE="$(curl -fsS --max-time 20 "$HEALTH_URL")"; then
+                echo "Health response: $HEALTH_RESPONSE"
+                break
+              fi
+
+              if [ "$attempt" -eq 12 ]; then
+                echo "::error::The new revision is current, but its public /health endpoint is unreachable."
+                exit 1
+              fi
+
+              sleep 5
+            done
+          fi
+
+          {
+            echo "## API deployment"
+            echo ""
+            echo "- Image tag: \`$IMAGE_URI\`"
+            echo "- Image digest: \`$IMAGE_REF\`"
+            echo "- ECS revision: \`$TARGET_REVISION\`"
+            echo "- Endpoint: ${ENDPOINT:-not reported by ECS}"
+          } >> "$GITHUB_STEP_SUMMARY"
