@@ -365,20 +365,26 @@ jobs:
                 jq -r '.service.status.statusReason // ""'
             )"
 
-            CURRENT_REVISION="$(
+            # `currentDeployment` is a service-DEPLOYMENT arn:
+            #   arn:...:service-deployment/default/emma-ai-api/f9BRABTdJCZBu4t
+            # and targetConfiguration.serviceRevisionArn is a service-REVISION arn:
+            #   arn:...:service-revision/default/emma-ai-api/1081314041852476558
+            # Two different resource types, so comparing them was never going to
+            # be true - every deploy burned the full poll budget and then failed
+            # even when the rollout had already succeeded. Reported here only.
+            CURRENT_DEPLOYMENT="$(
               printf '%s' "$DESCRIBE" |
                 jq -r '.service.currentDeployment // ""'
             )"
 
+            # What is actually serving: the revision's own entry in
+            # activeConfigurations. Confirmed against the API - during a rollout
+            # there is one entry per live revision, and afterwards only the new
+            # one remains.
             CURRENT_IMAGE="$(
               printf '%s' "$DESCRIBE" |
                 jq -r '
-                  .service as $service
-                  | [
-                      $service.activeConfigurations[]?
-                      | select(.serviceRevisionArn == $service.currentDeployment)
-                      | .primaryContainer.image
-                    ][0] // ""
+                  [.service.activeConfigurations[]?.primaryContainer.image] | join(", ") // ""
                 '
             )"
 
@@ -442,9 +448,9 @@ jobs:
             echo "[$attempt/120]"
             echo "  service status:      $SERVICE_STATUS"
             echo "  deployment status:   $DEPLOYMENT_STATUS"
-            echo "  current revision:    ${CURRENT_REVISION:-unknown}"
+            echo "  current deployment:  ${CURRENT_DEPLOYMENT:-unknown}"
             echo "  target revision:     $TARGET_REVISION"
-            echo "  current image:       ${CURRENT_IMAGE:-unknown}"
+            echo "  serving image(s):    ${CURRENT_IMAGE:-unknown}"
             echo "  target active image: ${TARGET_ACTIVE_IMAGE:-not-active}"
             echo "  service reason:      ${SERVICE_REASON:-none}"
             echo "  deployment reason:   ${DEPLOYMENT_REASON:-none}"
@@ -466,15 +472,19 @@ jobs:
                 ;;
             esac
 
+            # "Is the revision this run built the one now serving?" The answer
+            # is its presence in activeConfigurations carrying the digest we
+            # pushed - both read by name from the API's own response, not
+            # inferred from a comparison between two unrelated ARN types.
             REVISION_IS_CURRENT="no"
             IMAGE_IS_CURRENT="no"
             DEPLOYMENT_IS_COMPLETE="no"
 
-            if [ "$CURRENT_REVISION" = "$TARGET_REVISION" ]; then
+            if [ -n "$TARGET_ACTIVE_IMAGE" ]; then
               REVISION_IS_CURRENT="yes"
             fi
 
-            if [ "$CURRENT_IMAGE" = "$IMAGE_REF" ]; then
+            if [ "$TARGET_ACTIVE_IMAGE" = "$IMAGE_REF" ]; then
               IMAGE_IS_CURRENT="yes"
             fi
 
@@ -507,17 +517,30 @@ jobs:
             exit 1
           fi
 
+          # The public endpoint of the revision this run deployed. Selected by
+          # the target revision - the old filter compared against
+          # `currentDeployment`, which is a deployment ARN and never matches a
+          # revision ARN, so this always came back empty.
           ENDPOINT="$(
             printf '%s' "$DESCRIBE" |
-              jq -r '
-                .service as $service
-                | [
-                    $service.activeConfigurations[]?
-                    | select(.serviceRevisionArn == $service.currentDeployment)
-                    | .ingressPaths[]?.endpoint
-                  ][0] // ""
+              jq -r --arg revision "$TARGET_REVISION" '
+                [
+                  .service.activeConfigurations[]?
+                  | select(.serviceRevisionArn == $revision)
+                  | .ingressPaths[]?
+                  | select(.accessType == "PUBLIC")
+                  | .endpoint
+                ][0] // ""
               '
           )"
+
+          # ECS reports the endpoint as a bare host - em-….ecs.….on.aws - with no
+          # scheme. Left as-is, curl would default to http:// and the check would
+          # measure a redirect rather than the API.
+          case "$ENDPOINT" in
+            ""|https://*|http://*) ;;
+            *) ENDPOINT="https://$ENDPOINT" ;;
+          esac
 
           echo "Deployment verified."
           echo "  image tag: $IMAGE_URI"
