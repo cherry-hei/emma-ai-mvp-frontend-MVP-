@@ -237,6 +237,18 @@ export const api = {
     method: 'POST', body: JSON.stringify(body),
   }),
 
+  // PATCH semantics: only the keys sent are touched, so a capability toggle does
+  // not have to round-trip the whole profile and cannot clobber a field another
+  // editor changed meanwhile. The API rejects an empty body.
+  updateStaff: (id: string, patch: {
+    name?: string; name_en?: string; rank?: string; employment_type?: string
+    primary_unit_id?: string | null; contracted_hours?: number
+    is_audited_for_medication?: boolean; is_mentor?: boolean
+    gender?: 'M' | 'F'; status?: 'active' | 'inactive'
+  }) => apiFetch<ApiStaff>(`/staff/${id}`, {
+    method: 'PATCH', body: JSON.stringify(patch),
+  }),
+
   publish: (versionId: string) =>
     apiFetch<{ roster_version_id: string; status: string }>(
       `/rosters/${versionId}/publish`, { method: 'POST' }),

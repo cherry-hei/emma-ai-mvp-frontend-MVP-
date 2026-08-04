@@ -84,3 +84,7 @@ for _module in (_auth, _roster, _residents, _compliance, _staff, _optimize,
 @app.get("/health")
 def health() -> dict:
     return {"status": "ok", "service": "emma-ai-api"}
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000)

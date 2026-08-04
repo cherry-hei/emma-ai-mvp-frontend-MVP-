@@ -62,7 +62,35 @@ const SKILLS: Record<number, string[]> = {
 const AVATARS = ['🧑‍⚕️', '👩‍⚕️', '👨‍⚕️', '👩‍⚕️', '🧑‍⚕️', '👩‍⚕️', '👨‍⚕️']
 const PINK = '#f28f9e'
 
-function ProfileModal({ staff, idx, onClose }: { staff: StaffType; idx: number; onClose: () => void }) {
+// The two capability flags the rule engine reads off a staff record. Both are
+// editable here rather than only at creation: mentor status is the one a
+// superintendent changes most, because it decides whether a new-staff restricted
+// duty may be rostered at all (see scheduling.validate - "new_staff_restricted"
+// requires a mentor on the shift).
+const CAPABILITY_FIELDS = [
+  {
+    key: 'is_mentor' as const,
+    icon: '🎓',
+    titleZH: '可帶教新人', titleEN: 'Can mentor new staff',
+    hintZH: '新入職員工需導師陪同', hintEN: 'New staff need a mentor on duty',
+  },
+  {
+    key: 'is_audited_for_medication' as const,
+    icon: '💊',
+    titleZH: '藥物核查資格', titleEN: 'Medication audited',
+    hintZH: '可執行藥物相關工作', hintEN: 'May perform medication duties',
+  },
+]
+
+type CapabilityKey = (typeof CAPABILITY_FIELDS)[number]['key']
+
+function ProfileModal({ staff, idx, canEdit, onClose, onSaved }: {
+  staff: StaffType
+  idx: number
+  canEdit: boolean
+  onClose: () => void
+  onSaved: (name: string) => void
+}) {
   const { lang } = useLang()
   const isZH = lang === 'zh'
   const [tab, setTab] = useState<'ai' | 'history'>('history')
@@ -70,15 +98,50 @@ function ProfileModal({ staff, idx, onClose }: { staff: StaffType; idx: number; 
   const [analysis, setAnalysis] = useState<StaffAiAnalysis | null>(null)
   const [analysisError, setAnalysisError] = useState('')
 
+  // `draft` holds the pending toggle state; null until the record loads, so the
+  // switches cannot be flipped against a value we have not read yet. Saving
+  // sends only the keys that actually differ from `detail`.
+  const [draft, setDraft] = useState<Record<CapabilityKey, boolean> | null>(null)
+  const [saving, setSaving] = useState(false)
+  const [saveError, setSaveError] = useState('')
+
   useEffect(() => {
     if (!staff.apiId) return
     let cancelled = false
-    api.staffDetail(staff.apiId).then(d => { if (!cancelled) setDetail(d) }).catch(() => {})
+    api.staffDetail(staff.apiId)
+      .then(d => {
+        if (cancelled) return
+        setDetail(d)
+        setDraft({ is_mentor: !!d.is_mentor, is_audited_for_medication: !!d.is_audited_for_medication })
+      })
+      .catch(() => {})
     api.staffAiAnalysis(staff.apiId)
       .then(a => { if (!cancelled) setAnalysis(a) })
       .catch(e => { if (!cancelled) setAnalysisError(e instanceof Error ? e.message : 'Analysis unavailable') })
     return () => { cancelled = true }
   }, [staff.apiId])
+
+  const dirtyKeys = draft && detail
+    ? CAPABILITY_FIELDS.map(f => f.key).filter(k => draft[k] !== !!detail[k])
+    : []
+
+  async function saveCapabilities() {
+    if (!staff.apiId || !draft || dirtyKeys.length === 0) return
+    setSaving(true)
+    setSaveError('')
+    try {
+      const patch = Object.fromEntries(dirtyKeys.map(k => [k, draft[k]]))
+      const updated = await api.updateStaff(staff.apiId, patch)
+      // Re-seed from the row the API returned, so `dirtyKeys` empties and the
+      // panel reflects what was actually stored rather than what we sent.
+      setDetail(d => (d ? { ...d, ...updated } : d))
+      onSaved(staff.nameEn)
+    } catch (e) {
+      setSaveError(e instanceof Error ? e.message : 'Save failed')
+    } finally {
+      setSaving(false)
+    }
+  }
 
   const pct = staff.hoursTotal ? Math.round((staff.hoursWorked / staff.hoursTotal) * 100) : 0
 
@@ -115,6 +178,12 @@ function ProfileModal({ staff, idx, onClose }: { staff: StaffType; idx: number; 
     no_analysis:    isZH ? '此員工尚未有可分析的實際資料' : 'No analysable records for this staff member yet',
     loading:        isZH ? '分析載入中…'     : 'Loading analysis…',
     times:          isZH ? '次'              : '×',
+    capabilities:   isZH ? '資格與能力'      : 'Capabilities',
+    save:           isZH ? '儲存'            : 'Save',
+    saving:         isZH ? '儲存中…'         : 'Saving…',
+    saved:          isZH ? '已儲存'          : 'Saved',
+    unsaved:        isZH ? '尚未儲存'        : 'Unsaved changes',
+    readonly:       isZH ? '你的權限不可修改員工資格' : 'Your role may not edit staff capabilities',
   }
 
   const CREDENTIALS = analysis?.explicit_skills.length
@@ -187,6 +256,60 @@ function ProfileModal({ staff, idx, onClose }: { staff: StaffType; idx: number; 
             <div className="h-2 bg-gray-200 rounded-full overflow-hidden">
               <div className="h-full rounded-full" style={{ width: `${pct}%`, background: pct >= 100 ? '#dc2626' : pct >= 90 ? '#d97706' : PINK }} />
             </div>
+          </div>
+
+          {/* Capabilities. Sits above the tabs rather than inside one, because it
+              is the only editable thing on this screen - burying a write behind a
+              tab labelled "Shift History" or "AI Analysis" is how it went missing. */}
+          <div className="mb-6">
+            <div className="flex items-center justify-between mb-2">
+              <div className="text-[9px] font-bold text-gray-400 uppercase tracking-widest">{L.capabilities}</div>
+              {canEdit && dirtyKeys.length > 0 && (
+                <div className="flex items-center gap-2">
+                  <span className="text-[10px] font-semibold text-amber-600">{L.unsaved}</span>
+                  <button onClick={saveCapabilities} disabled={saving}
+                    className="px-4 py-1.5 text-[11px] rounded-lg text-white font-bold disabled:opacity-60"
+                    style={{ background: PINK }}>
+                    {saving ? L.saving : L.save}
+                  </button>
+                </div>
+              )}
+            </div>
+
+            {draft === null ? (
+              <div className="text-[10px] text-gray-400 py-2">…</div>
+            ) : (
+              <div className="space-y-2">
+                {CAPABILITY_FIELDS.map(f => {
+                  const on = draft[f.key]
+                  return (
+                    <div key={f.key} className="flex items-center gap-3 p-3 rounded-xl" style={{ background: '#fce8f3' }}>
+                      <div className="w-8 h-8 rounded-lg flex items-center justify-center text-white text-sm shrink-0" style={{ background: PINK }}>
+                        {f.icon}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="text-sm font-semibold text-gray-900">{isZH ? f.titleZH : f.titleEN}</div>
+                        <div className="text-[10px] text-gray-500 mt-0.5">{isZH ? f.hintZH : f.hintEN}</div>
+                      </div>
+                      <button type="button"
+                        role="switch"
+                        aria-checked={on}
+                        aria-label={isZH ? f.titleZH : f.titleEN}
+                        disabled={!canEdit}
+                        onClick={() => setDraft(d => (d ? { ...d, [f.key]: !d[f.key] } : d))}
+                        className="w-10 h-6 rounded-full transition-all relative shrink-0 disabled:cursor-not-allowed disabled:opacity-50"
+                        style={{ background: on ? PINK : '#d1d5db' }}>
+                        <span className="absolute top-1 w-4 h-4 rounded-full bg-white transition-all"
+                          style={{ left: on ? '20px' : '4px' }} />
+                      </button>
+                    </div>
+                  )
+                })}
+              </div>
+            )}
+
+            {!canEdit && <p className="text-[10px] text-gray-400 mt-1.5">{L.readonly}</p>}
+            {saveError && <p className="text-[10px] text-rose-600 mt-1.5">{saveError}</p>}
           </div>
 
           <div className="flex gap-6 border-b border-gray-100 mb-5">
@@ -396,7 +519,7 @@ export default function StaffPage() {
   const [notice, setNotice] = useState('')
   // Per the RBAC matrix, OWNER and ADMIN_CLERK may write a staff profile; the
   // API enforces it too, so this only avoids offering a door that won't open.
-  const canAddStaff = canWrite(user?.role, 'staff.profile_write')
+  const canWriteStaff = canWrite(user?.role, 'staff.profile_write')
 
   // Pull the real staff directory from the API; fall back to demo data if the
   // API is unreachable or no dev creds are configured, so the page never breaks.
@@ -443,7 +566,7 @@ export default function StaffPage() {
         </div>
         <div className="flex items-center gap-3">
           {notice && <span className="text-xs font-medium text-emerald-600">{notice}</span>}
-          {canAddStaff && (
+          {canWriteStaff && (
             <button onClick={() => setAddOpen(true)}
               className="px-4 py-2 text-white text-xs font-semibold rounded-xl" style={{ background: PINK }}>
               {L.add_staff}
@@ -531,7 +654,22 @@ export default function StaffPage() {
       </div>
       )}
 
-      {selected && <ProfileModal staff={selected.staff} idx={selected.idx} onClose={() => setSelected(null)} />}
+      {selected && (
+        <ProfileModal
+          staff={selected.staff}
+          idx={selected.idx}
+          canEdit={canWriteStaff}
+          onClose={() => setSelected(null)}
+          onSaved={(name) => {
+            setNotice(isZH ? `已更新 ${name}` : `${name} updated`)
+            window.setTimeout(() => setNotice(''), 3000)
+            // The card grid shows nothing capability-related today, but the
+            // directory read is what other screens' rule checks derive from, so
+            // keep it in step with what was just written.
+            reloadStaff().catch(() => {})
+          }}
+        />
+      )}
 
       {addOpen && (
         <AddStaffModal
