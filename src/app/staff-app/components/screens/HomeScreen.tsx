@@ -3,11 +3,13 @@
 import { useState } from 'react'
 import { api } from '@/lib/api'
 import type { MySummary } from '@/lib/apiTypes'
+import { useLang } from '@/components/layout/LanguageContext'
 
 export default function HomeScreen({ summary, onChange }: {
   summary: MySummary
   onChange: () => void
 }) {
+  const { t } = useLang()
   const [busy, setBusy] = useState('')
   const { staff, today_shift, hours, facility_ratio, tasks, attendance } = summary
   const pending = tasks.filter((t) => t.status === 'pending')
@@ -25,7 +27,7 @@ export default function HomeScreen({ summary, onChange }: {
   return (
     <div className="space-y-5">
       <section className="rounded-3xl bg-gradient-to-br from-[#e87a8e] to-[#d9657b] p-5 text-white shadow-sm">
-        <p className="text-sm text-white/80">今日值班 / Today</p>
+        <p className="text-sm text-white/80">{t('sa_today')}</p>
         <div className="mt-2 flex items-end justify-between">
           <div>
             <h2 className="text-2xl font-semibold">{today_shift?.shift_type ?? 'OFF'}</h2>
@@ -37,7 +39,7 @@ export default function HomeScreen({ summary, onChange }: {
             )}
           </div>
           <div className="rounded-2xl bg-white/20 px-3 py-2 text-right">
-            <p className="text-xs text-white/80">待辦工作</p>
+            <p className="text-xs text-white/80">{t('sa_tasks_pending')}</p>
             <p className="text-lg font-semibold">{summary.tasks_pending}</p>
           </div>
         </div>
@@ -45,29 +47,31 @@ export default function HomeScreen({ summary, onChange }: {
 
       <section className="grid grid-cols-2 gap-3">
         <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
-          <p className="text-xs text-gray-400">本週期工時進度</p>
+          <p className="text-xs text-gray-400">{t('sa_hours_progress')}</p>
           <p className="mt-2 text-2xl font-semibold text-gray-900">{hours.pct}%</p>
           <p className="mt-1 text-xs text-[#e87a8e]">
-            {hours.scheduled_hours}/{hours.contracted_hours} 小時
+            {hours.scheduled_hours}/{hours.contracted_hours} {t('sa_hours_unit')}
           </p>
         </div>
 
         <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
-          <p className="text-xs text-gray-400">院舍人手比率</p>
+          <p className="text-xs text-gray-400">{t('sa_ratio')}</p>
           <p className="mt-2 text-2xl font-semibold text-gray-900">
             {facility_ratio ? `${facility_ratio.pct}%` : '-'}
           </p>
           <p className="mt-1 text-xs text-gray-500">
-            {facility_ratio ? `${facility_ratio.passing}/${facility_ratio.total} 項合規` : '未有比率資料'}
+            {facility_ratio
+              ? `${facility_ratio.passing}/${facility_ratio.total} ${t('sa_ratio_items')}`
+              : t('sa_ratio_none')}
           </p>
         </div>
       </section>
 
       <section className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
         <div className="mb-3 flex items-center justify-between">
-          <h3 className="text-sm font-semibold text-gray-900">今日重點工作</h3>
+          <h3 className="text-sm font-semibold text-gray-900">{t('sa_today_tasks')}</h3>
           <span className="rounded-full bg-[#fdecef] px-2.5 py-1 text-xs font-medium text-[#e87a8e]">
-            {pending.length} 項
+            {pending.length} {t('sa_items_suffix')}
           </span>
         </div>
 
@@ -92,23 +96,23 @@ export default function HomeScreen({ summary, onChange }: {
                 <span className={`rounded-full px-2 py-1 text-[11px] font-medium ${
                   task.status === 'done' ? 'bg-emerald-50 text-emerald-600' : 'bg-[#fdecef] text-[#e87a8e]'
                 }`}>
-                  {task.status === 'done' ? '已完成' : '待處理'}
+                  {task.status === 'done' ? t('sa_done') : t('sa_pending')}
                 </span>
               </button>
             ))}
           </div>
         ) : (
           <div className="rounded-2xl bg-gray-50 px-4 py-6 text-center text-sm text-gray-500">
-            今日沒有指定工作
+            {t('sa_no_tasks_today')}
           </div>
         )}
       </section>
 
       <section className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
-        <h3 className="text-sm font-semibold text-gray-900">今日打卡</h3>
+        <h3 className="text-sm font-semibold text-gray-900">{t('sa_today_clock')}</h3>
         <div className="mt-3 grid grid-cols-2 gap-3">
           <div className="rounded-xl bg-gray-50 px-3 py-3">
-            <p className="text-xs text-gray-400">上班時間</p>
+            <p className="text-xs text-gray-400">{t('sa_clock_in_time')}</p>
             <p className="text-sm font-medium text-gray-800">
               {attendance.clock_in_at
                 ? new Date(attendance.clock_in_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
@@ -116,7 +120,7 @@ export default function HomeScreen({ summary, onChange }: {
             </p>
           </div>
           <div className="rounded-xl bg-gray-50 px-3 py-3">
-            <p className="text-xs text-gray-400">已工作</p>
+            <p className="text-xs text-gray-400">{t('sa_worked')}</p>
             <p className="text-sm font-medium text-gray-800">
               {Math.floor(attendance.worked_minutes_today / 60)}h {attendance.worked_minutes_today % 60}m
             </p>

@@ -1,6 +1,7 @@
 'use client'
 
 import type { ReactNode } from 'react'
+import { useLang } from '@/components/layout/LanguageContext'
 
 export type TabKey = 'home' | 'tasks' | 'shift' | 'clockin' | 'profile'
 
@@ -9,15 +10,16 @@ interface BottomNavProps {
   onChange: (tab: TabKey) => void
 }
 
-const tabs: { key: TabKey; label: string; icon: ReactNode }[] = [
-  { key: 'home', label: '首頁', icon: <span className="text-base">🏠</span> },
-  { key: 'tasks', label: '工作', icon: <span className="text-base">📝</span> },
-  { key: 'shift', label: '更表', icon: <span className="text-base">📅</span> },
-  { key: 'clockin', label: '打卡', icon: <span className="text-base">⏰</span> },
-  { key: 'profile', label: '我的', icon: <span className="text-base">👤</span> },
+const tabs: { key: TabKey; labelKey: string; icon: ReactNode }[] = [
+  { key: 'home', labelKey: 'sa_tab_home', icon: <span className="text-base">🏠</span> },
+  { key: 'tasks', labelKey: 'sa_tab_tasks', icon: <span className="text-base">📝</span> },
+  { key: 'shift', labelKey: 'sa_tab_shift', icon: <span className="text-base">📅</span> },
+  { key: 'clockin', labelKey: 'sa_tab_clockin', icon: <span className="text-base">⏰</span> },
+  { key: 'profile', labelKey: 'sa_tab_profile', icon: <span className="text-base">👤</span> },
 ]
 
 export default function BottomNav({ activeTab, onChange }: BottomNavProps) {
+  const { t } = useLang()
   return (
     <div className="sticky bottom-0 z-30 border-t border-gray-200 bg-white/95 backdrop-blur">
       <div className="mx-auto flex max-w-md items-center justify-around px-2 py-2">
@@ -40,7 +42,7 @@ export default function BottomNav({ activeTab, onChange }: BottomNavProps) {
               >
                 {tab.icon}
               </span>
-              <span>{tab.label}</span>
+              <span>{t(tab.labelKey)}</span>
             </button>
           )
         })}

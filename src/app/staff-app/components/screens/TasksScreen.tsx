@@ -3,11 +3,13 @@
 import { useState } from 'react'
 import { api } from '@/lib/api'
 import type { MySummary } from '@/lib/apiTypes'
+import { useLang } from '@/components/layout/LanguageContext'
 
 export default function TasksScreen({ summary, onChange }: {
   summary: MySummary
   onChange: () => void
 }) {
+  const { t } = useLang()
   const [busy, setBusy] = useState('')
   const [error, setError] = useState('')
   const tasks = summary.tasks
@@ -19,7 +21,7 @@ export default function TasksScreen({ summary, onChange }: {
       await api.setTaskStatus(taskId, isDone ? 'pending' : 'done')
       onChange()
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Update failed')
+      setError(e instanceof Error ? e.message : t('sa_update_failed'))
     } finally {
       setBusy('')
     }
@@ -28,9 +30,9 @@ export default function TasksScreen({ summary, onChange }: {
   return (
     <div className="space-y-4">
       <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
-        <h3 className="text-base font-semibold text-gray-900">今日工作清單</h3>
+        <h3 className="text-base font-semibold text-gray-900">{t('sa_task_list')}</h3>
         <p className="mt-1 text-sm text-gray-500">
-          {summary.date} · {summary.today_shift?.shift_type ?? 'OFF'} · 點擊可切換完成狀態
+          {summary.date} · {summary.today_shift?.shift_type ?? 'OFF'} · {t('sa_task_hint')}
         </p>
       </div>
 
@@ -40,7 +42,7 @@ export default function TasksScreen({ summary, onChange }: {
 
       {tasks.length === 0 && (
         <div className="rounded-2xl border border-gray-200 bg-white px-4 py-8 text-center text-sm text-gray-500">
-          今日沒有指定工作 / No tasks assigned today
+          {t('sa_no_tasks_today')}
         </div>
       )}
 
@@ -73,7 +75,7 @@ export default function TasksScreen({ summary, onChange }: {
             </div>
             <p className="mt-1 text-xs text-gray-400">
               {[task.scheduled_time, task.shift_type].filter(Boolean).join(' · ')}
-              {task.completed_at && ` · 完成於 ${new Date(task.completed_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`}
+              {task.completed_at && ` · ${t('sa_completed_at')} ${new Date(task.completed_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`}
             </p>
           </div>
         </button>
