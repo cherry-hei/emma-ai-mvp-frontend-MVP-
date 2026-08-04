@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { api } from '@/lib/api'
 import type { MySummary } from '@/lib/apiTypes'
 import BottomNav from './BottomNav'
+import PushPrompt from './PushPrompt'
 import HomeScreen from './screens/HomeScreen'
 import TasksScreen from './screens/TasksScreen'
 import MyShiftScreen from './screens/MyShiftScreen'
@@ -32,6 +33,26 @@ export default function StaffShell() {
   }, [])
 
   useEffect(() => { reload() }, [reload])
+
+  // Tapping a background notification lands here (spec SA.4b). The service
+  // worker focuses an open tab rather than opening a second copy of the app, so
+  // without this the notification would bring the app forward on whatever screen
+  // it was left on - and the roster change it was announcing would be a tap away
+  // instead of on screen. `reload()` because the row it refers to has changed.
+  useEffect(() => {
+    if (!('serviceWorker' in navigator)) return
+
+    const onMessage = (event: MessageEvent) => {
+      if (event.data?.type !== 'emma:notification-click') return
+      const relatedType = event.data.data?.related_type
+      if (relatedType === 'task_assignment') setActiveTab('tasks')
+      else if (relatedType === 'leave_request' || relatedType === 'roster_version') setActiveTab('shift')
+      reload()
+    }
+
+    navigator.serviceWorker.addEventListener('message', onMessage)
+    return () => navigator.serviceWorker.removeEventListener('message', onMessage)
+  }, [reload])
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -77,6 +98,7 @@ export default function StaffShell() {
 
           {!loading && !error && summary && (
             <>
+              {activeTab === 'home' && <PushPrompt />}
               {activeTab === 'home' && <HomeScreen summary={summary} onChange={reload} />}
               {activeTab === 'tasks' && <TasksScreen summary={summary} onChange={reload} />}
               {activeTab === 'shift' && <MyShiftScreen />}

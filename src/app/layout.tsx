@@ -1,4 +1,4 @@
-import type { Metadata } from 'next'
+import type { Metadata, Viewport } from 'next'
 import { Inter } from 'next/font/google'
 import './globals.css'
 import { LanguageProvider } from '@/components/layout/LanguageContext'
@@ -10,6 +10,15 @@ const inter = Inter({ subsets: ['latin'] })
 export const metadata: Metadata = {
   title: 'Emma AI – Medical Intelligence',
   description: 'AI-powered roster management for RCHE',
+  // The staff app is installed to a phone home screen (spec SA.4b); the manifest
+  // and theme colour are what make that offer appear.
+  manifest: '/manifest.json',
+  appleWebApp: { capable: true, title: 'Emma AI', statusBarStyle: 'default' },
+  icons: { icon: '/icons/emma-192.png', apple: '/icons/emma-192.png' },
+}
+
+export const viewport: Viewport = {
+  themeColor: '#e87a8e',
 }
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

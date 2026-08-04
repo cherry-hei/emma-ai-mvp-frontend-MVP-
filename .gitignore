@@ -32,6 +32,10 @@ yarn-error.log*
 
 # env files (can opt-in for committing if needed)
 .env*
+# ...except the template. It holds names and comments, never values - and the
+# NEXT_PUBLIC_FIREBASE_* block is the only record of what the staff PWA needs
+# wired up before push works (spec SA.4b).
+!.env.example
 
 # local dev credentials (never commit)
 DEV_LOGINS.md

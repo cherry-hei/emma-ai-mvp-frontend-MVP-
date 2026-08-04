@@ -44,10 +44,21 @@ class Settings(BaseSettings):
 
     app_env: str = "development"
 
-    # Firebase Cloud Messaging (spec SA.4). Empty until the Firebase project is
-    # provisioned; `push.deliver()` reports "not configured" and leaves the
-    # notification queued rather than claiming a delivery that never happened.
+    # Firebase Cloud Messaging (spec SA.4 / SA.4b). Empty until the Firebase
+    # project is provisioned; `push.deliver()` reports "not configured" and
+    # leaves the notification queued rather than claiming a delivery that never
+    # happened.
+    #
+    # The service account key is the production setting - either the JSON itself
+    # (secret manager) or a path to the downloaded file (developer machine).
+    # `push` mints a one-hour OAuth2 token from it and re-mints on expiry.
+    fcm_service_account_json: str = ""
+    # Optional: the key already names its project. Set only to point a deploy at
+    # a different project than the key's own.
     fcm_project_id: str = ""
+    # Escape hatch for testing against a project whose key is not on the machine
+    # (`gcloud auth print-access-token`). Expires in an hour and is not refreshed
+    # - do not use it for a deploy.
     fcm_access_token: str = ""
 
     # CORS allow-list for the frontend origin(s); set CORS_ORIGINS per deployment.

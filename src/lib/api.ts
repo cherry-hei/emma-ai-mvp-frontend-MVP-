@@ -18,7 +18,7 @@ import type {
   RuleDefinition, RuleDefinitionCreate,
   ReportSchedule, ReportType, ResidentCountOut, RoiSettings, RoiSummary, RosterGrid,
   RosterOption, RuleIssue, SessionOut, ShiftDef, StaffAiAnalysis, StaffDetail,
-  StaffQualification, TaskAssignment, TaskDefOut,
+  StaffNotification, StaffQualification, TaskAssignment, TaskDefOut,
   ThresholdMonitor, Unit, ValidationOut, VersionOut,
 } from './apiTypes'
 
@@ -524,6 +524,16 @@ export const api = {
   clock: (eventType: 'clock_in' | 'clock_out') =>
     apiFetch<{ id: string; event_at: string }>('/me/attendance/clock', {
       method: 'POST', body: JSON.stringify({ event_type: eventType }),
+    }),
+  myNotifications: (unreadOnly = false) =>
+    apiFetch<StaffNotification[]>(`/me/notifications${unreadOnly ? '?unread_only=true' : ''}`),
+  markNotificationRead: (id: string) =>
+    apiFetch<StaffNotification>(`/me/notifications/${id}/read`, { method: 'PATCH' }),
+  /** Register this device's FCM token for push (spec SA.4b). Upserts on the
+   *  token, so calling it on every launch does not duplicate the subscription. */
+  registerPushDevice: (body: { token: string; platform?: string; user_agent?: string }) =>
+    apiFetch<{ id: string; token: string }>('/me/push-subscriptions', {
+      method: 'POST', body: JSON.stringify({ platform: 'web', ...body }),
     }),
 
   // ── Phase 3 · staff AI analysis ─────────────────────────────────────────────

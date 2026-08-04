@@ -784,6 +784,21 @@ export interface MySummary {
   unread_notifications: number
 }
 
+/** A row from /me/notifications. `related_type` / `related_id` are what a tapped
+ *  push notification navigates to; the same pair rides in the FCM data payload. */
+export interface StaffNotification {
+  id: string
+  event_type: string
+  title: string
+  body?: string | null
+  channel: string
+  status: 'queued' | 'sent' | 'read'
+  related_type?: string | null
+  related_id?: string | null
+  created_at: string
+  read_at?: string | null
+}
+
 export interface MyProfile {
   id: string
   name?: string | null

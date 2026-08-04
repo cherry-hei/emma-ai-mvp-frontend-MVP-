@@ -381,6 +381,53 @@ def publish_version(client, *, facility_id, roster_version_id, created_by=None):
     return updated[0]
 
 
+def notify_published(client, facility_id: str, roster_version_id: str) -> list[dict]:
+    """Tell everyone rostered in a version that it is now the operative one.
+
+    SA.4b lists "roster changes" among the push triggers, and publish is the only
+    roster write that changes the shifts a care worker is expected to turn up for
+    - a draft edit is the scheduler still thinking. Notifying per cell edit would
+    also mean a notification per keystroke of a rebuild.
+
+    One notification per person, not per shift: publishing a six-week NAAC cycle
+    touches around forty shifts for a frontline worker, and forty buzzes for one
+    scheduler action is a reason to turn notifications off.
+
+    Individual pushes are best effort, so one unreachable recipient does not cost
+    the rest theirs. The caller guards the whole call for the same reason at a
+    coarser grain: by the time this runs the publish has committed.
+    """
+    from . import notifications as notify        # local: keeps the graph acyclic
+
+    # SQL: select id, date from shifts where roster_version_id = :roster_version_id
+    shifts = (client.table("shifts").select("id,date")
+              .eq("roster_version_id", roster_version_id).execute().data or [])
+    if not shifts:
+        return []
+
+    assigned = assignments_for_shifts(client, [s["id"] for s in shifts])
+    staff_ids = {a["staff_id"] for a in assigned if a.get("staff_id")}
+    if not staff_ids:
+        return []
+
+    dates = sorted(str(s["date"])[:10] for s in shifts if s.get("date"))
+    span = f"{dates[0]} – {dates[-1]}" if dates else ""
+
+    out = []
+    for staff_id in sorted(staff_ids):
+        try:
+            out.append(notify.push(
+                client, facility_id, staff_id=staff_id,
+                event_type="roster_published",
+                title="Your roster has been published",
+                body=span,
+                related_type="roster_version", related_id=roster_version_id,
+            ))
+        except Exception:  # noqa: BLE001 - see docstring
+            continue
+    return out
+
+
 def save_draft(client, *, facility_id, roster_version_id, created_by=None):
     # SQL: insert into roster_publish_events
     #        (facility_id, roster_version_id, event_type, created_by)

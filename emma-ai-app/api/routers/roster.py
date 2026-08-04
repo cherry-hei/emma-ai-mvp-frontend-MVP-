@@ -174,4 +174,17 @@ def publish(version_id: str, ctx: AuthCtx = Depends(get_ctx)):
             )
     svc.publish_version(service_client, facility_id=ctx.facility_id,
                         roster_version_id=version_id, created_by=ctx.profile_id)
+    # Only now that the version is operative (spec SA.4b, "push triggers: roster
+    # changes"). Notifying before the publish could tell a ward to work a roster
+    # that a failed publish left unpublished. Uses the service client because the
+    # rows are written for other people than the caller, which RLS forbids the
+    # caller's own token.
+    #
+    # Swallowed, because by this line the publish has committed: raising would
+    # answer 500 to a scheduler whose roster *is* published, and they would
+    # publish again to fix an error that was never about the roster.
+    try:
+        svc.notify_published(service_client, ctx.facility_id, version_id)
+    except Exception:  # noqa: BLE001 - see above
+        pass
     return {"roster_version_id": version_id, "status": "published"}

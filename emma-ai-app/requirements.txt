@@ -14,6 +14,15 @@ starlette>=0.46               # ASGI toolkit fastapi builds on (pulled in by fas
 # boot.
 python-multipart>=0.0.9
 
+# Firebase Cloud Messaging access tokens (spec SA.4b). FCM HTTP v1 wants an
+# OAuth2 bearer minted from the service account key, valid one hour; google-auth
+# owns the RS256 signing, the caching and the expiry margin. `requests` is named
+# explicitly because google-auth declares no transport of its own - and an
+# ambient install is what made python-multipart look present locally and crash
+# every deployed image.
+google-auth>=2.30
+requests>=2.32
+
 # Data + Auth (Supabase: Postgres + GoTrue + RLS)
 supabase>=2.6
 psycopg[binary]>=3.2          # direct Postgres for migrations / seed / tests
