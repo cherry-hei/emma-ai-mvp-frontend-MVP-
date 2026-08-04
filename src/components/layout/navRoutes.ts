@@ -17,6 +17,7 @@ export const ROUTES = {
   reports:    '/reports',
   alert:      '/alert',
   insights:   '/insights',
+  settings:   '/settings',
 } as const
 
 export type RoutePath = (typeof ROUTES)[keyof typeof ROUTES]
@@ -50,6 +51,7 @@ export const ROUTE_FEATURE: Record<string, Feature> = {
   [ROUTES.roi]:        'roi',
   [ROUTES.reports]:    'reports',
   [ROUTES.alert]:      'alerts',
+  [ROUTES.settings]:   'settings',
   // PROVISIONAL: Cherry's frontend-main design has an "AI Insights" nav item and
   // route, but no page or RBAC row exists for it anywhere - not in the approved
   // RBAC matrix (permissions.ts), not on frontend-main itself. Gated on 'kpi' as
@@ -97,7 +99,7 @@ export function fallbackRoute(role: string | null | undefined): string {
 const NAV_ORDER: readonly string[] = [
   ROUTES.dashboard, ROUTES.roster, ROUTES.scheduling, ROUTES.compliance,
   ROUTES.approval, ROUTES.staff, ROUTES.roi, ROUTES.reports, ROUTES.alert,
-  ROUTES.insights,
+  ROUTES.insights, ROUTES.settings,
 ]
 
 // Segment-aware so a path is never a prefix-match for a sibling: on `/staff-app`

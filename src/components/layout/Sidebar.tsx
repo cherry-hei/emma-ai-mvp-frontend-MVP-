@@ -18,6 +18,7 @@ const NAV = [
   { key: 'nav_reports',     icon: '📊',  path: ROUTES.reports    },
   { key: 'nav_alert',       icon: '🔔',  path: ROUTES.alert, badge: '3' },
   { key: 'nav_ai',          icon: '🤖',  path: ROUTES.insights   },
+  { key: 'nav_settings',    icon: '⚙️',  path: ROUTES.settings   },
 ]
 
 export function Sidebar() {
@@ -41,6 +42,7 @@ export function Sidebar() {
     nav_roi:        { zh: '投資回報',   en: 'ROI'           },
     nav_reports:    { zh: '報告',       en: 'Reports'       },
     nav_alert:      { zh: '警報中心',   en: 'Alert Centre'  },
+    nav_settings:   { zh: '設定',       en: 'Settings'      },
     urgent_alert:   { zh: '🚨 緊急警報', en: '🚨 Urgent Alert' },
     staff_shortage: { zh: 'P更人手不足 - F3', en: 'P-shift understaffed - F3' },
     new_request:    { zh: '+ 新增請求', en: '+ New Request'  },

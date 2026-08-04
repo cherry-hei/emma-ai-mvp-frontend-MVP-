@@ -59,6 +59,7 @@ export type Feature =
   | 'roi'
   | 'audit_log'
   | 'task_codes'
+  | 'settings'
 
 type Row = Record<SystemRole, Grant>
 
@@ -76,6 +77,7 @@ const MATRIX: Record<Feature, Row> = {
   'roster.view':         row('F', 'V', 'V', 'V', 'V', 'S', 'V'),
   'roster.ai_draft':     row('F', 'E', '-', '-', 'E', '-', '-'),
   'roster.publish':      row('F', '-', '-', '-', '-', '-', '-'),
+  'settings':            row('F', 'V', '-', 'V', 'E', '-', '-'),
   // ALLIED_HEALTH's R is scoped to their own discipline, which this table cannot
   // express - it is a fact about the request, not about the role. The UI uses
   // this to decide whether to render the review control at all; the API decides
