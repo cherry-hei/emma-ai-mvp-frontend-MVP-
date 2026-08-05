@@ -612,7 +612,13 @@ export default function StaffPage() {
                   {s.apiId ? s.avatar : AVATARS[i]}
                 </div>
                 <div className="flex-1">
-                  <h3 className="font-bold text-gray-900 text-sm group-hover:text-pink-600 transition-colors mb-1">{s.nameEn}</h3>
+                  {/* The name is a second door to the same detail panel as
+                      "View Profile" below - clicking a person's name is the
+                      first thing anyone tries. */}
+                  <button type="button" onClick={() => setSelected({ staff: s, idx: i })}
+                    className="block text-left font-bold text-gray-900 text-sm group-hover:text-pink-600 hover:underline transition-colors mb-1">
+                    {s.nameEn}
+                  </button>
                   <div className="flex items-center gap-1.5 mb-2">
                     <span className="text-[10px] font-bold px-2 py-0.5 rounded uppercase tracking-wider text-white" style={{ background: PINK }}>
                       {s.role}
