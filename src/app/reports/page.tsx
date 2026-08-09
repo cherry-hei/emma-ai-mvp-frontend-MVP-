@@ -102,6 +102,8 @@ export default function ReportsPage() {
   const isZH = lang === 'zh'
 
   const [tab, setTab] = useState<Tab>('scheduled')
+  const [reportPeriodStart, setReportPeriodStart] = useState('')
+  const [reportPeriodEnd, setReportPeriodEnd] = useState('')
   const [schedules, setSchedules] = useState<ReportSchedule[]>([])
   const [triggers, setTriggers] = useState<EventTrigger[]>([])
   const [monitors, setMonitors] = useState<ThresholdMonitor[]>([])
@@ -223,7 +225,7 @@ export default function ReportsPage() {
 
       {/* Tabs */}
       <div className="flex gap-1 border-b border-gray-200">
-        {(['scheduled', 'event', 'threshold', 'laws'] as Tab[]).map((key, i) => (
+        {(['scheduled'] as Tab[]) /* MVP: event/threshold/laws hidden */.map((key, i) => (
           <button key={key} onClick={() => setTab(key)}
             className="px-4 py-2 text-xs font-semibold border-b-2 transition-all"
             style={{ borderBottomColor: tab === key ? PINK : 'transparent',
@@ -235,6 +237,16 @@ export default function ReportsPage() {
 
       {/* Scheduled */}
       {tab === 'scheduled' && (
+        <>
+          {/* Period Selector */}
+          <div className="flex items-center gap-3 mb-4 p-3 bg-gray-50 rounded-xl border border-gray-100">
+            <span className="text-xs font-medium text-gray-600">{isZH ? '報告期間：' : 'Report Period:'}</span>
+            <input type="date" value={reportPeriodStart} onChange={e => setReportPeriodStart(e.target.value)}
+              className="text-xs border border-gray-200 rounded-lg px-2 py-1.5 focus:ring-1 focus:ring-pink-300 outline-none" />
+            <span className="text-xs text-gray-400">→</span>
+            <input type="date" value={reportPeriodEnd} onChange={e => setReportPeriodEnd(e.target.value)}
+              className="text-xs border border-gray-200 rounded-lg px-2 py-1.5 focus:ring-1 focus:ring-pink-300 outline-none" />
+          </div>
         <div className="space-y-4">
           <p className="text-xs text-gray-500">{T.scheduledDesc}</p>
 
@@ -325,7 +337,10 @@ export default function ReportsPage() {
       )}
 
       {/* Event triggers */}
-      {tab === 'event' && (
+        </>
+      )}
+
+      {false && tab === 'event' && ( /* HIDDEN for MVP */
         <div className="space-y-4">
           <p className="text-xs text-gray-500">{T.eventDesc}</p>
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
@@ -359,7 +374,7 @@ export default function ReportsPage() {
       )}
 
       {/* Threshold monitors */}
-      {tab === 'threshold' && (
+      {false && tab === 'threshold' && ( /* HIDDEN for MVP */
         <div className="space-y-3">
           <p className="text-xs text-gray-500">{T.thresholdDesc}</p>
           {monitors.map((m) => {
@@ -402,7 +417,7 @@ export default function ReportsPage() {
       )}
 
       {/* Regulatory sync */}
-      {tab === 'laws' && (
+      {false && tab === 'laws' && ( /* HIDDEN for MVP */
         <div className="space-y-4">
           <p className="text-xs text-gray-500">{T.lawsDesc}</p>
           <div className="space-y-3">
