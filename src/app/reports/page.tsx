@@ -334,9 +334,6 @@ export default function ReportsPage() {
             )}
           </div>
         </div>
-      )}
-
-      {/* Event triggers */}
         </>
       )}
 
