@@ -38,7 +38,7 @@ export function Sidebar() {
   const FALLBACK: Record<string, { zh: string; en: string }> = {
     nav_dashboard:  { zh: '主頁',       en: 'Dashboard'     },
     nav_roster:     { zh: '更表',       en: 'Roster'        },
-    nav_scheduling: { zh: '任務排程',   en: 'Task Scheduling'},
+    nav_scheduling: { zh: '排班規則設定', en: 'Scheduling Rules'},
     nav_compliance: { zh: '合規',       en: 'Compliance'    },
     nav_approval:   { zh: '審批',       en: 'Approval'      },
     nav_personnel:  { zh: '員工檔案',   en: 'Staff Portfolio'},

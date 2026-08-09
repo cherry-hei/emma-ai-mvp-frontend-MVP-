@@ -7,7 +7,7 @@ import { useLang } from '@/components/layout/LanguageContext'
 
 const PINK = '#E8187A'
 
-type Tab = 'ratio' | 'residents' | 'certs' | 'agency' | 'audit'
+type Tab = 'ratio' | 'residents' | 'certs' | 'audit' /* agency removed for MVP */
 
 // Employment types the backend treats as external cover (emma_core.services.compliance.EXTERNAL_TYPES).
 const EXTERNAL_EMPLOYMENT_TYPES = new Set(['local_pt', 'agency', 'outsource', 'casual'])
@@ -228,7 +228,7 @@ export default function CompliancePage() {
 
   const TABS: { id: Tab; label: string }[] = [
     { id: 'ratio', label: T.ratio }, { id: 'residents', label: T.residents }, { id: 'certs', label: T.certs },
-    { id: 'agency', label: T.tabAgency }, { id: 'audit', label: T.tabAudit },
+    { id: 'audit', label: T.tabAudit }, /* agency tab removed for MVP */
   ]
 
   return (
@@ -292,7 +292,7 @@ export default function CompliancePage() {
               <tbody>
                 {ratios.map((r, i) => (
                   <tr key={i} className="border-b border-gray-50">
-                    <td className="px-3 py-2.5 font-semibold text-gray-700">{r.label}</td>
+                    <td className="px-3 py-2.5 font-semibold text-gray-700">{r.label === 'RN' ? 'Nurse (RN/EN)' : r.label === '護士' ? '護士 (RN/EN)' : r.label}</td>
                     <td className="px-3 py-2.5 text-gray-600">{r.residents}</td>
                     <td className="px-3 py-2.5 text-gray-600">{r.required}</td>
                     <td className="px-3 py-2.5 font-bold text-gray-800">{r.actual}</td>
@@ -404,7 +404,7 @@ export default function CompliancePage() {
       )}
 
       {/* AGENCY RULES */}
-      {!loading && tab === 'agency' && (
+      {false && tab === 'agency' && ( /* HIDDEN for MVP */
         <div className="bg-white border border-gray-200 rounded-xl p-5">
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             {AGENCY_RULES.map((rule) => (
