@@ -13,6 +13,7 @@ import type {
   ApiStaff, FacilityEvent, FacilityEventType, FloorRule, StaffQualification, Unit,
 } from '@/lib/apiTypes'
 import { useLang } from '@/components/layout/LanguageContext'
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 
 const PINK = '#E8187A'
 
@@ -222,11 +223,25 @@ function EventsTab({ events, units, eventTypes, T, isZH, unitName, run }: {
     event_type: '', event_date: today, title: '', unit_id: '',
   })
   const [extra, setExtra] = useState<Array<{ rank: string; count: number; is_additive: boolean }>>([])
+  const [showNewTypeDialog, setShowNewTypeDialog] = useState(false)
+  const [customTypes, setCustomTypes] = useState<FacilityEventType[]>([])
+
+  // Load custom event types from localStorage on mount
+  useEffect(() => {
+    try {
+      const stored = localStorage.getItem('emma_custom_event_types')
+      if (stored) setCustomTypes(JSON.parse(stored))
+    } catch { /* ignore */ }
+  }, [])
+
+  // Merge API types + custom types
+  const allEventTypes = useMemo(() => [...eventTypes, ...customTypes], [eventTypes, customTypes])
+
   // No hardcoded default: the first type is whatever the server publishes. A
   // literal 'hair_cutting' here would be a tenth copy of the list to keep in
   // step, and would post a type this facility might not have.
-  const selected = form.event_type || eventTypes[0]?.code || ''
-  const chosen = eventTypes.find((e) => e.code === selected)
+  const selected = form.event_type || allEventTypes[0]?.code || ''
+  const chosen = allEventTypes.find((e) => e.code === selected)
 
   const submit = () => run(async () => {
     await api.createFacilityEvent({
@@ -245,12 +260,13 @@ function EventsTab({ events, units, eventTypes, T, isZH, unitName, run }: {
   return (
     <div className="space-y-3">
       <div className={`${CARD} p-3 space-y-2`} style={CARD_STYLE}>
-        <div className="flex flex-wrap gap-2 items-end">
+        <div className="flex flex-wrap gap-2 items-end justify-between">
+          <div className="flex flex-wrap gap-2 items-end">
           <label className="text-[10px] text-gray-500">
             <div>{T.type}</div>
             <select className={INPUT} style={INPUT_STYLE} value={selected}
                     onChange={(e) => setForm({ ...form, event_type: e.target.value })}>
-              {eventTypes.map((e) => (
+              {allEventTypes.map((e) => (
                 <option key={e.code} value={e.code}>
                   {isZH ? e.label_zh : e.label_en}
                 </option>
@@ -276,6 +292,12 @@ function EventsTab({ events, units, eventTypes, T, isZH, unitName, run }: {
             </select>
           </label>
           <AddButton label={T.add} onClick={submit} />
+          </div>
+          <button onClick={() => setShowNewTypeDialog(true)}
+            className="px-3 py-1.5 rounded text-[11px] font-semibold border border-pink-200 hover:bg-pink-50 transition-colors whitespace-nowrap"
+            style={{ color: PINK }}>
+            + {isZH ? '新增事件類型' : 'New Event Type'}
+          </button>
         </div>
 
         <div className="text-[10px] text-gray-400">
@@ -286,6 +308,19 @@ function EventsTab({ events, units, eventTypes, T, isZH, unitName, run }: {
           <RequirementEditor rows={extra} setRows={setExtra} T={T} isZH={isZH} />
         )}
       </div>
+
+      {/* New Event Type Dialog */}
+      <NewEventTypeDialog
+        open={showNewTypeDialog}
+        onClose={() => setShowNewTypeDialog(false)}
+        isZH={isZH}
+        onCreated={(newType) => {
+          const updated = [...customTypes, newType]
+          setCustomTypes(updated)
+          localStorage.setItem('emma_custom_event_types', JSON.stringify(updated))
+          setShowNewTypeDialog(false)
+        }}
+      />
 
       <div className={CARD} style={CARD_STYLE}>
         {events.length === 0 ? (
@@ -639,5 +674,190 @@ function FloorRulesTab({ rules, units, T, isZH, unitName, run }: {
         )}
       </div>
     </div>
+  )
+}
+
+// ── New Event Type Dialog ──────────────────────────────────────────────────
+const EMOJI_OPTIONS = ['📋', '🏥', '🚑', '👨‍⚕️', '🧹', '💊', '🎉', '📅', '🔔', '🏠', '🚶', '🩺', '📞', '🍽️', '🛏️', '🚿']
+
+const RANK_OPTIONS = ['RN', 'EN', 'HW', 'HCA', 'CW', 'PSW', 'PT', 'OT', 'SW', 'AS']
+
+function NewEventTypeDialog({ open, onClose, isZH, onCreated }: {
+  open: boolean
+  onClose: () => void
+  isZH: boolean
+  onCreated: (type: FacilityEventType) => void
+}) {
+  const [code, setCode] = useState('')
+  const [labelZh, setLabelZh] = useState('')
+  const [labelEn, setLabelEn] = useState('')
+  const [icon, setIcon] = useState('📋')
+  const [requirements, setRequirements] = useState<Array<{ rank: string; count: number }>>([])
+  const [error, setError] = useState('')
+
+  useEffect(() => {
+    if (open) {
+      setCode(''); setLabelZh(''); setLabelEn(''); setIcon('📋')
+      setRequirements([]); setError('')
+    }
+  }, [open])
+
+  const handleSubmit = () => {
+    if (!code.trim()) {
+      setError(isZH ? '請輸入事件代碼' : 'Event code is required')
+      return
+    }
+    if (!labelEn.trim() && !labelZh.trim()) {
+      setError(isZH ? '請輸入至少一個名稱' : 'At least one label is required')
+      return
+    }
+
+    const newType: FacilityEventType = {
+      code: code.trim().toLowerCase().replace(/\s+/g, '_'),
+      label_zh: labelZh.trim() || labelEn.trim(),
+      label_en: labelEn.trim() || labelZh.trim(),
+      aliases: [],
+      templated: requirements.length > 0,
+      default_requirements: requirements.map((r) => ({
+        id: `custom-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+        rank: r.rank,
+        count: r.count,
+        is_additive: true,
+      })),
+    }
+    onCreated(newType)
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={onClose}>
+      <DialogContent className="w-[min(96vw,520px)] max-w-none rounded-2xl p-0">
+        <div className="flex flex-col">
+          <DialogHeader className="px-6 pt-6 pb-3 border-b border-gray-100">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl flex items-center justify-center text-lg"
+                   style={{ background: '#fce8f3' }}>
+                {icon}
+              </div>
+              <div>
+                <DialogTitle className="text-base font-bold">
+                  {isZH ? '新增事件類型' : 'New Event Type'}
+                </DialogTitle>
+                <p className="text-[10px] mt-0.5" style={{ color: PINK }}>
+                  {isZH ? '自訂活動類型，可設定預設人手需求' : 'Custom event type with default staffing requirements'}
+                </p>
+              </div>
+            </div>
+          </DialogHeader>
+
+          <div className="px-6 py-4 space-y-4 overflow-y-auto max-h-[60vh]">
+            {/* Icon selector */}
+            <div>
+              <label className="text-[10px] font-bold text-gray-500 uppercase tracking-wider">
+                {isZH ? '圖示' : 'Icon'}
+              </label>
+              <div className="mt-1.5 flex flex-wrap gap-1.5">
+                {EMOJI_OPTIONS.map((emoji) => (
+                  <button key={emoji} type="button" onClick={() => setIcon(emoji)}
+                    className="w-8 h-8 rounded-lg flex items-center justify-center text-base border transition-colors"
+                    style={{
+                      borderColor: icon === emoji ? PINK : '#e5e7eb',
+                      background: icon === emoji ? '#fff0f5' : 'white',
+                    }}>
+                    {emoji}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Code */}
+            <div>
+              <label className="text-[10px] font-bold text-gray-500 uppercase tracking-wider">
+                {isZH ? '事件代碼' : 'Event Code'} *
+              </label>
+              <input type="text" value={code} onChange={(e) => setCode(e.target.value)}
+                placeholder={isZH ? '例如：fire_drill' : 'e.g. fire_drill'}
+                className="mt-1.5 w-full px-3 py-2 border border-gray-200 rounded-xl text-sm bg-gray-50" />
+            </div>
+
+            {/* Labels */}
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="text-[10px] font-bold text-gray-500 uppercase tracking-wider">
+                  {isZH ? '中文名稱' : 'Chinese Label'}
+                </label>
+                <input type="text" value={labelZh} onChange={(e) => setLabelZh(e.target.value)}
+                  placeholder={isZH ? '例如：消防演習' : 'e.g. 消防演習'}
+                  className="mt-1.5 w-full px-3 py-2 border border-gray-200 rounded-xl text-sm bg-gray-50" />
+              </div>
+              <div>
+                <label className="text-[10px] font-bold text-gray-500 uppercase tracking-wider">
+                  {isZH ? '英文名稱' : 'English Label'}
+                </label>
+                <input type="text" value={labelEn} onChange={(e) => setLabelEn(e.target.value)}
+                  placeholder="e.g. Fire Drill"
+                  className="mt-1.5 w-full px-3 py-2 border border-gray-200 rounded-xl text-sm bg-gray-50" />
+              </div>
+            </div>
+
+            {/* Default staffing requirements */}
+            <div>
+              <label className="text-[10px] font-bold text-gray-500 uppercase tracking-wider">
+                {isZH ? '預設人手需求（按職級）' : 'Default Required Staff (by Rank)'}
+              </label>
+              <p className="text-[9px] text-gray-400 mt-0.5 mb-2">
+                {isZH ? '設定此事件類型的預設額外人手需求，建立事件時會自動套用' : 'Set default extra staffing. Applied automatically when creating events of this type.'}
+              </p>
+
+              <div className="space-y-2">
+                {requirements.map((req, i) => (
+                  <div key={i} className="flex items-center gap-2">
+                    <select value={req.rank}
+                      onChange={(e) => setRequirements(requirements.map((r, j) =>
+                        j === i ? { ...r, rank: e.target.value } : r))}
+                      className="border border-gray-200 rounded-lg px-2 py-1.5 text-[11px] bg-gray-50">
+                      {RANK_OPTIONS.map((r) => <option key={r} value={r}>{r}</option>)}
+                    </select>
+                    <span className="text-[10px] text-gray-400">×</span>
+                    <input type="number" min={1} max={20} value={req.count}
+                      onChange={(e) => setRequirements(requirements.map((r, j) =>
+                        j === i ? { ...r, count: Number(e.target.value) || 1 } : r))}
+                      className="w-14 border border-gray-200 rounded-lg px-2 py-1.5 text-[11px] bg-gray-50" />
+                    <span className="text-[10px] text-gray-500">{isZH ? '人' : 'staff'}</span>
+                    <button type="button" onClick={() => setRequirements(requirements.filter((_, j) => j !== i))}
+                      className="text-[10px] text-gray-400 hover:text-rose-600 ml-auto">
+                      {isZH ? '刪除' : 'Remove'}
+                    </button>
+                  </div>
+                ))}
+                <button type="button"
+                  onClick={() => setRequirements([...requirements, { rank: 'RN', count: 1 }])}
+                  className="text-[10px] font-semibold" style={{ color: PINK }}>
+                  + {isZH ? '新增職級需求' : 'Add rank requirement'}
+                </button>
+              </div>
+            </div>
+
+            {error && (
+              <div className="text-[11px] text-rose-600 px-3 py-2 rounded-lg border border-rose-200 bg-rose-50">
+                {error}
+              </div>
+            )}
+          </div>
+
+          {/* Footer */}
+          <div className="px-6 py-4 border-t border-gray-100 flex justify-end gap-2">
+            <button onClick={onClose}
+              className="px-4 py-2 rounded-xl text-[11px] border border-gray-200 text-gray-600 hover:bg-gray-50">
+              {isZH ? '取消' : 'Cancel'}
+            </button>
+            <button onClick={handleSubmit}
+              className="px-4 py-2 rounded-xl text-[11px] text-white font-semibold"
+              style={{ background: PINK }}>
+              {isZH ? '建立事件類型' : 'Create Event Type'}
+            </button>
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
   )
 }

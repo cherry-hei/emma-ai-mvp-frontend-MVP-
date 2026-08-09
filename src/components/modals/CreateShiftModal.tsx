@@ -77,6 +77,8 @@ export function CreateShiftModal({
     task_ph: isZH ? '選擇工作內容' : 'Select task',
     note_ph: isZH ? '備註（可選）' : 'Note (optional)',
     add_task: isZH ? '+ 新增工作項目' : '+ Add Task',
+    add_task_manual: isZH ? '+ 手動新增工作項目' : '+ Add Task Manually',
+    manual_warning: isZH ? '⚠ 手動模式：顯示所有工作項目（未經資格篩選）' : '⚠ Manual mode: showing all tasks (eligibility check bypassed)',
     item: isZH ? '項目' : 'Item',
     no_tasks: isZH ? '此更別／職級沒有可指派的任務' : 'No tasks this rank may do on this shift',
     delete_shift: isZH ? '刪除更期' : 'Delete Shift',
@@ -94,6 +96,7 @@ export function CreateShiftModal({
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
   const [issues, setIssues] = useState<string[]>([])
+  const [manualMode, setManualMode] = useState(false)
 
   const ranks = useMemo(
     () => ['ALL', ...Array.from(new Set(staff.map((s) => s.rank))).sort()],
@@ -113,9 +116,15 @@ export function CreateShiftModal({
     return taskDefs.filter((td) => canSeeTask(selected.rank, td, shiftType, shiftDefs))
   }, [selected, shiftType, taskDefs, shiftDefs])
 
+  // All tasks (for manual mode when no eligible tasks found)
+  const allTasks = useMemo(() => taskDefs, [taskDefs])
+
+  // The tasks to show in the picker: eligible tasks normally, all tasks in manual mode
+  const pickerTasks = manualMode ? allTasks : availableTasks
+
   useEffect(() => {
     if (!open) return
-    setErr(''); setIssues([]); setRows([])
+    setErr(''); setIssues([]); setRows([]); setManualMode(false)
     setRank('ALL')
     setStaffId(initial?.staffId || staff[0]?.id || '')
     setDate(initial?.date || dates[0] || '')
@@ -133,9 +142,11 @@ export function CreateShiftModal({
   // Changing the shift changes which tasks are legal, so rows that are no longer
   // offered are dropped rather than left to be rejected on save.
   useEffect(() => {
-    const allowed = new Set(availableTasks.map((t) => t.id))
-    setRows((prev) => prev.filter((r) => !r.taskId || allowed.has(r.taskId)))
-  }, [availableTasks])
+    if (!manualMode) {
+      const allowed = new Set(availableTasks.map((t) => t.id))
+      setRows((prev) => prev.filter((r) => !r.taskId || allowed.has(r.taskId)))
+    }
+  }, [availableTasks, manualMode])
 
   const addRow = () => setRows((prev) => [...prev, {
     id: `${prev.length}-${Date.now()}`,
@@ -294,21 +305,33 @@ export function CreateShiftModal({
               </div>
 
               {/* Task schedule - only when the shift is a working one */}
-              {def?.is_working && (
-                <div className="min-w-0">
-                  <div className="flex flex-col gap-2 mb-2 sm:flex-row sm:items-center sm:justify-between">
-                    <label className="text-[9px] font-bold text-gray-500 uppercase tracking-wider">{L.task_schedule}</label>
-                    <span className="text-[9px] font-bold px-2 py-0.5 rounded w-fit" style={{ background: '#fce8f3', color: PINK }}>
-                      {L.adjustable}
-                    </span>
-                  </div>
+             {def?.is_working && (
+               <div className="min-w-0">
+                 <div className="flex flex-col gap-2 mb-2 sm:flex-row sm:items-center sm:justify-between">
+                   <label className="text-[9px] font-bold text-gray-500 uppercase tracking-wider">{L.task_schedule}</label>
+                   <span className="text-[9px] font-bold px-2 py-0.5 rounded w-fit" style={{ background: '#fce8f3', color: PINK }}>
+                     {L.adjustable}
+                   </span>
+                 </div>
 
-                  {availableTasks.length === 0 ? (
-                    <div className="text-[11px] text-gray-400 border border-dashed border-gray-200 rounded-xl p-3 text-center">
+                  {availableTasks.length === 0 && !manualMode ? (
+                    <div className="text-[11px] text-gray-400 border border-dashed border-gray-200 rounded-xl p-3 text-center space-y-2">
                       {L.no_tasks}
+                      {allTasks.length > 0 && (
+                        <button type="button" onClick={() => setManualMode(true)}
+                          className="block mx-auto mt-2 text-xs font-semibold px-3 py-1.5 rounded-lg border border-pink-200 hover:bg-pink-50 transition-colors"
+                          style={{ color: PINK }}>
+                          {L.add_task_manual}
+                        </button>
+                      )}
                     </div>
                   ) : (
                     <>
+                      {manualMode && (
+                        <div className="text-[10px] px-3 py-2 rounded-lg mb-2 border border-amber-200" style={{ background: '#fffbeb', color: '#92400e' }}>
+                          {L.manual_warning}
+                        </div>
+                      )}
                       <div className="space-y-2 min-w-0">
                         {rows.map((row, index) => (
                           <div key={row.id} className="border border-gray-200 rounded-xl p-3 bg-gray-50 min-w-0">
@@ -324,12 +347,12 @@ export function CreateShiftModal({
                               </button>
                             </div>
                             <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2 min-w-0">
-                              <Select value={row.taskId} onValueChange={(value) => updateRow(row.id, { taskId: value })}>
+                              <Select value={row.taskId} onValueChange={(value: string) => updateRow(row.id, { taskId: value })}>
                                 <SelectTrigger className="rounded-xl bg-white border-gray-200 w-full min-w-0">
                                   <SelectValue placeholder={L.task_ph} />
                                 </SelectTrigger>
                                 <SelectContent>
-                                  {availableTasks.map((td) => (
+                                  {pickerTasks.map((td) => (
                                     <SelectItem key={td.id} value={td.id}>{taskLabel(td)}</SelectItem>
                                   ))}
                                 </SelectContent>
