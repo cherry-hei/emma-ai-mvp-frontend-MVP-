@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { api } from '@/lib/api'
-import type { FacilityEventType } from '@/lib/apiTypes'
+import type { FacilityEventType, StaffLite } from '@/lib/apiTypes'
 
 const PINK = '#E8187A'
 
@@ -27,11 +27,12 @@ type StaffingRow = { id: string; rank: string; count: string }
 export interface CreateEventModalProps {
   isZH: boolean
   defaultDate: string
+  staffList?: StaffLite[]
   onClose: () => void
   onCreated: (title: string) => void
 }
 
-export function CreateEventModal({ isZH, defaultDate, onClose, onCreated }: CreateEventModalProps) {
+export function CreateEventModal({ isZH, defaultDate, staffList = [], onClose, onCreated }: CreateEventModalProps) {
   const [types, setTypes] = useState<FacilityEventType[]>([])
   const EVENT_TYPES = types.map((t) => ({
     value: t.code, label: isZH ? t.label_zh : t.label_en, icon: ICONS[t.code] ?? DEFAULT_ICON,
@@ -54,6 +55,10 @@ export function CreateEventModal({ isZH, defaultDate, onClose, onCreated }: Crea
     remove: isZH ? '移除' : 'Remove',
     cancel: isZH ? '取消' : 'Cancel',
     save: isZH ? '儲存更改' : 'Save Changes',
+    assign_staff: isZH ? '指定參加員工' : 'Assign Specific Staff',
+    assign_staff_sub: isZH ? '選擇必須參加此活動的員工' : 'Select staff who must attend this event',
+    search_staff: isZH ? '搜尋員工…' : 'Search staff…',
+    selected: isZH ? '已選' : 'Selected',
   }
 
   // No hardcoded default: the first type is whatever this facility publishes.
@@ -67,6 +72,9 @@ export function CreateEventModal({ isZH, defaultDate, onClose, onCreated }: Crea
   const [needs, setNeeds] = useState<StaffingRow[]>([{ id: '1', rank: 'RN', count: '1' }])
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
+  const [assignStaffEnabled, setAssignStaffEnabled] = useState(false)
+  const [assignedStaffIds, setAssignedStaffIds] = useState<string[]>([])
+  const [staffSearch, setStaffSearch] = useState('')
 
   useEffect(() => {
     let cancelled = false
@@ -196,6 +204,51 @@ export function CreateEventModal({ isZH, defaultDate, onClose, onCreated }: Crea
               ))}
               {needs.length < 8 && (
                 <button type="button" onClick={addNeed} className="text-xs font-semibold" style={{ color: PINK }}>{L.add_pos}</button>
+              )}
+            </div>
+          )}
+
+          {/* Assign specific staff */}
+          <div className="flex items-center gap-3 p-3 rounded-xl" style={{ background: '#e8f5e9' }}>
+            <div className="w-8 h-8 rounded-lg flex items-center justify-center text-white text-sm shrink-0" style={{ background: '#4caf50' }}>👤</div>
+            <div className="flex-1 min-w-0">
+              <div className="text-sm font-semibold">{L.assign_staff}</div>
+              <div className="text-[10px] text-gray-500 mt-0.5">{L.assign_staff_sub}</div>
+            </div>
+            <button type="button" onClick={() => setAssignStaffEnabled(!assignStaffEnabled)}
+              className="w-10 h-6 rounded-full transition-all relative shrink-0"
+              style={{ background: assignStaffEnabled ? '#4caf50' : '#d1d5db' }}>
+              <span className="absolute top-1 w-4 h-4 rounded-full bg-white transition-all" style={{ left: assignStaffEnabled ? '20px' : '4px' }} />
+            </button>
+          </div>
+
+          {assignStaffEnabled && staffList.length > 0 && (
+            <div className="space-y-2">
+              <input type="text" value={staffSearch} onChange={(e) => setStaffSearch(e.target.value)}
+                placeholder={L.search_staff}
+                className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm bg-gray-50" />
+              <div className="max-h-40 overflow-y-auto space-y-1 border border-gray-200 rounded-xl p-2">
+                {staffList
+                  .filter((s) => {
+                    if (!staffSearch) return true
+                    const q = staffSearch.toLowerCase()
+                    return (s.name_en || s.name || '').toLowerCase().includes(q) || s.rank.toLowerCase().includes(q)
+                  })
+                  .map((s) => (
+                  <label key={s.id} className="flex items-center gap-2 px-2 py-1.5 rounded-lg hover:bg-gray-50 cursor-pointer">
+                    <input type="checkbox" checked={assignedStaffIds.includes(s.id)}
+                      onChange={(e) => {
+                        if (e.target.checked) setAssignedStaffIds((prev) => [...prev, s.id])
+                        else setAssignedStaffIds((prev) => prev.filter((id) => id !== s.id))
+                      }}
+                      className="rounded border-gray-300" />
+                    <span className="text-xs font-medium">{s.name_en || s.name}</span>
+                    <span className="text-[10px] text-gray-400">({s.rank})</span>
+                  </label>
+                ))}
+              </div>
+              {assignedStaffIds.length > 0 && (
+                <div className="text-[10px] text-gray-500">{L.selected}: {assignedStaffIds.length}</div>
               )}
             </div>
           )}

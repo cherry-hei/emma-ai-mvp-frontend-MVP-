@@ -137,6 +137,9 @@ export function RealRosterBoard() {
   const [publishedLog, setPublishedLog] = useState<SaveItem[]>([])
   const [showSaveList, setShowSaveList] = useState(false)
   const [showPublishList, setShowPublishList] = useState(false)
+  const [filterRank, setFilterRank] = useState('ALL')
+  const [filterFloor, setFilterFloor] = useState('ALL')
+  const [filterSearch, setFilterSearch] = useState('')
   const gridRequestRef = useRef(0)
   const validationRequestRef = useRef(0)
   // Which period's logs are currently in state, so the writer below never saves
@@ -149,6 +152,13 @@ export function RealRosterBoard() {
     ai: isZH ? '🤖 AI 更表建議' : '🤖 AI Roster Suggest', aiBusy: isZH ? '🤖 生成中…' : '🤖 Generating…',
     validate: isZH ? '驗證' : 'Validate', saveDraft: isZH ? '儲存草稿' : 'Save draft',
     publish: isZH ? '發佈' : 'Publish', staff: isZH ? '員工' : 'Staff',
+    filterRank: isZH ? '職級' : 'Rank',
+    filterFloor: isZH ? '樓層/單位' : 'Floor/Unit',
+    filterSearch: isZH ? '搜尋員工…' : 'Search staff…',
+    allRanks: isZH ? '所有職級' : 'All Ranks',
+    allFloors: isZH ? '所有樓層' : 'All Floors',
+    totalHrs: isZH ? '總時數' : 'Total Hrs',
+    exportRoster: isZH ? '📥 匯出更表' : '📥 Export Roster',
     empty: isZH ? '此週期尚無更表資料。點擊格子開始編輯。' : 'No shifts yet. Click a cell to start editing.',
     noPeriods: isZH ? '尚無更表週期，請先建立一個。' : 'No roster periods yet - create one to begin.',
     readonly: isZH ? '（唯讀 - 已發佈或 AI 方案）' : '(read-only - published or AI option)',
@@ -517,6 +527,38 @@ export function RealRosterBoard() {
           {notice && <span className="text-[11px] font-medium text-emerald-600">{notice}</span>}
           {error && <span className="text-[11px] font-medium text-rose-600">{error}</span>}
         </div>
+
+        {/* Filter bar */}
+        {grid && grid.rows.length > 0 && (
+          <div className="flex items-center gap-2 flex-wrap">
+            <select value={filterRank} onChange={(e) => setFilterRank(e.target.value)}
+              className="text-xs px-2.5 py-1.5 border border-gray-200 rounded-lg bg-white">
+              <option value="ALL">{T.allRanks}</option>
+              {Array.from(new Set(grid.rows.map((r) => r.staff.rank))).sort().map((rank) => (
+                <option key={rank} value={rank}>{rank}</option>
+              ))}
+            </select>
+            <select value={filterFloor} onChange={(e) => setFilterFloor(e.target.value)}
+              className="text-xs px-2.5 py-1.5 border border-gray-200 rounded-lg bg-white">
+              <option value="ALL">{T.allFloors}</option>
+              {Array.from(new Set(grid.rows.map((r) => r.staff.unit_name).filter(Boolean))).sort().map((unit) => (
+                <option key={unit} value={unit!}>{unit}</option>
+              ))}
+            </select>
+            <input type="text" value={filterSearch} onChange={(e) => setFilterSearch(e.target.value)}
+              placeholder={T.filterSearch}
+              className="text-xs px-2.5 py-1.5 border border-gray-200 rounded-lg bg-white w-40" />
+            <button onClick={() => { setFilterRank('ALL'); setFilterFloor('ALL'); setFilterSearch('') }}
+              className="text-[10px] text-gray-400 hover:text-gray-600">✕ Clear</button>
+            <div className="ml-auto">
+              <button onClick={() => window.open(`/api/export/roster?period_id=${periodId}`, '_blank')}
+                disabled={!periodId}
+                className="text-xs px-3 py-1.5 border border-gray-200 rounded-lg hover:bg-gray-50 disabled:opacity-50">
+                {T.exportRoster}
+              </button>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Validation panel */}
@@ -558,6 +600,9 @@ export function RealRosterBoard() {
                 <th className="text-left px-3 py-2 text-[10px] font-semibold text-gray-500 border-r border-gray-200 sticky left-0 bg-gray-50 z-20 w-44 min-w-44">
                   {T.staff}
                 </th>
+                <th className="px-1 py-1.5 text-center border-r border-gray-200 min-w-[44px] bg-gray-50">
+                  <div className="text-[8px] text-gray-400">{T.totalHrs}</div>
+                </th>
                 {columns.map((iso) => {
                   const d = dayLabel(iso, isZH)
                   const dayEvents = eventsByDate.get(iso) ?? []
@@ -577,7 +622,26 @@ export function RealRosterBoard() {
               </tr>
             </thead>
             <tbody>
-              {grid.rows.map((row) => (
+              {grid.rows
+                .filter((row) => {
+                  if (filterRank !== 'ALL' && row.staff.rank !== filterRank) return false
+                  if (filterFloor !== 'ALL' && row.staff.unit_name !== filterFloor) return false
+                  if (filterSearch) {
+                    const q = filterSearch.toLowerCase()
+                    const name = (row.staff.name_en || row.staff.name || '').toLowerCase()
+                    if (!name.includes(q) && !row.staff.rank.toLowerCase().includes(q)) return false
+                  }
+                  return true
+                })
+                .map((row) => {
+                const workedHrs = columns.reduce((sum, iso) => {
+                  const cell = cellLookup.get(row.staff.id)?.get(iso)
+                  if (!cell?.shift_type) return sum
+                  const sDef = shiftDefs.find((d) => d.shift_type === cell.shift_type)
+                  if (!sDef?.is_working) return sum
+                  return sum + (sDef.paid_minutes ?? 480) / 60
+                }, 0)
+                return (
                 <tr key={row.staff.id} className="border-t border-gray-100">
                   <td className="px-3 py-2 border-r border-gray-200 sticky left-0 bg-white z-10 w-44 min-w-44">
                     <div className="text-[12px] font-semibold text-gray-900 truncate">{row.staff.name_en || row.staff.name}</div>
@@ -585,6 +649,9 @@ export function RealRosterBoard() {
                       <span className="font-bold text-gray-500">{row.staff.rank}</span>
                       {row.staff.unit_name && <span className="truncate">· {row.staff.unit_name}</span>}
                     </div>
+                  </td>
+                  <td className="px-1 py-2 border-r border-gray-200 text-center">
+                    <div className="text-[10px] font-bold text-gray-600">{workedHrs.toFixed(1)}</div>
                   </td>
                   {columns.map((iso) => {
                     const cell = cellLookup.get(row.staff.id)?.get(iso)
@@ -612,7 +679,7 @@ export function RealRosterBoard() {
                     )
                   })}
                 </tr>
-              ))}
+                )})}
             </tbody>
           </table>
         ) : (
