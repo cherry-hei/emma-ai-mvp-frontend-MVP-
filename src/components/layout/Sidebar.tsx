@@ -14,10 +14,13 @@ const NAV = [
   { key: 'nav_compliance',  icon: '✅',  path: ROUTES.compliance },
   { key: 'nav_approval',    icon: '👥✓', path: ROUTES.approval   },
   { key: 'nav_personnel',   icon: '👤',  path: ROUTES.staff      },
-  { key: 'nav_roi',         icon: '📈',  path: ROUTES.roi        },
+  // HIDDEN for MVP — Phase 5-8
+  // { key: 'nav_roi',         icon: '📈',  path: ROUTES.roi        },
   { key: 'nav_reports',     icon: '📊',  path: ROUTES.reports    },
   { key: 'nav_alert',       icon: '🔔',  path: ROUTES.alert, badge: '3' },
-  { key: 'nav_ai',          icon: '🤖',  path: ROUTES.insights   },
+  // HIDDEN for MVP — Phase 5-8
+  // { key: 'nav_ai',          icon: '🤖',  path: ROUTES.insights   },
+  { key: 'nav_shiftcodes', icon: '📖',  path: '/shift-codes'    },
   { key: 'nav_settings',    icon: '⚙️',  path: ROUTES.settings   },
 ]
 
@@ -42,6 +45,7 @@ export function Sidebar() {
     nav_roi:        { zh: '投資回報',   en: 'ROI'           },
     nav_reports:    { zh: '報告',       en: 'Reports'       },
     nav_alert:      { zh: '警報中心',   en: 'Alert Centre'  },
+    nav_shiftcodes: { zh: '更期代號',   en: 'Shift Codes'   },
     nav_settings:   { zh: '設定',       en: 'Settings'      },
     urgent_alert:   { zh: '🚨 緊急警報', en: '🚨 Urgent Alert' },
     staff_shortage: { zh: 'P更人手不足 - F3', en: 'P-shift understaffed - F3' },

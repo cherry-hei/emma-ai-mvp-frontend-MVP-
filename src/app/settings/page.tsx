@@ -23,6 +23,9 @@ interface FacilityConfig {
   facilityName: string
   orgCode: string
   residentCount: number
+  dailyResidentCount: number
+  lastResidentUpdate: string
+  swdRatioDisplay: string
   swdLicenseNo: string
   careLevel: string
   specificHoursStart: string
