@@ -61,6 +61,7 @@ export const ROUTE_FEATURE: Record<string, Feature> = {
   // spec owner once the Insights feature is actually scoped.
   [ROUTES.insights]:   'kpi',
   [ROUTES.messages]:   'approve.leave',
+  '/shift-codes':      'roster.view',
 }
 
 export function routeFeature(pathname: string | null | undefined): Feature | undefined {
