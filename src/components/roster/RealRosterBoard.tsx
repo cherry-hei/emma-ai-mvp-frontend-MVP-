@@ -11,6 +11,7 @@ import { CreateShiftModal } from '@/components/modals/CreateShiftModal'
 import { canSeeTask, reasonText } from '@/lib/shiftRules'
 import { AiOptionsModal } from './AiOptionsModal'
 import { CreateEventModal } from './CreateEventModal'
+import { BatchCreateShiftModal } from '@/components/modals/BatchCreateShiftModal'
 
 const PINK = '#E8187A'
 
@@ -133,6 +134,7 @@ export function RealRosterBoard() {
   const [publishError, setPublishError] = useState('')
   const [createEventOpen, setCreateEventOpen] = useState(false)
   const [createShiftOpen, setCreateShiftOpen] = useState(false)
+  const [batchShiftOpen, setBatchShiftOpen] = useState(false)
   const [pendingLog, setPendingLog] = useState<SaveItem[]>([])
   const [publishedLog, setPublishedLog] = useState<SaveItem[]>([])
   const [showSaveList, setShowSaveList] = useState(false)
@@ -170,6 +172,7 @@ export function RealRosterBoard() {
     rejected: isZH ? '此更次不可指派以下任務' : 'These tasks are not allowed on this shift',
     createShift: isZH ? '➕ 新增更次' : '➕ Create Shift',
     createEvent: isZH ? '📅 新增特別事項' : '📅 Create Special Event',
+    batchCreate: isZH ? '📋 批量排更' : '📋 Batch Create',
     saveList: isZH ? '儲存清單' : 'Save List',
     publishList: isZH ? '發佈記錄' : 'Publish List',
     saveListTitle: isZH ? '儲存清單' : 'Save List',
@@ -491,6 +494,10 @@ export function RealRosterBoard() {
             <button onClick={handleCreateShift} disabled={!editable || !grid?.rows.length}
               className="text-xs px-3 py-1.5 border border-gray-200 rounded-lg hover:bg-gray-50 disabled:opacity-50">
               {T.createShift}
+            </button>
+            <button onClick={() => setBatchShiftOpen(true)} disabled={!editable || !grid?.rows.length}
+              className="text-xs px-3 py-1.5 border border-gray-200 rounded-lg hover:bg-gray-50 disabled:opacity-50">
+              {T.batchCreate}
             </button>
             <button onClick={() => setCreateEventOpen(true)} disabled={!periodId}
               className="text-xs px-3 py-1.5 border border-gray-200 rounded-lg hover:bg-gray-50 disabled:opacity-50">
@@ -839,6 +846,17 @@ export function RealRosterBoard() {
           publishError={publishError} periodLabel={periodLabel} isZH={isZH}
           publishingId={publishingId} publishedIds={publishedIds}
           onPublish={handlePublishOption} onClose={() => setAiOpen(false)}
+        />
+      )}
+
+      {batchShiftOpen && grid && (
+        <BatchCreateShiftModal
+          open={batchShiftOpen}
+          onClose={() => setBatchShiftOpen(false)}
+          staff={grid.rows.map((r) => r.staff)}
+          shiftDefs={shiftDefs}
+          dates={columns}
+          onBatchCreated={(count) => { flash(`${count} shifts created`); loadGrid() }}
         />
       )}
 
