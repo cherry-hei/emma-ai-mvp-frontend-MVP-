@@ -135,3 +135,66 @@ export function Sidebar() {
     </aside>
   )
 }
+
+      {/* Site selector - reflects the signed-in account's facility + role */}
+      <div
+        className="mx-2 mt-2 p-2.5 rounded-lg border"
+        style={{ background: '#f9fafb', borderColor: '#e5e7eb' }}
+      >
+        <div className="text-[9px] tracking-wider text-gray-400">
+          {roleLabel(user?.role, lang === 'zh') || (lang === 'zh' ? '院舍' : 'Facility')}
+        </div>
+        <div className="text-[11px] font-medium mt-0.5 text-gray-700 truncate">
+          {user?.facilityName ?? (lang === 'zh' ? '院舍管理' : 'Care Home Admin')}
+        </div>
+      </div>
+
+      {/* Nav */}
+      <nav className="flex-1 px-2 py-2 space-y-0.5">
+        {nav.map(({ key, icon, path, badge }) => {
+          const active = isActiveRoute(pathname, path)
+          return (
+            <button
+              key={path}
+              onClick={() => router.push(path)}
+              className="w-full flex items-center gap-2 px-2.5 py-2 rounded-lg text-xs transition-all border-l-2 text-left"
+              style={{
+                color:           active ? PINK : '#374151',
+                background:      active ? '#fff0f5' : 'transparent',
+                borderLeftColor: active ? PINK : 'transparent',
+              }}
+              onMouseEnter={e => { if (!active) e.currentTarget.style.background = '#f9fafb' }}
+              onMouseLeave={e => { if (!active) e.currentTarget.style.background = 'transparent' }}
+            >
+              <span className="text-sm opacity-70">{icon}</span>
+              <span className="flex-1">{label(key)}</span>
+              {badge && (
+                <span
+                  className="text-[9px] px-1.5 rounded-full text-white"
+                  style={{ background: PINK }}
+                >
+                  {badge}
+                </span>
+              )}
+            </button>
+          )
+        })}
+      </nav>
+
+      {/* Alert banner */}
+      <div
+        className="mx-2 mb-2 p-2.5 rounded-lg border"
+        style={{ background: '#fff5f7', borderColor: '#fcd5dc' }}
+      >
+        <div className="text-xs font-semibold" style={{ color: PINK }}>
+          {label('urgent_alert')}
+        </div>
+        <div className="text-[10px] mt-0.5" style={{ color: PINK_HOVER }}>
+          {label('staff_shortage')}
+        </div>
+      </div>
+
+      {/* New Request button - 已移除獨立按鈕，點 Alert 直接跳頁 */}
+    </aside>
+  )
+}

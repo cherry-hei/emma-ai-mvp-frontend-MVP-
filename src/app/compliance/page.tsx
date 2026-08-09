@@ -178,7 +178,7 @@ export default function CompliancePage() {
   const auditRows = useMemo(() => {
     const rows: { category: string; issue: string; freq: number; status: 'ok' | 'warn' | 'over' }[] = []
     ratios.forEach((r) => rows.push({
-      category: r.label, issue: `${r.actual}/${r.required}`, freq: 1,
+      category: (r.label === 'RN' ? 'Nurse (RN/EN)' : r.label), issue: `${r.actual}/${r.required}`, freq: 1,
       status: r.passes ? 'ok' : 'over',
     }))
     // The full validation run repeats the same rule violation once per affected
@@ -292,7 +292,7 @@ export default function CompliancePage() {
               <tbody>
                 {ratios.map((r, i) => (
                   <tr key={i} className="border-b border-gray-50">
-                    <td className="px-3 py-2.5 font-semibold text-gray-700">{r.label === 'RN' ? 'Nurse (RN/EN)' : r.label === '護士' ? '護士 (RN/EN)' : r.label}</td>
+                    <td className="px-3 py-2.5 font-semibold text-gray-700">{(r.label === 'RN' ? 'Nurse (RN/EN)' : r.label) === 'RN' ? 'Nurse (RN/EN)' : (r.label === 'RN' ? 'Nurse (RN/EN)' : r.label) === '護士' ? '護士 (RN/EN)' : (r.label === 'RN' ? 'Nurse (RN/EN)' : r.label)}</td>
                     <td className="px-3 py-2.5 text-gray-600">{r.residents}</td>
                     <td className="px-3 py-2.5 text-gray-600">{r.required}</td>
                     <td className="px-3 py-2.5 font-bold text-gray-800">{r.actual}</td>

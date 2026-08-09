@@ -237,6 +237,29 @@ function FacilityTab({ config, setConfig, editable, T, isZH, onSave }: {
             <input type="number" className={INPUT} style={INPUT_STYLE}
                    value={config.residentCount} disabled={!editable}
                    onChange={(e) => update('residentCount', parseInt(e.target.value) || 0)} />
+                <p className="text-[10px] text-gray-400 mt-1">{isZH ? '牌照容量（一次性設定）' : 'Licensed capacity (set once)'}</p>
+              </label>
+              <label className="block">
+                <span className="text-xs font-medium text-gray-700">{isZH ? '今日住客數' : "Today's Resident Count"}</span>
+                <div className="flex items-center gap-2 mt-1">
+                  <input type="number" className="w-24 border border-gray-200 rounded-lg px-3 py-2 text-sm"
+                    value={config.dailyResidentCount} disabled={!editable}
+                    onChange={(e) => update('dailyResidentCount', parseInt(e.target.value) || 0)} />
+                  <button type="button" onClick={() => update('dailyResidentCount', config.residentCount)}
+                    className="text-[10px] px-2 py-1 bg-pink-50 text-pink-600 rounded-md border border-pink-200 hover:bg-pink-100">
+                    {isZH ? '同牌照容量' : 'Same as licensed'}
+                  </button>
+                  <span className="text-[10px] text-gray-400">{isZH ? '上次更新：' : 'Last update: '}{config.lastResidentUpdate}</span>
+                </div>
+                <div className="mt-2 p-2 bg-blue-50 border border-blue-100 rounded-lg">
+                  <p className="text-[10px] font-semibold text-blue-700">{isZH ? 'SWD 人手比例（自動計算）' : 'SWD Staffing Ratio (auto-calculated)'}</p>
+                  <p className="text-[10px] text-blue-600 mt-1">
+                    {config.careLevel === 'high'
+                      ? `Nurse/HW: 4 (13h) · CW: 6 (10h) · Asst: 3 (11h) · Night: min 2`
+                      : `Nurse/HW: 1 (6h) · CW/Asst: 2 (11h) · Night: min 2`}
+                  </p>
+                  <p className="text-[10px] text-blue-500">{isZH ? '基於今日住客數及照顧級別' : 'Based on today\'s count + care level'}</p>
+                </div>
           </label>
           <label className="text-[10px] text-gray-500">
             <div className="mb-1">{isZH ? 'SWD 牌照號碼' : 'SWD License No.'}</div>

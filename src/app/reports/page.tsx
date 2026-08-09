@@ -274,7 +274,7 @@ export default function ReportsPage() {
             </div>
           </div>
 
-          {schedules.map((s) => (
+          {schedules.filter((s) => !s.title_en?.includes("SQS") && !s.title_en?.includes("Annual Licence") && !s.title_en?.includes("Annual License")).map((s) => (
             <div key={s.id} className="rounded-2xl border border-slate-200 bg-white p-5">
               <div className="flex items-start justify-between mb-4">
                 <div className="flex items-center gap-3">

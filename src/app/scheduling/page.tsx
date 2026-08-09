@@ -58,8 +58,8 @@ export default function SchedulingPage() {
   const [notice, setNotice] = useState('')
 
   const T = {
-    title: isZH ? '任務排程設定' : 'Task scheduling',
-    sub: isZH ? '任務資格 · 活動人手 · 樓層最低人手' : 'Eligibility · event staffing · floor minimums',
+    title: isZH ? '任務排程設定' : 'Scheduling Rules',
+    sub: isZH ? '任務資格 · 活動人手 · 樓層最低人手' : 'Event staffing · qualifications · floor minimums',
     events: isZH ? '活動' : 'Events',
     quals: isZH ? '員工資格' : 'Qualifications',
     floors: isZH ? '樓層人手' : 'Floor coverage',
