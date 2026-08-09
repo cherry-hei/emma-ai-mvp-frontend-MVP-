@@ -16,7 +16,7 @@ const TABS: { key: string; path: string }[] = [
   // { key: 'topnav_reports',    path: ROUTES.reports    },
 ]
 
-export function TopNav() {
+export function TopNav({ onMenuToggle }: { onMenuToggle?: () => void } = {}) {
   const [search, setSearch]   = useState('')
   const [menuOpen, setMenuOpen] = useState(false)
   const pathname = usePathname()
@@ -38,9 +38,20 @@ export function TopNav() {
 
   return (
     <header
-      className="h-12 flex items-center px-4 gap-4 border-b flex-shrink-0"
+      className="h-12 flex items-center px-3 md:px-4 gap-2 md:gap-4 border-b flex-shrink-0"
       style={{ background: '#ffffff', borderColor: '#f3f4f6' }}
     >
+      {/* Mobile hamburger */}
+      <button
+        onClick={onMenuToggle}
+        className="md:hidden p-1.5 rounded-lg hover:bg-gray-100 transition-colors"
+        aria-label="Toggle menu"
+      >
+        <svg className="w-5 h-5 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
+        </svg>
+      </button>
+
       {/* Tab nav */}
       <nav className="flex items-center gap-1">
         {TABS.map(({ key, path }) => (
@@ -64,14 +75,14 @@ export function TopNav() {
       <div className="flex-1" />
 
       {/* Search */}
-      <div className="relative">
+      <div className="relative hidden sm:block">
         <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400 text-xs">🔍</span>
         <input
           type="text"
           value={search}
           onChange={e => setSearch(e.target.value)}
           placeholder={t('search_ph')}
-          className="pl-7 pr-3 py-1.5 rounded-lg border text-xs focus:outline-none focus:ring-1 w-44"
+          className="pl-7 pr-3 py-1.5 rounded-lg border text-xs focus:outline-none focus:ring-1 w-36 lg:w-44"
           style={{ borderColor: '#e5e7eb', background: '#f9fafb' }}
         />
       </div>

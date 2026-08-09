@@ -1,5 +1,5 @@
 'use client'
-import { ReactNode, useEffect } from 'react'
+import { ReactNode, useEffect, useState } from 'react'
 import { usePathname, useRouter } from 'next/navigation'
 import { Sidebar } from './Sidebar'
 import { TopNav } from './TopNav'
@@ -72,10 +72,42 @@ export function AppShell({ children }: { children: ReactNode }) {
   if (bare) return <>{children}</>
 
   return (
+    <ResponsiveShell>
+      {children}
+    </ResponsiveShell>
+  )
+}
+
+function ResponsiveShell({ children }: { children: ReactNode }) {
+  const [sidebarOpen, setSidebarOpen] = useState(false)
+  const pathname = usePathname()
+
+  // Close sidebar on navigation
+  useEffect(() => { setSidebarOpen(false) }, [pathname])
+
+  return (
     <div className="flex h-screen overflow-hidden bg-gray-50">
-      <Sidebar />
-      <div className="flex-1 flex flex-col overflow-hidden">
-        <TopNav />
+      {/* Desktop sidebar - hidden on mobile */}
+      <div className="hidden md:block">
+        <Sidebar />
+      </div>
+
+      {/* Mobile sidebar overlay */}
+      {sidebarOpen && (
+        <>
+          <button
+            className="fixed inset-0 z-40 bg-black/30 md:hidden"
+            aria-label="Close menu"
+            onClick={() => setSidebarOpen(false)}
+          />
+          <div className="fixed inset-y-0 left-0 z-50 md:hidden animate-in slide-in-from-left duration-200">
+            <Sidebar onNavigate={() => setSidebarOpen(false)} />
+          </div>
+        </>
+      )}
+
+      <div className="flex-1 flex flex-col overflow-hidden min-w-0">
+        <TopNav onMenuToggle={() => setSidebarOpen(o => !o)} />
         <main className="flex-1 overflow-y-auto">{children}</main>
       </div>
     </div>

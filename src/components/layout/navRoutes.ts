@@ -18,6 +18,7 @@ export const ROUTES = {
   alert:      '/alert',
   insights:   '/insights',
   settings:   '/settings',
+  messages:   '/messages',
 } as const
 
 export type RoutePath = (typeof ROUTES)[keyof typeof ROUTES]
@@ -59,6 +60,7 @@ export const ROUTE_FEATURE: Record<string, Feature> = {
   // everyone who can already see KPIs. Needs a real decision from Cherry/the RBAC
   // spec owner once the Insights feature is actually scoped.
   [ROUTES.insights]:   'kpi',
+  [ROUTES.messages]:   'approve.leave',
 }
 
 export function routeFeature(pathname: string | null | undefined): Feature | undefined {

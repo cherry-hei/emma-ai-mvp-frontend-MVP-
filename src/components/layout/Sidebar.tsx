@@ -20,11 +20,12 @@ const NAV = [
   { key: 'nav_alert',       icon: '🔔',  path: ROUTES.alert, badge: '3' },
   // HIDDEN for MVP — Phase 5-8
   // { key: 'nav_ai',          icon: '🤖',  path: ROUTES.insights   },
+  { key: 'nav_messages',   icon: '💬',  path: ROUTES.messages   },
   { key: 'nav_shiftcodes', icon: '📖',  path: '/shift-codes'    },
   { key: 'nav_settings',    icon: '⚙️',  path: ROUTES.settings   },
 ]
 
-export function Sidebar() {
+export function Sidebar({ onNavigate }: { onNavigate?: () => void } = {}) {
   const pathname = usePathname()
   const router   = useRouter()
   const { t, lang }    = useLang()
@@ -45,6 +46,7 @@ export function Sidebar() {
     nav_roi:        { zh: '投資回報',   en: 'ROI'           },
     nav_reports:    { zh: '報告',       en: 'Reports'       },
     nav_alert:      { zh: '警報中心',   en: 'Alert Centre'  },
+    nav_messages:   { zh: '訊息中心',   en: 'Messages'      },
     nav_shiftcodes: { zh: '更期代號',   en: 'Shift Codes'   },
     nav_settings:   { zh: '設定',       en: 'Settings'      },
     urgent_alert:   { zh: '🚨 緊急警報', en: '🚨 Urgent Alert' },
@@ -93,7 +95,7 @@ export function Sidebar() {
           return (
             <button
               key={path}
-              onClick={() => router.push(path)}
+              onClick={() => { router.push(path); onNavigate?.() }}
               className="w-full flex items-center gap-2 px-2.5 py-2 rounded-lg text-xs transition-all border-l-2 text-left"
               style={{
                 color:           active ? PINK : '#374151',

@@ -117,7 +117,7 @@ export default function DashboardPage() {
       </div>
 
       {/* KPI cards */}
-      <div className="grid grid-cols-4 gap-3">
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         {KPI.map((c) => (
           <div key={c.label} className="bg-white border border-gray-200 rounded-xl p-4">
             <div className="text-[9px] text-gray-500 uppercase tracking-wider mb-1">{c.label}</div>
@@ -177,7 +177,7 @@ export default function DashboardPage() {
       </div>
 
       {/* 3-col row */}
-      <div className="grid grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
 
         <div className="bg-white border border-gray-200 rounded-xl p-4">
           <div className="text-sm font-semibold text-gray-900 mb-3">{L.quick_title}</div>
@@ -271,7 +271,7 @@ export default function DashboardPage() {
           <span className="text-xl">🤖</span>
           <span className="text-sm font-bold">{L.ai_title}</span>
         </div>
-        <div className="grid grid-cols-3 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
           {data.highlights.map((h) => (
             <div key={h.key} className="rounded-xl p-3 text-[11px] leading-relaxed text-gray-300"
               style={{ background: 'rgba(255,255,255,0.08)' }}>
