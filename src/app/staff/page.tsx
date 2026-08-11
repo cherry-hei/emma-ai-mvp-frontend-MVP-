@@ -93,7 +93,7 @@ function ProfileModal({ staff, idx, canEdit, onClose, onSaved }: {
 }) {
   const { lang } = useLang()
   const isZH = lang === 'zh'
-  const [tab, setTab] = useState<'ai' | 'history'>('history')
+  const [tab, setTab] = useState<'ai' | 'history' | 'edit'>('history')
   const [detail, setDetail] = useState<StaffDetail | null>(null)
   const [analysis, setAnalysis] = useState<StaffAiAnalysis | null>(null)
   const [analysisError, setAnalysisError] = useState('')
@@ -104,6 +104,12 @@ function ProfileModal({ staff, idx, canEdit, onClose, onSaved }: {
   const [draft, setDraft] = useState<Record<CapabilityKey, boolean> | null>(null)
   const [saving, setSaving] = useState(false)
   const [saveError, setSaveError] = useState('')
+  const [editForm, setEditForm] = useState<{
+    name: string; name_en: string; rank: string; employment_type: string
+    contracted_hours: number; gender: 'M' | 'F'; status: 'active' | 'inactive'
+  } | null>(null)
+  const [editSaving, setEditSaving] = useState(false)
+  const [editSuccess, setEditSuccess] = useState(false)
 
   useEffect(() => {
     if (!staff.apiId) return
@@ -113,6 +119,15 @@ function ProfileModal({ staff, idx, canEdit, onClose, onSaved }: {
         if (cancelled) return
         setDetail(d)
         setDraft({ is_mentor: !!d.is_mentor, is_audited_for_medication: !!d.is_audited_for_medication })
+        setEditForm({
+          name: d.name || '',
+          name_en: d.name_en || '',
+          rank: d.rank || '',
+          employment_type: d.employment_type || '',
+          contracted_hours: d.contracted_hours || 44,
+          gender: (d as any).gender || 'F',
+          status: (d as any).status === 'inactive' ? 'inactive' : 'active',
+        })
       })
       .catch(() => {})
     api.staffAiAnalysis(staff.apiId)
@@ -162,6 +177,7 @@ function ProfileModal({ staff, idx, canEdit, onClose, onSaved }: {
     hours_month:    isZH ? '本週期工時'      : 'Hours This Period',
     tab_history:    isZH ? '更表紀錄'        : 'Shift History',
     tab_ai:         isZH ? 'AI 分析'         : 'AI Analysis',
+    tab_edit:       isZH ? '編輯資料'        : 'Edit Profile',
     completed:      isZH ? '已完成'          : 'COMPLETED',
     credentials:    isZH ? '認可資歷'        : 'Verified Credentials',
     ai_skill:       isZH ? 'AI 技能分析'     : 'AI Skill Analysis',
@@ -184,6 +200,30 @@ function ProfileModal({ staff, idx, canEdit, onClose, onSaved }: {
     saved:          isZH ? '已儲存'          : 'Saved',
     unsaved:        isZH ? '尚未儲存'        : 'Unsaved changes',
     readonly:       isZH ? '你的權限不可修改員工資格' : 'Your role may not edit staff capabilities',
+  }
+
+  async function saveEditForm() {
+    if (!staff.apiId || !editForm) return
+    setEditSaving(true)
+    setSaveError('')
+    try {
+      await api.updateStaff(staff.apiId, {
+        name: editForm.name,
+        name_en: editForm.name_en,
+        rank: editForm.rank,
+        employment_type: editForm.employment_type,
+        contracted_hours: editForm.contracted_hours,
+        gender: editForm.gender,
+        status: editForm.status,
+      })
+      setEditSuccess(true)
+      onSaved(editForm.name_en || editForm.name)
+      setTimeout(() => setEditSuccess(false), 2000)
+    } catch (e) {
+      setSaveError(e instanceof Error ? e.message : 'Save failed')
+    } finally {
+      setEditSaving(false)
+    }
   }
 
   const CREDENTIALS = analysis?.explicit_skills.length
@@ -313,8 +353,8 @@ function ProfileModal({ staff, idx, canEdit, onClose, onSaved }: {
           </div>
 
           <div className="flex gap-6 border-b border-gray-100 mb-5">
-            {[{ key: 'history', label: L.tab_history }, { key: 'ai', label: L.tab_ai }].map(t => (
-              <button key={t.key} onClick={() => setTab(t.key as 'ai' | 'history')}
+            {[{ key: 'history', label: L.tab_history }, { key: 'ai', label: L.tab_ai }, ...(canEdit ? [{ key: 'edit', label: L.tab_edit }] : [])].map(t => (
+              <button key={t.key} onClick={() => setTab(t.key as 'ai' | 'history' | 'edit')}
                 className="pb-3 text-sm font-bold transition-all relative"
                 style={{ color: tab === t.key ? PINK : '#9ca3af' }}>
                 {t.label}
@@ -323,7 +363,101 @@ function ProfileModal({ staff, idx, canEdit, onClose, onSaved }: {
             ))}
           </div>
 
-          {tab === 'history' ? (
+          {tab === 'edit' && editForm ? (
+            <div className="space-y-4">
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-1 block">
+                    {isZH ? '中文姓名' : 'Chinese Name'}
+                  </label>
+                  <input value={editForm.name} onChange={e => setEditForm({ ...editForm, name: e.target.value })}
+                    className="w-full px-3 py-2.5 border border-gray-200 rounded-xl text-sm focus:border-pink-400 focus:outline-none" />
+                </div>
+                <div>
+                  <label className="text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-1 block">
+                    {isZH ? '英文姓名' : 'English Name'}
+                  </label>
+                  <input value={editForm.name_en} onChange={e => setEditForm({ ...editForm, name_en: e.target.value })}
+                    className="w-full px-3 py-2.5 border border-gray-200 rounded-xl text-sm focus:border-pink-400 focus:outline-none" />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-1 block">
+                    {isZH ? '職級' : 'Rank'}
+                  </label>
+                  <select value={editForm.rank} onChange={e => setEditForm({ ...editForm, rank: e.target.value })}
+                    className="w-full px-3 py-2.5 border border-gray-200 rounded-xl text-sm focus:border-pink-400 focus:outline-none bg-white">
+                    <option value="RN">RN (Registered Nurse)</option>
+                    <option value="EN">EN (Enrolled Nurse)</option>
+                    <option value="HW">HW (Health Worker)</option>
+                    <option value="PCW">PCW (Personal Care Worker)</option>
+                    <option value="CW">CW (Care Worker)</option>
+                    <option value="ASST">ASST (Assistant)</option>
+                    <option value="PT">PT (Physiotherapist)</option>
+                    <option value="OT">OT (Occupational Therapist)</option>
+                    <option value="SW">SW (Social Worker)</option>
+                    <option value="ADMIN">ADMIN (Administrative)</option>
+                    <option value="COOK">COOK (Kitchen Staff)</option>
+                    <option value="DRIVER">DRIVER</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-1 block">
+                    {isZH ? '僱用類型' : 'Employment Type'}
+                  </label>
+                  <select value={editForm.employment_type} onChange={e => setEditForm({ ...editForm, employment_type: e.target.value })}
+                    className="w-full px-3 py-2.5 border border-gray-200 rounded-xl text-sm focus:border-pink-400 focus:outline-none bg-white">
+                    <option value="full_time">{isZH ? '全職' : 'Full-time'}</option>
+                    <option value="part_time">{isZH ? '兼職' : 'Part-time'}</option>
+                    <option value="contract">{isZH ? '合約' : 'Contract'}</option>
+                    <option value="agency">{isZH ? '外判' : 'Agency'}</option>
+                    <option value="imported">{isZH ? '外勞' : 'Imported Worker'}</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-3 gap-4">
+                <div>
+                  <label className="text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-1 block">
+                    {isZH ? '合約時數/週' : 'Hours/Week'}
+                  </label>
+                  <input type="number" value={editForm.contracted_hours}
+                    onChange={e => setEditForm({ ...editForm, contracted_hours: Number(e.target.value) })}
+                    className="w-full px-3 py-2.5 border border-gray-200 rounded-xl text-sm focus:border-pink-400 focus:outline-none" />
+                </div>
+                <div>
+                  <label className="text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-1 block">
+                    {isZH ? '性別' : 'Gender'}
+                  </label>
+                  <select value={editForm.gender} onChange={e => setEditForm({ ...editForm, gender: e.target.value as 'M' | 'F' })}
+                    className="w-full px-3 py-2.5 border border-gray-200 rounded-xl text-sm focus:border-pink-400 focus:outline-none bg-white">
+                    <option value="F">{isZH ? '女' : 'Female'}</option>
+                    <option value="M">{isZH ? '男' : 'Male'}</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-1 block">
+                    {isZH ? '狀態' : 'Status'}
+                  </label>
+                  <select value={editForm.status} onChange={e => setEditForm({ ...editForm, status: e.target.value as 'active' | 'inactive' })}
+                    className="w-full px-3 py-2.5 border border-gray-200 rounded-xl text-sm focus:border-pink-400 focus:outline-none bg-white">
+                    <option value="active">{isZH ? '在職' : 'Active'}</option>
+                    <option value="inactive">{isZH ? '離職' : 'Inactive'}</option>
+                  </select>
+                </div>
+              </div>
+
+              {saveError && <p className="text-xs text-rose-600">{saveError}</p>}
+
+              <button onClick={saveEditForm} disabled={editSaving}
+                className="w-full py-3 text-white font-bold rounded-xl transition-all disabled:opacity-60"
+                style={{ background: editSuccess ? '#10b981' : PINK }}>
+                {editSaving ? (isZH ? '儲存中…' : 'Saving…') : editSuccess ? (isZH ? '✓ 已儲存' : '✓ Saved') : (isZH ? '儲存修改' : 'Save Changes')}
+              </button>
+            </div>
+          ) : tab === 'history' ? (
             <div className="space-y-3">
               {SHIFT_HISTORY.length === 0 && (
                 <div className="text-xs text-gray-400 text-center py-6">{isZH ? '尚無更表紀錄' : 'No shift history yet'}</div>
