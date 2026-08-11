@@ -882,6 +882,7 @@ export function RealRosterBoard() {
         <CreateEventModal
           isZH={isZH}
           defaultDate={columns[0] ?? new Date().toISOString().slice(0, 10)}
+          staffList={grid?.rows.map((r) => r.staff) ?? []}
           onClose={() => setCreateEventOpen(false)}
           onCreated={handleEventCreated}
         />

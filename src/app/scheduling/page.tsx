@@ -10,7 +10,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { api } from '@/lib/api'
 import type {
-  ApiStaff, FacilityEvent, FacilityEventType, FloorRule, StaffQualification, Unit,
+  ApiStaff, FacilityEvent, FacilityEventType, FloorRule, StaffQualification, TaskDefOut, Unit,
 } from '@/lib/apiTypes'
 import { useLang } from '@/components/layout/LanguageContext'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
@@ -54,6 +54,7 @@ export default function SchedulingPage() {
   const [quals, setQuals] = useState<StaffQualification[]>([])
   const [rules, setRules] = useState<FloorRule[]>([])
   const [eventTypes, setEventTypes] = useState<FacilityEventType[]>([])
+  const [taskDefs, setTaskDefs] = useState<TaskDefOut[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
@@ -99,13 +100,14 @@ export default function SchedulingPage() {
     if (initial) setLoading(true)
     setError('')
     try {
-      const [u, s, e, q, r, t] = await Promise.all([
+      const [u, s, e, q, r, t, td] = await Promise.all([
         api.units(), api.listStaff(), api.facilityEvents(),
         api.staffQualifications(), api.floorRules(),
-        api.facilityEventTypes(),
+        api.facilityEventTypes(), api.taskDefinitions(),
       ])
       setUnits(u); setStaff(s); setEvents(e); setQuals(q); setRules(r)
       setEventTypes(t)
+      setTaskDefs(td)
     } catch (e) {
       setError(errText(e))
     } finally {
@@ -182,7 +184,7 @@ export default function SchedulingPage() {
         <EventsTab events={events} units={units} eventTypes={eventTypes} T={T}
                    isZH={isZH} unitName={unitName} run={run} />
       ) : tab === 'qualifications' ? (
-        <QualificationsTab quals={quals} staff={staff} T={T} isZH={isZH}
+        <QualificationsTab quals={quals} staff={staff} taskDefs={taskDefs} T={T} isZH={isZH}
                            staffName={staffName} run={run} />
       ) : (
         <FloorRulesTab rules={rules} units={units} T={T} isZH={isZH}
@@ -412,8 +414,8 @@ function RequirementEditor({ rows, setRows, T, isZH }: {
 }
 
 // ── qualifications ──────────────────────────────────────────────────────────
-function QualificationsTab({ quals, staff, T, isZH, staffName, run }: {
-  quals: StaffQualification[]; staff: ApiStaff[]; T: Labels; isZH: boolean
+function QualificationsTab({ quals, staff, taskDefs, T, isZH, staffName, run }: {
+  quals: StaffQualification[]; staff: ApiStaff[]; taskDefs: TaskDefOut[]; T: Labels; isZH: boolean
   staffName: (id: string) => string; run: Run
 }) {
   const [form, setForm] = useState({
@@ -507,6 +509,85 @@ function QualificationsTab({ quals, staff, T, isZH, staffName, run }: {
             </tbody>
           </table>
         )}
+      </div>
+
+      {/* Task-Rank Eligibility Matrix */}
+      <div className="mt-4">
+        <h3 className="text-xs font-semibold text-gray-700 mb-2">
+          {isZH ? '📋 任務-職級對照表（Task-Rank Eligibility）' : '📋 Task-Rank Eligibility Matrix'}
+        </h3>
+        <p className="text-[10px] text-gray-400 mb-2">
+          {isZH
+            ? '以下顯示每個 Task Code 可由哪個職級執行（資料來源：後端資料庫）'
+            : 'Shows which rank is eligible to perform each task code (source: backend DB)'}
+        </p>
+        <div className={CARD} style={CARD_STYLE}>
+          {taskDefs.length === 0 ? (
+            <div className="p-4 text-[11px] text-gray-400">
+              {isZH ? '尚無任務定義' : 'No task definitions loaded'}
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-[11px]">
+                <thead className="text-gray-400" style={{ background: '#f9fafb' }}>
+                  <tr>
+                    <th className="text-left px-3 py-2">{isZH ? '任務代碼' : 'Task Code'}</th>
+                    <th className="text-left px-3 py-2">{isZH ? '任務名稱' : 'Task Name'}</th>
+                    <th className="text-left px-3 py-2">{isZH ? '所屬更期' : 'Shift Type'}</th>
+                    <th className="text-left px-3 py-2">{isZH ? '所需職級' : 'Required Rank'}</th>
+                    <th className="text-left px-3 py-2">{isZH ? '需藥物審核' : 'Med. Audit'}</th>
+                    <th className="text-left px-3 py-2">{isZH ? '狀態' : 'Status'}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {taskDefs
+                    .filter(td => td.active)
+                    .sort((a, b) => a.task_code.localeCompare(b.task_code))
+                    .map((td) => (
+                    <tr key={td.id} className="border-t" style={{ borderColor: '#f3f4f6' }}>
+                      <td className="px-3 py-2 font-mono text-gray-700 font-medium">{td.task_code}</td>
+                      <td className="px-3 py-2 text-gray-600">{td.task_name || '—'}</td>
+                      <td className="px-3 py-2">
+                        {td.shift_type ? (
+                          <span className="inline-block px-1.5 py-0.5 rounded text-[9px] font-medium"
+                            style={{ background: '#fce7f3', color: '#be185d' }}>
+                            {td.shift_type}
+                          </span>
+                        ) : <span className="text-gray-300">—</span>}
+                      </td>
+                      <td className="px-3 py-2">
+                        {td.required_rank ? (
+                          <span className="inline-block px-1.5 py-0.5 rounded text-[9px] font-medium"
+                            style={{ background: '#dbeafe', color: '#1e40af' }}>
+                            {td.required_rank}
+                          </span>
+                        ) : (
+                          <span className="text-[9px] text-gray-400">{isZH ? '所有職級' : 'All ranks'}</span>
+                        )}
+                      </td>
+                      <td className="px-3 py-2 text-center">
+                        {td.requires_audit ? (
+                          <span className="text-rose-600 font-bold">✓</span>
+                        ) : <span className="text-gray-300">—</span>}
+                      </td>
+                      <td className="px-3 py-2">
+                        <span className={`inline-block px-1.5 py-0.5 rounded text-[9px] font-medium ${
+                          td.is_restricted
+                            ? 'bg-amber-50 text-amber-700'
+                            : 'bg-emerald-50 text-emerald-700'
+                        }`}>
+                          {td.is_restricted
+                            ? (isZH ? '受限' : 'Restricted')
+                            : (isZH ? '正常' : 'Active')}
+                        </span>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
       </div>
     </div>
   )
