@@ -3,7 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev -p 3001",
+    "dev": "dev.cmd",
+    "dev:next": "next dev -p 3001",
+    "dev:webpack": "next dev -p 3001 --webpack",
     "build": "next build || true",
     "start": "next start",
     "lint": "next lint"
