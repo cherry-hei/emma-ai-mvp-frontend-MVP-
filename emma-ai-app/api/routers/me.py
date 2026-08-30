@@ -14,6 +14,7 @@ from emma_core.models import (
     CertificateOut,
     CertificateUpsert,
     ClockRequest,
+    OfferResponseRequest,
     PushSubscriptionRequest,
     TaskExceptionRequest,
     TaskStatusRequest,
@@ -22,6 +23,7 @@ from emma_core.services import attendance as att
 from emma_core.services import certificates as cert_svc
 from emma_core.services import me as svc
 from emma_core.services import notifications as notify
+from emma_core.services import replacement_offers as offers
 from emma_core.services import tasks as task_svc
 
 router = APIRouter(tags=["staff-app"])
@@ -216,3 +218,19 @@ def mark_notification_read(notification_id: str, ctx: AuthCtx = Depends(get_ctx)
     if not row:
         raise api_error(404, "not_found", "notification not found")
     return row
+
+
+@router.get("/me/replacement-offers")
+def my_offers(status: str | None = Query(default=None),
+              ctx: AuthCtx = Depends(get_ctx)):
+    """Cover requests addressed to me."""
+    return offers.list_offers(ctx.client, ctx.facility_id,
+                              staff_id=_staff_id(ctx), status=status)
+
+
+@router.patch("/me/replacement-offers/{offer_id}")
+def answer_offer(offer_id: str, body: OfferResponseRequest,
+                 ctx: AuthCtx = Depends(get_ctx)):
+    """Accept or decline. Accepting is not being rostered; a manager still commits it."""
+    return offers.respond(ctx.client, ctx.facility_id, offer_id,
+                          staff_id=_staff_id(ctx), accept=body.accept, note=body.note)

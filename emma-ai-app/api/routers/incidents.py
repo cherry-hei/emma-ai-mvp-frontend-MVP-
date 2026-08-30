@@ -7,8 +7,12 @@ from datetime import date as Date
 from fastapi import APIRouter, Depends, Query
 
 from api.deps import AuthCtx, api_error, get_ctx
-from emma_core.models import IncidentCreate, IncidentResolveRequest
+from emma_core.models import (
+    IncidentCreate, IncidentResolveRequest, OfferDecisionRequest,
+    ReplacementOfferRequest,
+)
 from emma_core.services import audit, incidents as svc
+from emma_core.services import replacement_offers as offers
 from emma_core.services.me import resolve_staff_id
 
 router = APIRouter(tags=["alerts"])
@@ -112,3 +116,40 @@ def future_debt(staff_id: str | None = Query(default=None),
                 ctx: AuthCtx = Depends(get_ctx)):
     return svc.list_future_debt(ctx.client, ctx.facility_id,
                                 staff_id=staff_id, status=status)
+
+
+# ── replacement offers ───────────────────────────────────────────────────────
+@router.post("/sl-incidents/{incident_id}/offers", status_code=201)
+def make_offers(incident_id: str, body: ReplacementOfferRequest,
+                ctx: AuthCtx = Depends(get_ctx)):
+    if ctx.profile.role == "staff":
+        raise api_error(403, "forbidden", "only a manager can ask someone to cover")
+    rows = offers.offer(ctx.client, ctx.facility_id, incident_id,
+                        staff_ids=body.staff_ids, profile_id=ctx.profile_id,
+                        note=body.note)
+    for row in rows:
+        _audit(ctx, "create", entity_id=incident_id,
+               after={"offer_id": row["id"], "offered_staff_id": row["offered_staff_id"]})
+    return rows
+
+
+@router.get("/sl-incidents/{incident_id}/offers")
+def list_incident_offers(incident_id: str, ctx: AuthCtx = Depends(get_ctx)):
+    return offers.list_offers(ctx.client, ctx.facility_id, incident_id=incident_id)
+
+
+@router.post("/replacement-offers/{offer_id}/approve")
+def approve_offer(offer_id: str, body: OfferDecisionRequest,
+                  ctx: AuthCtx = Depends(get_ctx)):
+    if ctx.profile.role == "staff":
+        raise api_error(403, "forbidden", "only a manager can assign emergency cover")
+    return offers.approve(ctx.client, ctx.facility_id, offer_id,
+                          profile_id=ctx.profile_id, note=body.note)
+
+
+@router.patch("/replacement-offers/{offer_id}/withdraw")
+def withdraw_offer(offer_id: str, ctx: AuthCtx = Depends(get_ctx)):
+    if ctx.profile.role == "staff":
+        raise api_error(403, "forbidden", "only a manager can withdraw a cover request")
+    return offers.withdraw(ctx.client, ctx.facility_id, offer_id,
+                           profile_id=ctx.profile_id)

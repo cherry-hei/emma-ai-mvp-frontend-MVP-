@@ -75,3 +75,4 @@ __pycache__/
 !/docs/naac/*.md
 !/docs/ZH_REVIEW.md
 !/docs/ZH_REVIEW.csv
+/.claude/launch.json

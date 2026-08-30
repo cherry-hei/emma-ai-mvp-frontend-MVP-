@@ -491,6 +491,27 @@ class IncidentResolveRequest(BaseModel):
     note: str | None = None
 
 
+class ReplacementOfferRequest(BaseModel):
+    """Ask one or more eligible people to cover a vacant shift."""
+    model_config = ConfigDict(extra="forbid")
+
+    staff_ids: list[str] = Field(min_length=1, max_length=20)
+    note: str | None = Field(default=None, max_length=500)
+
+
+class OfferResponseRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    accept: bool
+    note: str | None = Field(default=None, max_length=500)
+
+
+class OfferDecisionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    note: str | None = Field(default=None, max_length=500)
+
+
 class ClockRequest(BaseModel):
     event_type: str                   # clock_in|clock_out
     shift_id: str | None = None
