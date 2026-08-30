@@ -67,10 +67,14 @@ def my_summary(ctx: AuthCtx = Depends(get_ctx)):
 @router.get("/me/roster")
 def my_roster(days: int = Query(default=7, ge=1, le=42),
               start: Date | None = Query(default=None),
+              end: Date | None = Query(
+                  default=None,
+                  description="Alternative to `days`. Wins where both are given; "
+                              "the window is capped at 42 days."),
               ctx: AuthCtx = Depends(get_ctx)):
     staff_id = _staff_id(ctx)
     return _readable(ctx, lambda: svc.my_roster(
-        ctx.client, ctx.facility_id, staff_id, days=days, start=start))
+        ctx.client, ctx.facility_id, staff_id, days=days, start=start, end=end))
 
 
 @router.get("/me/profile")

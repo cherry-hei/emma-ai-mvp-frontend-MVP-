@@ -195,6 +195,16 @@ class LoginRequest(BaseModel):
     password: str
 
 
+class SessionUser(BaseModel):
+    """The signed-in user as one object, for clients that want it nested."""
+    id: str
+    email: str | None = None
+    role: Role | None = None
+    staff_id: str | None = None
+    facility_id: str | None = None
+    facility_name: str | None = None
+
+
 class SessionOut(BaseModel):
     """Serializable auth session - never expose the live Supabase client."""
     access_token: str
@@ -206,6 +216,8 @@ class SessionOut(BaseModel):
     role: Role | None = None
     facility_id: str | None = None
     facility_name: str | None = None
+    # Same identity as the flat fields, nested. Read one shape or the other.
+    user: SessionUser | None = None
 
 
 class PeriodOut(BaseModel):

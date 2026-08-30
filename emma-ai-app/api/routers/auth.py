@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
 from api.deps import AuthCtx, api_error, get_ctx
-from emma_core.models import LoginRequest, Profile, SessionOut
+from emma_core.models import LoginRequest, Profile, SessionOut, SessionUser
 from emma_core.services.auth import get_profile, refresh_session, sign_in
 
 router = APIRouter(tags=["auth"])
@@ -19,6 +19,7 @@ class RefreshRequest(BaseModel):
 
 def _session_out(session, prof: Profile) -> SessionOut:
     """Shape a Supabase session + resolved profile into the API's SessionOut."""
+    facility_name = prof.facility.name if prof.facility else None
     return SessionOut(
         access_token=session.access_token,
         refresh_token=session.refresh_token,
@@ -27,7 +28,15 @@ def _session_out(session, prof: Profile) -> SessionOut:
         email=session.user.email,
         role=prof.role,
         facility_id=prof.facility_id,
-        facility_name=prof.facility.name if prof.facility else None,
+        facility_name=facility_name,
+        user=SessionUser(
+            id=session.user.id,
+            email=session.user.email,
+            role=prof.role,
+            staff_id=prof.staff_id,
+            facility_id=prof.facility_id,
+            facility_name=facility_name,
+        ),
     )
 
 

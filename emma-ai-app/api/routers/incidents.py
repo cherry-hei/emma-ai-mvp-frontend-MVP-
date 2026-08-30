@@ -8,10 +8,21 @@ from fastapi import APIRouter, Depends, Query
 
 from api.deps import AuthCtx, api_error, get_ctx
 from emma_core.models import IncidentCreate, IncidentResolveRequest
-from emma_core.services import incidents as svc
+from emma_core.services import audit, incidents as svc
 from emma_core.services.me import resolve_staff_id
 
 router = APIRouter(tags=["alerts"])
+
+
+# Who called in sick, and who ended up covering it.
+def _audit(ctx: AuthCtx, action: str, *, entity_id: str | None = None,
+           before: dict | None = None, after: dict | None = None) -> None:
+    audit.record(
+        ctx.client, facility_id=ctx.facility_id, action=action,
+        entity_table="sl_incidents", entity_id=entity_id,
+        before=before, after=after,
+        actor_profile_id=ctx.profile_id, actor_email=ctx.profile.email,
+    )
 
 
 @router.get("/sl-incidents")
@@ -33,9 +44,14 @@ def incident_stats(on: Date | None = Query(default=None, alias="date"),
 @router.post("/sl-incidents", status_code=201)
 def create_incident(body: IncidentCreate, ctx: AuthCtx = Depends(get_ctx)):
     staff_id = body.staff_id or resolve_staff_id(ctx.profile)
-    return svc.open_incident(ctx.client, ctx.facility_id, staff_id=staff_id,
-                             incident_type=body.incident_type, on_date=body.date,
-                             reason=body.reason, shift_id=body.shift_id)
+    row = svc.open_incident(ctx.client, ctx.facility_id, staff_id=staff_id,
+                            incident_type=body.incident_type, on_date=body.date,
+                            reason=body.reason, shift_id=body.shift_id)
+    _audit(ctx, "create", entity_id=row["id"],
+           after={"staff_id": staff_id, "shift_id": body.shift_id,
+                  "incident_type": body.incident_type, "date": body.date,
+                  "replacement_status": "open"})
+    return row
 
 
 @router.get("/sl-incidents/{incident_id}")
@@ -65,9 +81,24 @@ def resolve_incident(incident_id: str, body: IncidentResolveRequest,
                      ctx: AuthCtx = Depends(get_ctx)):
     if ctx.profile.role == "staff":
         raise api_error(403, "forbidden", "only a manager can assign emergency cover")
-    return svc.resolve_incident(ctx.client, ctx.facility_id, incident_id,
-                                replacement_staff_id=body.replacement_staff_id,
-                                profile_id=ctx.profile_id, auto=body.auto, note=body.note)
+    before = svc.get_incident(ctx.client, ctx.facility_id, incident_id)
+    result = svc.resolve_incident(ctx.client, ctx.facility_id, incident_id,
+                                  replacement_staff_id=body.replacement_staff_id,
+                                  profile_id=ctx.profile_id, auto=body.auto,
+                                  note=body.note)
+    incident = result["incident"]
+    # The incident alone does not show that someone now owes hours.
+    debts = [{"debt_type": d.get("debt_type"), "quantity": d.get("quantity"),
+              "unit": d.get("unit")} for d in (result.get("future_debts") or [])]
+    _audit(ctx, "update", entity_id=incident_id,
+           before={"replacement_status": (before or {}).get("replacement_status"),
+                   "replacement_staff_id": (before or {}).get("replacement_staff_id")},
+           after={"replacement_status": incident.get("replacement_status"),
+                  "replacement_staff_id": incident.get("replacement_staff_id"),
+                  "resolution_minutes": result.get("resolution_minutes"),
+                  "auto_resolved": incident.get("auto_resolved"),
+                  "future_debts": debts})
+    return result
 
 
 @router.get("/alerts")

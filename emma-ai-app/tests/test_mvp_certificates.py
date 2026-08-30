@@ -19,7 +19,8 @@ import pytest
 
 from emma_core.services import certificates as svc
 
-TODAY = Date(2026, 8, 1)
+# The service reads the real clock, so pinning a date here just rots.
+TODAY = Date.today()
 
 
 # ── a stand-in for the PostgREST client ──────────────────────────────────────

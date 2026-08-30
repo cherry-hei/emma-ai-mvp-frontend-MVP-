@@ -65,9 +65,18 @@ class Settings(BaseSettings):
     cors_origins: str = ("http://localhost:3000,http://127.0.0.1:3000,"
                          "http://localhost:3001,http://127.0.0.1:3001")
 
+    # Amplify hands every branch its own hostname, so match them instead of listing them.
+    cors_origin_regex: str = r"https://[a-z0-9-]+(?:\.[a-z0-9-]+)*\.amplifyapp\.com"
+
     @property
     def allowed_origins(self) -> list[str]:
         return [o.strip() for o in self.cors_origins.split(",") if o.strip()]
+
+    @property
+    def allowed_origin_regex(self) -> str | None:
+        """Anchored both ends, or None when the setting is blank."""
+        pattern = (self.cors_origin_regex or "").strip()
+        return f"^(?:{pattern})$" if pattern else None
 
 
 settings = Settings()

@@ -77,11 +77,21 @@ def _my_shifts(client, facility_id: str, staff_id: str,
     return out
 
 
+MAX_ROSTER_DAYS = 42
+
+
 def my_roster(client, facility_id: str, staff_id: str, *, days: int = 7,
-              start: Date | None = None) -> dict:
+              start: Date | None = None, end: Date | None = None) -> dict:
     """A `days`-long window anchored on today, slid to stay inside the current
     roster period - near the end of a cycle, showing 28 days forward from today
-    would return one rostered day and 27 blanks."""
+    would return one rostered day and 27 blanks. Pass `end` instead of `days` to
+    pick the window yourself; nothing slides then.
+    """
+    if end is not None:
+        start = start or Date.today()
+        if end < start:
+            raise ValueError("end must not be before start")
+        days = min((end - start).days + 1, MAX_ROSTER_DAYS)
     if start is None:
         start = Date.today()
         period = resolve_period(client, facility_id, None)

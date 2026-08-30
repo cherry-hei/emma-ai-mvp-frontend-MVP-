@@ -12,6 +12,7 @@ from emma_core.models import (
     CellWriteRequest, PeriodCreateRequest, PeriodOut, RosterGrid, ShiftDef,
     TaskDefOut, VersionOut,
 )
+from emma_core.services import audit
 from emma_core.services import optimize as opt
 from emma_core.services import roster as svc
 from emma_core.services import scheduling as scheduling_svc
@@ -30,6 +31,18 @@ def _require_write_role(ctx: AuthCtx) -> None:
         )
 
 
+# `manual_override_log` only ever holds cells; this covers the rest.
+def _audit(ctx: AuthCtx, action: str, entity_table: str, *,
+           entity_id: str | None = None, before: dict | None = None,
+           after: dict | None = None) -> None:
+    audit.record(
+        ctx.client, facility_id=ctx.facility_id, action=action,
+        entity_table=entity_table, entity_id=entity_id,
+        before=before, after=after,
+        actor_profile_id=ctx.profile_id, actor_email=ctx.profile.email,
+    )
+
+
 # ── periods ─────────────────────────────────────────────────────────────────
 @router.get("/roster-periods", response_model=list[PeriodOut])
 def list_periods(ctx: AuthCtx = Depends(get_ctx)):
@@ -44,6 +57,10 @@ def create_period(body: PeriodCreateRequest, ctx: AuthCtx = Depends(get_ctx)):
         cycle_type=body.cycle_type, created_by=ctx.profile_id,
         create_manual_version=body.create_manual_version,
     )
+    _audit(ctx, "create", "roster_periods", entity_id=period["id"],
+           after={"period_start": body.period_start, "period_end": body.period_end,
+                  "cycle_type": body.cycle_type,
+                  "manual_version_id": version["id"] if version else None})
     return {"period": PeriodOut.model_validate(period),
             "manual_version_id": version["id"] if version else None}
 
@@ -80,7 +97,12 @@ def task_definitions(ctx: AuthCtx = Depends(get_ctx)):
 
 
 # ── manual cell edit ────────────────────────────────────────────────────────
-def _upsert_cell(body: CellWriteRequest, ctx: AuthCtx):
+def _cell_ref(body: CellWriteRequest) -> dict:
+    return {"roster_version_id": body.roster_version_id, "staff_id": body.staff_id,
+            "date": body.date, "shift_type": body.shift_type, "tasks": body.tasks}
+
+
+def _upsert_cell(body: CellWriteRequest, ctx: AuthCtx, *, action: str):
     defs = {d.shift_type: d for d in svc.get_shift_defs(ctx.client, ctx.facility_id)}
     sd = defs.get(body.shift_type)
     if not sd:
@@ -103,17 +125,19 @@ def _upsert_cell(body: CellWriteRequest, ctx: AuthCtx):
     )
     scheduling_svc.sync_task_rows_for_assignment(
         ctx.client, ctx.facility_id, assignment_id)
+    _audit(ctx, action, "shift_assignments",
+           entity_id=assignment_id, after=_cell_ref(body))
     return {"assignment_id": assignment_id}
 
 
 @router.post("/shifts", status_code=201)
 def create_shift(body: CellWriteRequest, ctx: AuthCtx = Depends(get_ctx)):
-    return _upsert_cell(body, ctx)
+    return _upsert_cell(body, ctx, action="create")
 
 
 @router.patch("/shifts")
 def edit_shift(body: CellWriteRequest, ctx: AuthCtx = Depends(get_ctx)):
-    return _upsert_cell(body, ctx)
+    return _upsert_cell(body, ctx, action="update")
 
 
 @router.delete("/shifts", status_code=204)
@@ -122,6 +146,10 @@ def delete_shift(roster_version_id: str = Query(...), staff_id: str = Query(...)
     svc.clear_cell(ctx.client, facility_id=ctx.facility_id,
                    roster_version_id=roster_version_id, staff_id=staff_id,
                    date=date, changed_by=ctx.profile_id)
+    # The row is gone by now, so the cell is what identifies it.
+    _audit(ctx, "delete", "shift_assignments",
+           before={"roster_version_id": roster_version_id, "staff_id": staff_id,
+                   "date": date})
     return Response(status_code=204)
 
 
@@ -174,6 +202,11 @@ def publish(version_id: str, ctx: AuthCtx = Depends(get_ctx)):
             )
     svc.publish_version(service_client, facility_id=ctx.facility_id,
                         roster_version_id=version_id, created_by=ctx.profile_id)
+    # After the write, so we never log a publish that rolled back.
+    _audit(ctx, "publish", "roster_versions", entity_id=version_id,
+           after={"status": "published",
+                  "hard_violation_count": validation["hard_violation_count"],
+                  "constraint_score": score["constraint_score"] if score else None})
     # Only now that the version is operative (spec SA.4b, "push triggers: roster
     # changes"). Notifying before the publish could tell a ward to work a roster
     # that a failed publish left unpublished. Uses the service client because the

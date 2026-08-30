@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 
 from ..constants import AssignmentStatus, OverrideAction, PublishEvent, RosterStatus
 from ..models import RosterCell, RosterGrid, RosterRow, ShiftDef, StaffLite
-from ._common import assignments_for_shifts
+from ._common import as_date, assignments_for_shifts
 
 
 def _now() -> str:
@@ -162,6 +162,10 @@ def create_period(client, *, facility_id, period_start, period_end, cycle_type="
                   created_by=None, create_manual_version=True):
     """Create a roster period and, by default, a blank 'manual' version to hang shifts
     on (the grid, manual edit and solver all need one and nothing else bootstraps it)."""
+    # A backwards period reads as an empty one, and the grid then looks like it
+    # lost the shifts rather than never having a day to show them on.
+    if as_date(period_end) < as_date(period_start):
+        raise ValueError("period_end must not be before period_start")
     # SQL: insert into roster_periods
     #        (facility_id, period_start, period_end, cycle_type, status)
     #      values (:facility_id, :period_start, :period_end, :cycle_type, 'planning')
