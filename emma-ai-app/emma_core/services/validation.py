@@ -2129,6 +2129,10 @@ def _persist_run(
             "roster_digest": digest,
             "source_content_updated_at": snapshot.version_content_updated_at,
             "status": "running",
+            # Stamped here rather than left to the column default, because
+            # `completed_at` below comes from this clock and the row has to
+            # satisfy `completed_at >= started_at` on a different host.
+            "started_at": _iso_now(),
             "validated_by": validated_by,
         })
         .execute()

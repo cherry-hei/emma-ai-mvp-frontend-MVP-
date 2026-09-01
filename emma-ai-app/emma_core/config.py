@@ -61,6 +61,15 @@ class Settings(BaseSettings):
     # - do not use it for a deploy.
     fcm_access_token: str = ""
 
+    # Vertex AI. Empty until the Google Cloud project exists, and the gateway
+    # falls back to the offline provider rather than pretending it called out.
+    vertex_project: str = ""
+    vertex_region: str = "asia-southeast1"
+    vertex_model: str = ""
+    # Short-lived, from `gcloud auth print-access-token`. A service account key
+    # replaces this once the project is provisioned.
+    vertex_access_token: str = ""
+
     # CORS allow-list for the frontend origin(s); set CORS_ORIGINS per deployment.
     cors_origins: str = ("http://localhost:3000,http://127.0.0.1:3000,"
                          "http://localhost:3001,http://127.0.0.1:3001")

@@ -7,6 +7,7 @@ from postgrest.exceptions import APIError as PostgrestAPIError
 from emma_core.config import settings
 from emma_core.errors import RuleViolationError
 
+from api.routers import ai as _ai
 from api.routers import analytics as _analytics
 from api.routers import auth as _auth
 from api.routers import calendar as _calendar
@@ -76,6 +77,7 @@ def _value_error(_request: Request, exc: ValueError) -> JSONResponse:
                         content={"detail": {"code": "invalid_input", "message": str(exc)}})
 
 for _module in (_auth, _roster, _residents, _compliance, _staff, _optimize,
+                _ai,
                 _leave, _incidents, _me, _analytics, _reports, _scheduling,
                 _imports, _calendar, _configs, _governance, _swaps,
                 _notifications):

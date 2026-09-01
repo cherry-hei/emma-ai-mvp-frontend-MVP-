@@ -490,3 +490,46 @@ def test_approved_requests_cannot_overbook_configured_leave_entitlement():
     )
     assert overbooked["details"]["approved_days"] == 2
     assert overbooked["details"]["entitlement_days"] == 1
+
+
+# ── the run row has to satisfy `completed_at >= started_at` ─────────────────
+class _RunRecorder:
+    """Just enough PostgREST to watch what `_persist_run` writes."""
+
+    def __init__(self):
+        self.inserts, self.updates = {}, {}
+
+    def table(self, name):
+        self.name = name
+        return self
+
+    def insert(self, payload, **_k):
+        self.inserts.setdefault(self.name, []).append(payload)
+        self._result = [{"id": "run-1"}]
+        return self
+
+    def update(self, payload, **_k):
+        self.updates.setdefault(self.name, []).append(payload)
+        self._result = []
+        return self
+
+    def eq(self, *_a):
+        return self
+
+    def execute(self):
+        return type("R", (), {"data": getattr(self, "_result", [])})()
+
+
+def test_the_run_stamps_both_ends_from_one_clock():
+    from emma_core.services.validation import _persist_run
+
+    db = _RunRecorder()
+    _persist_run(db, _snapshot(), [], [], validated_by=None)
+
+    started = db.inserts["roster_validation_runs"][0]["started_at"]
+    completed = db.updates["roster_validation_runs"][0]["completed_at"]
+
+    # Left to the column default, `started_at` would come off the database host
+    # and could land after a `completed_at` taken here.
+    assert started is not None
+    assert completed >= started
