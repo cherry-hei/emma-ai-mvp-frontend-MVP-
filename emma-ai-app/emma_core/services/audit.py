@@ -36,14 +36,16 @@ def record(client, *, facility_id: str, action: str, entity_table: str,
     outage. Failures are swallowed and surfaced by the row simply not being there,
     which the evidence checklist tests for.
     """
-    row = {
-        "facility_id": facility_id, "actor_profile_id": actor_profile_id,
-        "actor_email": actor_email, "action": action,
-        "entity_table": entity_table, "entity_id": entity_id,
-        "before_json": _jsonable(before), "after_json": _jsonable(after),
-        "reason": reason, "request_id": request_id,
-    }
     try:
+        # Built inside the guard: `_jsonable` can raise on an odd value, and
+        # outside it that would fail the very operation being recorded.
+        row = {
+            "facility_id": facility_id, "actor_profile_id": actor_profile_id,
+            "actor_email": actor_email, "action": action,
+            "entity_table": entity_table, "entity_id": entity_id,
+            "before_json": _jsonable(before), "after_json": _jsonable(after),
+            "reason": reason, "request_id": request_id,
+        }
         # SQL: insert into audit_logs (facility_id, actor_profile_id, actor_email,
         #        action, entity_table, entity_id, before_json, after_json,
         #        reason, request_id)

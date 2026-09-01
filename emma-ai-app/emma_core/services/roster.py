@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 from datetime import datetime, timezone
 
+from . import audit
 from ..constants import AssignmentStatus, OverrideAction, PublishEvent, RosterStatus
 from ..models import RosterCell, RosterGrid, RosterRow, ShiftDef, StaffLite
 from ._common import as_date, assignments_for_shifts
@@ -186,6 +187,12 @@ def create_period(client, *, facility_id, period_start, period_end, cycle_type="
             "version_type": "manual", "label": "Manual roster",
             "status": RosterStatus.DRAFT, "created_by": created_by,
         }).execute().data[0])
+    audit.record(client, facility_id=facility_id, action="create",
+                 entity_table="roster_periods", entity_id=period["id"],
+                 after={"period_start": str(period_start), "period_end": str(period_end),
+                        "cycle_type": cycle_type,
+                        "roster_version_id": version["id"] if version else None},
+                 actor_profile_id=created_by)
     return period, version
 
 
@@ -274,6 +281,15 @@ def set_cell(client, *, facility_id, roster_version_id, staff_id, date, shift_ty
         "after_json": {"shift_type": shift_type, "tasks": tasks},
         "changed_by": changed_by,
     }).execute()
+    # manual_override_log feeds the acceptance KPI; the audit trail is separate
+    # evidence and has to carry the edit too.
+    audit.record(client, facility_id=facility_id,
+                 action="update" if old else "create",
+                 entity_table="shift_assignments", entity_id=assignment_id,
+                 before=old,
+                 after={"roster_version_id": roster_version_id, "staff_id": staff_id,
+                        "date": str(date), "shift_type": shift_type, "tasks": tasks},
+                 actor_profile_id=changed_by)
     return assignment_id
 
 
@@ -304,16 +320,33 @@ def clear_cell(client, *, facility_id, roster_version_id, staff_id, date, change
             "before_json": json.loads(json.dumps(a, default=str)),
             "changed_by": changed_by,
         }).execute()
+        audit.record(client, facility_id=facility_id, action="delete",
+                     entity_table="shift_assignments", entity_id=a["id"],
+                     before=a,
+                     after={"roster_version_id": roster_version_id,
+                            "staff_id": staff_id, "date": str(date)},
+                     actor_profile_id=changed_by)
 
 
 # ── publish workflow ────────────────────────────────────────────────────────
+def _audit_publish(client, facility_id: str, roster_version_id: str,
+                   published: dict, created_by) -> None:
+    audit.record(client, facility_id=facility_id, action="publish",
+                 entity_table="roster_versions", entity_id=roster_version_id,
+                 after={"status": published.get("status"),
+                        "published_at": published.get("published_at"),
+                        "period_id": published.get("period_id")},
+                 actor_profile_id=created_by)
+
+
 def publish_version(client, *, facility_id, roster_version_id, created_by=None):
     """Make one validated version operative for its period.
 
-    Production clients use the database function so archiving the old
-    operative version, publishing the target and writing its audit event are
-    one transaction. The small fallback keeps in-memory/offline adapters useful
-    while preserving the same single-operative semantics.
+    Production clients use the database function so archiving the old operative
+    version and publishing the target are one transaction. The audit row is
+    written here rather than in that function, so both paths leave the same
+    evidence. The small fallback keeps in-memory/offline adapters useful while
+    preserving the same single-operative semantics.
     """
     rpc = getattr(client, "rpc", None)
     if callable(rpc):
@@ -326,11 +359,11 @@ def publish_version(client, *, facility_id, roster_version_id, created_by=None):
             },
         ).execute()
         rows = result.data or []
-        if isinstance(rows, dict):
-            return rows
-        if not rows:
+        published = rows if isinstance(rows, dict) else (rows[0] if rows else None)
+        if not published:
             raise ValueError("roster version not found")
-        return rows[0]
+        _audit_publish(client, facility_id, roster_version_id, published, created_by)
+        return published
 
     # Offline adapter fallback. The production RPC above is atomic; here the
     # explicit facility/period predicates still prevent cross-tenant updates.
@@ -382,6 +415,7 @@ def publish_version(client, *, facility_id, roster_version_id, created_by=None):
         "facility_id": facility_id, "roster_version_id": roster_version_id,
         "event_type": PublishEvent.PUBLISH, "created_by": created_by,
     }).execute()
+    _audit_publish(client, facility_id, roster_version_id, updated[0], created_by)
     return updated[0]
 
 
