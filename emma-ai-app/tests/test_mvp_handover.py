@@ -40,6 +40,35 @@ def test_localhost_stays_in_the_explicit_allow_list():
     assert "http://localhost:3000" in settings.allowed_origins
 
 
+def test_the_staff_pwa_origin_is_listed_exactly():
+    assert "https://emmastaff-7p8bhd5l.manus.space" in settings.allowed_origins
+
+
+@pytest.mark.parametrize("origin", [
+    "https://attacker.manus.space",
+    "https://emmastaff-7p8bhd5l.manus.space.attacker.example",
+])
+def test_other_manus_tenants_are_refused(origin):
+    """Shared hosting, so neighbours must not inherit the staff app's access."""
+    assert origin not in settings.allowed_origins
+    assert not re.match(settings.allowed_origin_regex, origin)
+
+
+def test_a_preview_pattern_is_still_anchored_when_the_deployment_supplies_one():
+    """Widening the list for a preview host must not admit its lookalikes."""
+    preview = settings.model_copy(update={
+        "cors_origin_regex": r"https://[a-z0-9-]+\.trycloudflare\.com",
+    })
+
+    assert re.match(preview.allowed_origin_regex, "https://emma-pwa.trycloudflare.com")
+    assert not re.match(preview.allowed_origin_regex,
+                        "https://emma-pwa.trycloudflare.com.attacker.example")
+
+
+def test_a_blank_regex_disables_pattern_matching_rather_than_allowing_everything():
+    assert settings.model_copy(update={"cors_origin_regex": ""}).allowed_origin_regex is None
+
+
 # ── login ───────────────────────────────────────────────────────────────────
 def _session_and_profile():
     session = SimpleNamespace(

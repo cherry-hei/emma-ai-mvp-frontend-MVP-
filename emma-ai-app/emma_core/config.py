@@ -71,8 +71,12 @@ class Settings(BaseSettings):
     vertex_access_token: str = ""
 
     # CORS allow-list for the frontend origin(s); set CORS_ORIGINS per deployment.
+    # The staff PWA is listed exactly, not matched by pattern: manus.space is
+    # shared hosting, so anything looser would hand credentialed requests to
+    # every other site deployed there.
     cors_origins: str = ("http://localhost:3000,http://127.0.0.1:3000,"
-                         "http://localhost:3001,http://127.0.0.1:3001")
+                         "http://localhost:3001,http://127.0.0.1:3001,"
+                         "https://emmastaff-7p8bhd5l.manus.space")
 
     # Amplify hands every branch its own hostname, so match them instead of listing them.
     cors_origin_regex: str = r"https://[a-z0-9-]+(?:\.[a-z0-9-]+)*\.amplifyapp\.com"

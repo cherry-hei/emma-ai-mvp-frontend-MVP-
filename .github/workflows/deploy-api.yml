@@ -206,6 +206,7 @@ jobs:
           SUPABASE_URL: ${{ vars.SUPABASE_URL }}
           SUPABASE_ANON_KEY: ${{ vars.SUPABASE_ANON_KEY }}
           CORS_ORIGINS: ${{ vars.CORS_ORIGINS }}
+          CORS_ORIGIN_REGEX: ${{ vars.CORS_ORIGIN_REGEX }}
           SECRET_ARN_SERVICE_ROLE_KEY: ${{ vars.SECRET_ARN_SERVICE_ROLE_KEY }}
           SECRET_ARN_DATABASE_URL: ${{ vars.SECRET_ARN_DATABASE_URL }}
         run: |
@@ -224,13 +225,17 @@ jobs:
               --arg supabase_url "$(clean "$SUPABASE_URL")" \
               --arg anon_key     "$(clean "$SUPABASE_ANON_KEY")" \
               --arg cors         "$(clean "$CORS_ORIGINS")" \
+              --arg cors_regex   "$(clean "${CORS_ORIGIN_REGEX-}")" \
               '[
                 {name: "APP_ENV",           value: $app_env},
                 {name: "SUPABASE_URL",      value: $supabase_url},
                 {name: "SUPABASE_ANON_KEY", value: $anon_key},
-                {name: "CORS_ORIGINS",      value: $cors},
                 {name: "PORT",              value: "8080"}
-              ]'
+              ]
+              + (if $cors == "" then []
+                 else [{name: "CORS_ORIGINS", value: $cors}] end)
+              + (if $cors_regex == "" then []
+                 else [{name: "CORS_ORIGIN_REGEX", value: $cors_regex}] end)'
           )"
 
           SECRETS="$(
