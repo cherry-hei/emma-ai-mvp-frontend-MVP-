@@ -473,6 +473,81 @@ export interface ReplacementCandidate extends StaffBrief {
   future_debt: { open_entries?: number }
 }
 
+export type ReplacementOfferStatus =
+  | 'pending' | 'accepted' | 'declined' | 'approved' | 'withdrawn' | 'superseded'
+
+export interface ReplacementOffer {
+  id: string
+  incident_id: string
+  shift_id: string
+  offered_staff_id: string
+  offered_by?: string | null
+  score?: number | null
+  rank_required?: string | null
+  note?: string | null
+  status: ReplacementOfferStatus
+  responded_at?: string | null
+  response_note?: string | null
+  approved_by?: string | null
+  approved_at?: string | null
+  created_at?: string | null
+}
+
+export interface EmergencyAiSuggestion {
+  pick?: string | null
+  pick_alias?: string | null
+  ranking: string[]
+  reason?: string | null
+  rejected: string[]
+  eligible_count: number
+  provider?: string | null
+  explained: boolean
+  degraded: boolean
+  failures: string[]
+}
+
+export interface ComplianceQaAnswer {
+  intent: string
+  verdict: 'compliant' | 'not_compliant' | 'no_data' | 'unsupported' | 'needs_detail'
+  answer: string
+  facts: Record<string, unknown>
+  missing: string[]
+  provider?: string | null
+  explained: boolean
+  degraded: boolean
+  rejected: string[]
+}
+
+export interface AiStatus {
+  providers: string[]
+  intents: string[]
+}
+
+export interface ImportIssue {
+  id?: string
+  severity?: string
+  code?: string
+  sheet?: string | null
+  cell_ref?: string | null
+  raw_value?: string | null
+  message?: string
+}
+
+export interface ImportJob {
+  id: string
+  source_name?: string | null
+  source_layout?: string | null
+  mode: 'validate' | 'commit'
+  status: string
+  period_id?: string | null
+  roster_version_id?: string | null
+  summary_json?: Record<string, unknown> | null
+  issues?: ImportIssue[]
+  error_json?: Record<string, unknown> | null
+  created_at?: string | null
+  completed_at?: string | null
+}
+
 export interface AlertItem {
   id: string
   kind: 'cover' | 'certificate' | 'ratio' | 'hours'

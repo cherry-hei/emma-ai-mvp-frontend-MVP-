@@ -70,6 +70,9 @@ const DEMO_FACILITY: FacilityConfig = {
   facilityName: '鄰舍輔導會大興宿舍',
   orgCode: 'NAAC',
   residentCount: 60,
+  dailyResidentCount: 60,
+  lastResidentUpdate: '2026-09-06',
+  swdRatioDisplay: '待院舍確認',
   swdLicenseNo: 'L0312',
   careLevel: 'moderate',
   specificHoursStart: '07:00',
@@ -145,7 +148,7 @@ export default function SettingsPage() {
   const TABS: Array<{ key: Tab; label: string }> = [
     { key: 'facility', label: T.facility },
     { key: 'constraints', label: T.constraints },
-    { key: 'staffHard', label: T.staffHard },
+    { key: 'staff_hard', label: T.staffHard },
     { key: 'imported', label: T.imported },
   ]
 
@@ -187,7 +190,7 @@ export default function SettingsPage() {
                               editable={editable} T={T} isZH={isZH}
                               onSave={() => setNotice(T.saved)} />
       )}
-      {tab === 'staffHard' && (
+      {tab === 'staff_hard' && (
         <StaffHardTab items={staffHard} setItems={setStaffHard}
                       editable={editable} T={T} isZH={isZH}
                       onSave={() => setNotice(T.saved)} />
@@ -736,4 +739,3 @@ function ImportedTab({ items, setItems, editable, T, isZH, onSave }: {
     </div>
   )
 }
-

@@ -6,6 +6,7 @@ import type {
   AlertItem, ApiStaff, Incident, IncidentStats, ReplacementCandidate,
 } from '@/lib/apiTypes'
 import { useLang } from '@/components/layout/LanguageContext'
+import EmergencyResolutionModal from '@/components/alerts/EmergencyResolutionModal'
 
 const PINK = '#E8187A'
 const PINK_HOVER = '#c9156a'
@@ -503,7 +504,7 @@ export default function AlertPage() {
   return (
     <div className="p-5 space-y-5">
       {handling && (
-        <ResolutionModal incidentId={handling} isZH={isZH}
+        <EmergencyResolutionModal incidentId={handling} isZH={isZH}
           onClose={() => setHandling('')} onResolved={load} />
       )}
       {creating && (

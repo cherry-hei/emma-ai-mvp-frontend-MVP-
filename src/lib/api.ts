@@ -9,12 +9,12 @@
 // signals AuthContext to route to /login. Tokens live in localStorage - for a
 // higher-security posture, move auth to a server-side BFF with httpOnly cookies.
 import type {
-  AlertItem, ApiError, ApiStaff, CompareOptionsResponse, CreatePeriodResponse,
+  AiStatus, AlertItem, ApiError, ApiStaff, CompareOptionsResponse, ComplianceQaAnswer, CreatePeriodResponse,
   DashboardSummary, EventTrigger, FacilityEvent, FacilityEventType, FutureDebtRow,
-  GeneratedReport, Incident,
+  EmergencyAiSuggestion, GeneratedReport, ImportJob, Incident,
   IncidentStats, JobView, KpiOverview, LeaveCategory, LeaveGroup, LeaveRequest, LeaveStats,
   MyAttendance, MyProfile, MyRoster, MySummary, MyTask, OptimizeResponse, PeriodOut,
-  FloorRule, Profile, RatioResult, RegulatoryDoc, ReplacementCandidate, ReportRow,
+  FloorRule, Profile, RatioResult, RegulatoryDoc, ReplacementCandidate, ReplacementOffer, ReportRow,
   RuleDefinition, RuleDefinitionCreate,
   ReportSchedule, ReportType, ResidentCountOut, RoiSettings, RoiSummary, RosterGrid,
   RosterOption, RuleIssue, SessionOut, ShiftDef, StaffAiAnalysis, StaffDetail,
@@ -190,7 +190,10 @@ export async function apiFetch<T>(path: string, opts: RequestInit = {}, retry = 
   const token = await ensureToken()
   const headers = new Headers(opts.headers)
   if (token) headers.set('Authorization', `Bearer ${token}`)
-  if (opts.body && !headers.has('Content-Type')) headers.set('Content-Type', 'application/json')
+  if (opts.body && !headers.has('Content-Type') &&
+      (typeof FormData === 'undefined' || !(opts.body instanceof FormData))) {
+    headers.set('Content-Type', 'application/json')
+  }
 
   const res = await fetch(`${BASE}${path}`, { ...opts, headers })
 
@@ -403,6 +406,13 @@ export const api = {
     return apiFetch<RatioResult[]>(`/compliance/ratio?${q.toString()}`)
   },
 
+  aiStatus: () => apiFetch<AiStatus>('/ai/status'),
+
+  complianceQa: (body: { question: string; date?: string; roster_version_id?: string }) =>
+    apiFetch<ComplianceQaAnswer>('/ai/compliance-qa', {
+      method: 'POST', body: JSON.stringify(body),
+    }),
+
   complianceRuleDefinitions: (ruleCode?: string) => {
     const q = new URLSearchParams()
     if (ruleCode) q.set('rule_code', ruleCode)
@@ -466,6 +476,11 @@ export const api = {
       method: 'PATCH', body: JSON.stringify({ decision, note }),
     }),
 
+  revokeLeaveRequest: (id: string, reason: string) =>
+    apiFetch<LeaveRequest>(`/leave-requests/${id}/revoke`, {
+      method: 'POST', body: JSON.stringify({ reason }),
+    }),
+
   // ── Phase 3 · alert centre + emergency cover ────────────────────────────────
   incidents: (params?: { status?: string; limit?: number }) => {
     const q = new URLSearchParams()
@@ -488,6 +503,26 @@ export const api = {
     if (opts?.refresh) q.set('refresh', 'true')
     return apiFetch<ReplacementCandidate[]>(`/replacement-candidates?${q.toString()}`)
   },
+
+  incidentAiSuggestion: (incidentId: string) =>
+    apiFetch<EmergencyAiSuggestion>(`/sl-incidents/${incidentId}/ai-suggestion`),
+
+  createReplacementOffers: (incidentId: string, body: { staff_ids: string[]; note?: string }) =>
+    apiFetch<ReplacementOffer[]>(`/sl-incidents/${incidentId}/offers`, {
+      method: 'POST', body: JSON.stringify(body),
+    }),
+
+  replacementOffers: (incidentId: string) =>
+    apiFetch<ReplacementOffer[]>(`/sl-incidents/${incidentId}/offers`),
+
+  approveReplacementOffer: (offerId: string, note?: string) =>
+    apiFetch<{ offer: ReplacementOffer; resolution_minutes: number; future_debt?: { quantity?: number } | null }>(
+      `/replacement-offers/${offerId}/approve`, {
+        method: 'POST', body: JSON.stringify({ note: note || null }),
+      }),
+
+  withdrawReplacementOffer: (offerId: string) =>
+    apiFetch<ReplacementOffer>(`/replacement-offers/${offerId}/withdraw`, { method: 'PATCH' }),
 
   resolveIncident: (incidentId: string, body: {
     replacement_staff_id: string; auto?: boolean; note?: string
@@ -524,6 +559,21 @@ export const api = {
     }),
   runReportSchedule: (scheduleId: string) =>
     apiFetch<GeneratedReport>(`/reports/schedules/${scheduleId}/run`, { method: 'POST' }),
+
+  importLayouts: () => apiFetch<Array<{ layout: string }>>('/imports/layouts'),
+
+  importRosterExcel: (file: File, mode: 'validate' | 'commit', opts?: {
+    variant?: 'before' | 'after'; versionLabel?: string; replacePeriod?: boolean
+  }) => {
+    const form = new FormData()
+    form.append('file', file)
+    form.append('mode', mode)
+    form.append('variant', opts?.variant || 'after')
+    form.append('version_status', 'draft')
+    form.append('replace_period', String(opts?.replacePeriod ?? true))
+    if (opts?.versionLabel) form.append('version_label', opts.versionLabel)
+    return apiFetch<ImportJob>('/imports/roster-excel', { method: 'POST', body: form })
+  },
 
   // ── Phase 3 · staff app (always the caller's own records) ───────────────────
   mySummary: () => apiFetch<MySummary>('/me/summary'),
@@ -568,6 +618,26 @@ export async function downloadReportCsv(reportType: string): Promise<void> {
   URL.revokeObjectURL(url)
 }
 
+/** Download an authenticated report in the backend's supported CSV／XLSX／PDF formats. */
+export async function downloadReportFile(
+  reportType: string,
+  fmt: 'csv' | 'xlsx' | 'pdf',
+  periodId?: string,
+): Promise<void> {
+  const token = getToken()
+  const q = periodId ? `?period_id=${encodeURIComponent(periodId)}` : ''
+  const res = await fetch(`${BASE}/reports/download/${reportType}.${fmt}${q}`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  })
+  if (!res.ok) throw await toError(res)
+  const url = URL.createObjectURL(await res.blob())
+  const a = document.createElement('a')
+  a.href = url
+  a.download = `${reportType}.${fmt}`
+  a.click()
+  URL.revokeObjectURL(url)
+}
+
 // Enqueue an A/B/C solve and poll the job until it finishes; returns the options.
 export async function optimizeAndPoll(
   periodId: string,
@@ -597,4 +667,3 @@ export async function optimizeAndPoll(
     }
   }
 }
-

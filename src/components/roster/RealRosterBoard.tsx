@@ -856,7 +856,7 @@ export function RealRosterBoard() {
           staff={grid.rows.map((r) => r.staff)}
           shiftDefs={shiftDefs}
           dates={columns}
-          onBatchCreated={(count) => { flash(`${count} shifts created`); loadGrid() }}
+          onBatchCreated={(count) => { flash(`${count} shifts created`); void loadGrid(periodId, versionId) }}
         />
       )}
 

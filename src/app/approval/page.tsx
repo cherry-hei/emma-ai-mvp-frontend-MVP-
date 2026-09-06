@@ -220,6 +220,22 @@ function ApprovalCard({ request, role, isZH, onAction, busy }: {
           </div>
         )}
 
+        {isApproved && (
+          <div className="flex flex-col gap-2 rounded-lg border border-sky-100 bg-sky-50 px-3 py-2 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <div className="text-[10px] font-semibold text-sky-800">
+                {isZH ? 'A.5 更表同步核對' : 'A.5 roster sync verification'}
+              </div>
+              <div className="mt-0.5 text-[9px] leading-relaxed text-sky-700">
+                {isZH ? '批准狀態已保存；請在更表確認AL／SL code已寫入正確日期。未見更表更新，不代表前端可以代寫。' : 'Approval is saved. Confirm the AL／SL code appears on the correct roster date. The frontend never writes a fake roster value.'}
+              </div>
+            </div>
+            <a href="/roster" className="shrink-0 rounded-lg border border-sky-200 bg-white px-3 py-1.5 text-[10px] font-semibold text-sky-700 hover:bg-sky-50">
+              {isZH ? '開啟更表核對' : 'Open roster'}
+            </a>
+          </div>
+        )}
+
         {/* Action buttons */}
         <div className="flex items-center justify-between pt-2 border-t border-gray-100">
           <div className="text-[9px] text-gray-400">
@@ -332,6 +348,7 @@ export default function ApprovalPage() {
   const [loading, setLoading] = useState(false)
   const [busyId, setBusyId] = useState('')
   const [error, setError] = useState('')
+  const [syncNotice, setSyncNotice] = useState('')
 
   const L = {
     title:        isZH ? '審批中心' : 'Approval Centre',
@@ -384,28 +401,36 @@ export default function ApprovalPage() {
     setBusyId(id)
     setError('')
     try {
+      if (action === 'withdraw') {
+        await api.revokeLeaveRequest(id, note || (isZH ? '管理員撤回批准' : 'Approval revoked by manager'))
+        setSyncNotice(isZH ? '批准已撤回。請在更表核對原有shift／tasks是否已恢復。' : 'Approval revoked. Verify the original shift／tasks were restored on the roster.')
+        load()
+        api.leaveStats().then(setStats).catch(() => {})
+        return
+      }
+
       // Map frontend actions to API decisions
       const apiDecision = (() => {
         switch (action) {
           case 'approve': return 'approve'
           case 'reject': return 'reject'
           case 'review': return 'review'
-          case 'withdraw': return 'reject' // withdraw uses reject with special note
           case 'recommend_approve': return 'review' // recommend uses review for now
           case 'recommend_reject': return 'review'  // recommend uses review for now
           default: return action
         }
       })() as 'approve' | 'reject' | 'review'
 
-      const decisionNote = action === 'withdraw'
-        ? `[WITHDRAWN] ${note}`
-        : action === 'recommend_approve'
+      const decisionNote = action === 'recommend_approve'
         ? `[RECOMMEND APPROVE] ${note || ''}`
         : action === 'recommend_reject'
         ? `[RECOMMEND REJECT] ${note}`
         : note
 
       await api.decideLeaveRequest(id, apiDecision, decisionNote || undefined)
+      if (action === 'approve') {
+        setSyncNotice(isZH ? '申請已批准。請立即在更表核對AL／SL code；A.5只在backend roster-cell真正更新後才算完成。' : 'Request approved. Verify the AL／SL code on the roster now; A.5 is complete only after the backend roster cell changes.')
+      }
       load()
       api.leaveStats().then(setStats).catch(() => {})
     } catch (e) {
@@ -463,7 +488,14 @@ export default function ApprovalPage() {
         </div>
       </div>
 
-      {/* Filter bar */}
+      {syncNotice && (
+        <div className="flex items-start justify-between gap-3 rounded-xl border border-sky-200 bg-sky-50 px-4 py-3 text-[11px] text-sky-800">
+          <span>{syncNotice}</span>
+          <button onClick={() => setSyncNotice('')} aria-label="Dismiss" className="font-bold text-sky-500">×</button>
+        </div>
+      )}
+
+      {/* Summary cards */}
       <div className="flex items-center gap-2 flex-wrap">
         <input
           className="border border-gray-200 rounded-lg px-3 py-2 text-xs text-gray-700 outline-none focus:border-pink-300 w-full sm:w-40"
