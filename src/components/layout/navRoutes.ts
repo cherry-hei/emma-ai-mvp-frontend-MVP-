@@ -53,12 +53,8 @@ export const ROUTE_FEATURE: Record<string, Feature> = {
   [ROUTES.reports]:    'reports',
   [ROUTES.alert]:      'alerts',
   [ROUTES.settings]:   'settings',
-  // PROVISIONAL: Cherry's frontend-main design has an "AI Insights" nav item and
-  // route, but no page or RBAC row exists for it anywhere - not in the approved
-  // RBAC matrix (permissions.ts), not on frontend-main itself. Gated on 'kpi' as
-  // the closest existing analytics permission so the link doesn't 403 for
-  // everyone who can already see KPIs. Needs a real decision from Cherry/the RBAC
-  // spec owner once the Insights feature is actually scoped.
+  // The Emma AI workspace is management-only and reuses the existing `kpi` read
+  // permission until the backend RBAC matrix defines a dedicated AI capability.
   [ROUTES.insights]:   'kpi',
   [ROUTES.messages]:   'approve.leave',
   '/shift-codes':      'roster.view',

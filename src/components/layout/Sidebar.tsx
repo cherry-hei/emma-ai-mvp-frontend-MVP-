@@ -18,8 +18,7 @@ const NAV = [
   // { key: 'nav_roi',         icon: '📈',  path: ROUTES.roi        },
   { key: 'nav_reports',     icon: '📊',  path: ROUTES.reports    },
   { key: 'nav_alert',       icon: '🔔',  path: ROUTES.alert, badge: '3' },
-  // HIDDEN for MVP — Phase 5-8
-  // { key: 'nav_ai',          icon: '🤖',  path: ROUTES.insights   },
+  { key: 'nav_ai',          icon: '✦',   path: ROUTES.insights, featured: true },
   { key: 'nav_messages',   icon: '💬',  path: ROUTES.messages   },
   { key: 'nav_shiftcodes', icon: '📖',  path: '/shift-codes'    },
   { key: 'nav_settings',    icon: '⚙️',  path: ROUTES.settings   },
@@ -46,6 +45,7 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void } = {}) {
     nav_roi:        { zh: '投資回報',   en: 'ROI'           },
     nav_reports:    { zh: '報告',       en: 'Reports'       },
     nav_alert:      { zh: '警報中心',   en: 'Alert Centre'  },
+    nav_ai:         { zh: 'Emma AI',     en: 'Emma AI'       },
     nav_messages:   { zh: '訊息中心',   en: 'Messages'      },
     nav_shiftcodes: { zh: '更期代號',   en: 'Shift Codes'   },
     nav_settings:   { zh: '設定',       en: 'Settings'      },
@@ -90,7 +90,7 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void } = {}) {
 
       {/* Nav */}
       <nav className="flex-1 px-2 py-2 space-y-0.5">
-        {nav.map(({ key, icon, path, badge }) => {
+        {nav.map(({ key, icon, path, badge, featured }) => {
           const active = isActiveRoute(pathname, path)
           return (
             <button
@@ -99,8 +99,9 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void } = {}) {
               className="w-full flex items-center gap-2 px-2.5 py-2 rounded-lg text-xs transition-all border-l-2 text-left"
               style={{
                 color:           active ? PINK : '#374151',
-                background:      active ? '#fff0f5' : 'transparent',
+                background:      active ? '#fff0f5' : featured ? 'linear-gradient(90deg,#fff0f5 0%,#fff9fb 100%)' : 'transparent',
                 borderLeftColor: active ? PINK : 'transparent',
+                fontWeight:      featured ? 700 : 400,
               }}
               onMouseEnter={e => { if (!active) e.currentTarget.style.background = '#f9fafb' }}
               onMouseLeave={e => { if (!active) e.currentTarget.style.background = 'transparent' }}

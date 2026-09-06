@@ -3,7 +3,7 @@ import { useState } from 'react'
 import { usePathname, useRouter } from 'next/navigation'
 import { useLang } from '@/components/layout/LanguageContext'
 import { useAuth, roleLabel } from '@/components/layout/AuthContext'
-import { ROUTES, activeItem } from '@/components/layout/navRoutes'
+import { ROUTES, ROUTE_FEATURE, activeItem, canOpenRoute } from '@/components/layout/navRoutes'
 
 const PINK = '#f28f9e'
 
@@ -73,6 +73,21 @@ export function TopNav({ onMenuToggle }: { onMenuToggle?: () => void } = {}) {
 
       {/* Spacer */}
       <div className="flex-1" />
+
+      {canOpenRoute(user?.role, ROUTE_FEATURE[ROUTES.insights]) && (
+        <button
+          onClick={() => router.push(ROUTES.insights)}
+          className="flex min-h-8 items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-[10px] font-bold transition-all hover:-translate-y-px"
+          style={{
+            borderColor: pathname?.startsWith(ROUTES.insights) ? '#E8187A' : '#f6c6db',
+            color: pathname?.startsWith(ROUTES.insights) ? '#ffffff' : '#E8187A',
+            background: pathname?.startsWith(ROUTES.insights) ? 'linear-gradient(135deg,#E8187A,#f28f9e)' : '#fff5f9',
+          }}
+        >
+          <span aria-hidden>✦</span>
+          <span className="hidden lg:inline">Emma AI</span>
+        </button>
+      )}
 
       {/* Search */}
       <div className="relative hidden sm:block">
