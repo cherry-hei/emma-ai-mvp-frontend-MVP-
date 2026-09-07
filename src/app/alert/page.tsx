@@ -473,28 +473,23 @@ export default function AlertPage() {
     noneResolved: isZH ? '本月未有已處理事件' : 'Nothing resolved yet this month',
     kpi: [
       isZH ? 'SL/DSL 總事件' : 'SL/DSL Events',
-      isZH ? 'Emma AI 自動處理' : 'Auto-resolved by AI',
+      isZH ? '本月已處理' : 'Resolved this month',
       isZH ? '平均響應時間' : 'Avg Response Time',
       isZH ? '未處理' : 'Open',
     ],
     subtitle: (n: number, m: string) =>
       isZH ? `${n} 個實時警報 · ${m} 實時監控中` : `${n} active alerts · ${m} live monitoring`,
-    aiSummaryTitle: isZH ? 'Emma AI · 本月 Alert 分析' : 'Emma AI · This Month\'s Alert Analysis',
-    aiResponse: isZH ? '平均響應時間' : 'Avg Response Time',
-    aiResponseBefore: isZH ? '人手處理 45 min' : 'Manual: 45 min',
-    aiCheck: isZH ? '合規核查' : 'Compliance Check',
-    aiCheckBefore: isZH ? '人手核查' : 'Manual Check',
-    aiCheckAfter: isZH ? 'AI 即時核查' : 'AI Instant Check',
-    aiCompliance: isZH ? 'SWD 合規率' : 'SWD Compliance',
-    aiComplianceBefore: isZH ? '人手追蹤' : 'Manual Tracking',
-    aiComplianceAfter: isZH ? 'AI 自動監控' : 'AI Auto-monitoring',
+    summaryTitle: isZH ? '本月替補流程摘要' : 'This Month\'s Cover Workflow',
+    response: isZH ? '平均響應時間' : 'Avg response time',
+    resolvedCount: isZH ? '已處理事件' : 'Resolved incidents',
+    compliance: isZH ? '更表合規率' : 'Roster compliance',
   }
 
   const kpiCards = stats ? [
     { label: L.kpi[0], value: String(stats.total), unit: L.cases, color: PINK,
       sub: `${stats.month_start} → ${stats.month_end}` },
-    { label: L.kpi[1], value: String(stats.auto_resolved), unit: L.cases, color: '#10b981',
-      sub: `${stats.auto_resolved_pct}% ${isZH ? '自動解決' : 'auto-resolved'}` },
+    { label: L.kpi[1], value: String(Math.max(0, stats.total - stats.open)), unit: L.cases, color: '#10b981',
+      sub: isZH ? '員工回覆及院長批准後完成' : 'Completed after staff response and manager approval' },
     { label: L.kpi[2], value: String(stats.avg_response_minutes), unit: 'min', color: '#f59e0b',
       sub: isZH ? '人手處理需 45min' : 'Manual handling: 45min' },
     { label: L.kpi[3], value: String(stats.open), unit: L.cases, color: '#6366f1',
@@ -639,7 +634,6 @@ export default function AlertPage() {
               </div>
               <div className="text-[10px] text-emerald-600 font-medium mt-0.5">
                 ✅ {L.resolvedBy} {a.replacement_name ?? '-'} · {a.resolution_minutes ?? '?'} {L.resolvedMin}
-                {a.auto_resolved && ' · Emma AI'}
               </div>
             </div>
             <div className="text-right flex-shrink-0">
@@ -650,37 +644,25 @@ export default function AlertPage() {
         ))}
       </div>
 
-      {/* Emma AI Summary */}
+      {/* Operational summary — AI interaction belongs only in Emma AI. */}
       {stats && (
         <div className="rounded-2xl p-5 text-white" style={{ background: 'linear-gradient(135deg, #1a1a2e, #2d2d5e)' }}>
           <div className="flex items-center gap-2 mb-4">
-            <span className="text-xl">🤖</span>
-            <span className="text-sm font-bold">{L.aiSummaryTitle}</span>
+            <span className="text-xl">↻</span>
+            <span className="text-sm font-bold">{L.summaryTitle}</span>
           </div>
           <div className="grid grid-cols-3 gap-3">
             <div className="rounded-xl p-3" style={{ background: 'rgba(255,255,255,0.08)' }}>
-              <div className="text-[9px] text-gray-400 tracking-wider mb-1.5">{L.aiResponse}</div>
-              <div className="text-[10px] text-gray-300 line-through mb-0.5">{L.aiResponseBefore}</div>
-              <div className="text-xs font-bold text-white">{stats.avg_response_minutes} min (AI)</div>
-              <div className="text-[10px] font-semibold mt-1" style={{ color: '#34d399' }}>
-                ↓ {Math.max(0, Math.round((45 - stats.avg_response_minutes) / 45 * 100))}%
-              </div>
+              <div className="text-[9px] text-gray-400 tracking-wider mb-1.5">{L.response}</div>
+              <div className="text-xs font-bold text-white">{stats.avg_response_minutes} min</div>
             </div>
             <div className="rounded-xl p-3" style={{ background: 'rgba(255,255,255,0.08)' }}>
-              <div className="text-[9px] text-gray-400 tracking-wider mb-1.5">{L.aiCheck}</div>
-              <div className="text-[10px] text-gray-300 line-through mb-0.5">{L.aiCheckBefore}</div>
-              <div className="text-xs font-bold text-white">{L.aiCheckAfter}</div>
-              <div className="text-[10px] font-semibold mt-1" style={{ color: '#34d399' }}>
-                {stats.auto_resolved_pct}% {isZH ? '自動解決' : 'auto-resolved'}
-              </div>
+              <div className="text-[9px] text-gray-400 tracking-wider mb-1.5">{L.resolvedCount}</div>
+              <div className="text-xs font-bold text-white">{Math.max(0, stats.total - stats.open)} {L.cases}</div>
             </div>
             <div className="rounded-xl p-3" style={{ background: 'rgba(255,255,255,0.08)' }}>
-              <div className="text-[9px] text-gray-400 tracking-wider mb-1.5">{L.aiCompliance}</div>
-              <div className="text-[10px] text-gray-300 line-through mb-0.5">{L.aiComplianceBefore}</div>
-              <div className="text-xs font-bold text-white">{L.aiComplianceAfter}</div>
-              <div className="text-[10px] font-semibold mt-1" style={{ color: '#34d399' }}>
-                {complianceRatePct !== null ? `${complianceRatePct}%` : '-'} {isZH ? '達標率' : 'compliance rate'}
-              </div>
+              <div className="text-[9px] text-gray-400 tracking-wider mb-1.5">{L.compliance}</div>
+              <div className="text-xs font-bold text-white">{complianceRatePct !== null ? `${complianceRatePct}%` : '-'}</div>
             </div>
           </div>
         </div>

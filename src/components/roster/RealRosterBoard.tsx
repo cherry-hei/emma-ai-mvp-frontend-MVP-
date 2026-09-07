@@ -1,5 +1,8 @@
 'use client'
 
+// Design: Emma clinical warmth. This is the single roster workspace for
+// generate → edit → deterministic rule check → manager publish.
+
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ApiRuleError, api, optimizeAndPoll } from '@/lib/api'
 import type {
@@ -151,9 +154,9 @@ export function RealRosterBoard() {
   const T = {
     period: isZH ? '週期' : 'Period', newPeriod: isZH ? '＋ 新週期' : '＋ New period',
     version: isZH ? '版本' : 'Version', manual: isZH ? '手動' : 'Manual',
-    ai: isZH ? '🤖 AI 更表建議' : '🤖 AI Roster Suggest', aiBusy: isZH ? '🤖 生成中…' : '🤖 Generating…',
-    validate: isZH ? '驗證' : 'Validate', saveDraft: isZH ? '儲存草稿' : 'Save draft',
-    publish: isZH ? '發佈' : 'Publish', staff: isZH ? '員工' : 'Staff',
+    ai: isZH ? '生成更表方案' : 'Generate roster options', aiBusy: isZH ? '生成中…' : 'Generating…',
+    validate: isZH ? '執行規則檢查' : 'Run rule checks', saveDraft: isZH ? '儲存草稿' : 'Save draft',
+    publish: isZH ? '批准並發佈' : 'Approve & publish', staff: isZH ? '員工' : 'Staff',
     filterRank: isZH ? '職級' : 'Rank',
     filterFloor: isZH ? '樓層/單位' : 'Floor/Unit',
     filterSearch: isZH ? '搜尋員工…' : 'Search staff…',
@@ -443,7 +446,10 @@ export function RealRosterBoard() {
       {/* Toolbar */}
       <div className="bg-white border-b border-gray-200 px-5 py-3 flex-shrink-0 space-y-2.5">
         <div className="flex items-center gap-3 flex-wrap">
-          <h1 className="text-xl font-bold text-gray-900">{isZH ? '更表' : 'Roster'}</h1>
+          <div>
+            <h1 className="text-xl font-bold text-gray-900">{isZH ? '更表工作區' : 'Roster Workspace'}</h1>
+            <p className="mt-0.5 text-[10px] text-gray-400">{isZH ? '生成方案 → 編輯更表 → 規則檢查 → 院長批准發佈' : 'Generate options → edit roster → run rule checks → manager approval'}</p>
+          </div>
 
           <label className="text-xs text-gray-500">{T.period}</label>
           <select
@@ -463,6 +469,19 @@ export function RealRosterBoard() {
               className="px-3.5 py-1.5 text-white text-xs font-semibold rounded-lg disabled:opacity-60"
               style={{ background: PINK }}>{aiLoading ? T.aiBusy : T.ai}</button>
           </div>
+        </div>
+
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-4" aria-label={isZH ? '更表工作流程' : 'Roster workflow'}>
+          {[
+            isZH ? '1 生成方案' : '1 Generate',
+            isZH ? '2 選擇及編輯' : '2 Select & edit',
+            isZH ? '3 規則檢查' : '3 Rule check',
+            isZH ? '4 批准發佈' : '4 Approve',
+          ].map((step, index) => (
+            <div key={step} className={`rounded-lg border px-3 py-2 text-[10px] font-semibold ${index === 2 && validation ? (validation.passes ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-rose-200 bg-rose-50 text-rose-700') : 'border-slate-200 bg-slate-50 text-slate-600'}`}>
+              {step}
+            </div>
+          ))}
         </div>
 
         {/* Version tabs + actions */}

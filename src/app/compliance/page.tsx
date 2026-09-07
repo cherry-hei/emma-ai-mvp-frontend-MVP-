@@ -4,11 +4,10 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { api } from '@/lib/api'
 import type { ApiStaff, PeriodOut, RatioResult, Unit, ViolationOut } from '@/lib/apiTypes'
 import { useLang } from '@/components/layout/LanguageContext'
-import ComplianceQaPanel from '@/components/compliance/ComplianceQaPanel'
 
 const PINK = '#E8187A'
 
-type Tab = 'qa' | 'ratio' | 'residents' | 'certs' | 'audit' /* agency removed for MVP */
+type Tab = 'ratio' | 'residents' | 'certs' | 'audit' /* agency removed for MVP */
 
 // Employment types the backend treats as external cover (emma_core.services.compliance.EXTERNAL_TYPES).
 const EXTERNAL_EMPLOYMENT_TYPES = new Set(['local_pt', 'agency', 'outsource', 'casual'])
@@ -49,7 +48,7 @@ export default function CompliancePage() {
   const [periodId, setPeriodId] = useState('')
   const [versionId, setVersionId] = useState('')
   const [date, setDate] = useState('')
-  const [tab, setTab] = useState<Tab>('qa')
+  const [tab, setTab] = useState<Tab>('ratio')
 
   const [ratios, setRatios] = useState<RatioResult[]>([])
   const [units, setUnits] = useState<Unit[]>([])
@@ -64,7 +63,7 @@ export default function CompliancePage() {
     title: isZH ? '合規監察' : 'Compliance', sub: isZH ? 'SWD 人手比例 · Cap.459A' : 'SWD staffing ratio · Cap.459A',
     date: isZH ? '日期' : 'Date', period: isZH ? '週期' : 'Period',
     ratio: isZH ? '人手比例' : 'Staffing Ratio', residents: isZH ? '住客人數' : 'Residents',
-    certs: isZH ? '員工證書' : 'Certifications', qa: 'Compliance Q&A',
+    certs: isZH ? '員工證書' : 'Certifications',
     window: isZH ? '時段/職級' : 'Window / Rank', req: isZH ? '要求' : 'Required',
     act: isZH ? '實際' : 'Actual', res: isZH ? '住客' : 'Residents', status: isZH ? '狀態' : 'Status',
     pass: isZH ? '合規' : 'Pass', fail: isZH ? '不足' : 'Short',
@@ -228,7 +227,7 @@ export default function CompliancePage() {
   ]
 
   const TABS: { id: Tab; label: string }[] = [
-    { id: 'qa', label: T.qa }, { id: 'ratio', label: T.ratio }, { id: 'residents', label: T.residents }, { id: 'certs', label: T.certs },
+    { id: 'ratio', label: T.ratio }, { id: 'residents', label: T.residents }, { id: 'certs', label: T.certs },
     { id: 'audit', label: T.tabAudit }, /* agency tab removed for MVP */
   ]
 
@@ -267,9 +266,6 @@ export default function CompliancePage() {
       </div>
 
       {loading && <div className="text-sm text-gray-400 py-6 text-center">…</div>}
-
-      {/* COMPLIANCE Q&A */}
-      {!loading && tab === 'qa' && <ComplianceQaPanel isZH={isZH} date={date} rosterVersionId={versionId} />}
 
       {/* RATIO */}
       {!loading && tab === 'ratio' && (
