@@ -19,12 +19,12 @@ function pickCurrentPeriod(periods: PeriodOut[]): string {
 }
 
 const NAAC_SHEETS = [
-  { id: 'roster_hours', icon: '⏱', en: 'Hours', zh: '工時', descEn: 'Total rostered hours per staff', descZh: '各員工於所選週期的總工時' },
-  { id: 'ph_dayoff', icon: '日', en: 'PH & Off', zh: 'PH及休班', descEn: 'Public holidays worked and day-off totals', descZh: '公眾假期出勤及休班日統計' },
-  { id: 'do_count', icon: 'DO', en: 'DO shift count', zh: 'DO更次數', descEn: 'Day-off counts and longest work run', descZh: '休班日次數及最長連續工作天' },
-  { id: 'ap_shifts', icon: 'A/P', en: 'A/P shifts', zh: 'AP更', descEn: 'A, P and N shift distribution by staff', descZh: '每名員工A更、P更及N更分配' },
-  { id: 'night_gender', icon: 'N', en: 'N-shift gender', zh: 'N更男女', descEn: 'Night-shift distribution by gender', descZh: '通宵更按性別分配' },
-  { id: 'staffing_ratio', icon: '1:n', en: 'Staffing ratio', zh: '人手比例', descEn: 'Roster-derived statutory coverage results', descZh: '由更表計算的法定人手覆蓋結果' },
+  { id: 'roster_hours', icon: '⏱', en: 'Hours', zh: '工時', descEn: 'Total rostered hours per staff', descZh: '各員工於所選週期的總工時', available: true },
+  { id: 'ph_dayoff', icon: '日', en: 'PH & Off', zh: 'PH及休班', descEn: 'Public holidays worked and day-off totals', descZh: '公眾假期出勤及休班日統計', available: true },
+  { id: 'do_count', icon: 'DO', en: 'DO shift count', zh: 'DO更次數', descEn: 'Day-off counts and longest work run', descZh: '休班日次數及最長連續工作天', available: true },
+  { id: 'ap_shifts', icon: 'A/P', en: 'A/P shifts', zh: 'AP更', descEn: 'A, P and N shift distribution by staff', descZh: '每名員工A更、P更及N更分配', available: true },
+  { id: 'c_shift_gender', icon: 'C', en: 'C-shift gender', zh: 'C更男女', descEn: 'C-shift distribution by gender', descZh: 'C更按性別分配', available: false },
+  { id: 'night_gender', icon: 'N', en: 'N-shift gender', zh: 'N更男女', descEn: 'Night-shift distribution by gender', descZh: '通宵更按性別分配', available: true },
 ]
 
 function ReportPreview({ report, periodId, onClose, isZH }: {
@@ -168,8 +168,8 @@ export default function ReportsPage() {
                 </div>
               </div>
               <div className="mt-auto grid grid-cols-2 gap-2 pt-4">
-                <button onClick={() => openPreview(sheet.id)} disabled={!periodId || !!busy} className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-[10px] font-bold text-slate-700 disabled:opacity-40">{busy === `preview-${sheet.id}` ? '…' : (isZH ? '預覽' : 'Preview')}</button>
-                <button onClick={() => downloadSheet(sheet.id)} disabled={!periodId || !!busy} className="rounded-lg bg-slate-950 px-3 py-2 text-[10px] font-bold text-white disabled:opacity-40">{busy === `download-${sheet.id}` ? '…' : (isZH ? '下載XLSX' : 'Download XLSX')}</button>
+                <button onClick={() => openPreview(sheet.id)} disabled={!sheet.available || !periodId || !!busy} className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-[10px] font-bold text-slate-700 disabled:cursor-not-allowed disabled:opacity-40">{busy === `preview-${sheet.id}` ? '…' : sheet.available ? (isZH ? '預覽' : 'Preview') : (isZH ? '尚欠backend' : 'Backend pending')}</button>
+                <button onClick={() => downloadSheet(sheet.id)} disabled={!sheet.available || !periodId || !!busy} className="rounded-lg bg-slate-950 px-3 py-2 text-[10px] font-bold text-white disabled:cursor-not-allowed disabled:opacity-40">{busy === `download-${sheet.id}` ? '…' : sheet.available ? (isZH ? '下載XLSX' : 'Download XLSX') : (isZH ? '未可下載' : 'Unavailable')}</button>
               </div>
             </article>
           ))}

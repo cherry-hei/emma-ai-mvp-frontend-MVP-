@@ -23,10 +23,11 @@ function valueSummary(value: unknown): string {
   return String(value)
 }
 
-export default function ComplianceQaPanel({ isZH, date, rosterVersionId }: {
+export default function ComplianceQaPanel({ isZH, date, rosterVersionId, initialQuestion = '' }: {
   isZH: boolean
   date: string
   rosterVersionId: string
+  initialQuestion?: string
 }) {
   const [status, setStatus] = useState<AiStatus | null>(null)
   const [question, setQuestion] = useState('')
@@ -37,6 +38,10 @@ export default function ComplianceQaPanel({ isZH, date, rosterVersionId }: {
   useEffect(() => {
     api.aiStatus().then(setStatus).catch(() => setStatus(null))
   }, [])
+
+  useEffect(() => {
+    if (initialQuestion) setQuestion(initialQuestion)
+  }, [initialQuestion])
 
   const prompts = isZH ? [
     `我哋喺${date || '今日'}嘅人手比例合規嗎？`,

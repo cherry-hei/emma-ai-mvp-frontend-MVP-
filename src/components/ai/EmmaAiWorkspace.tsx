@@ -165,7 +165,20 @@ function EmergencyChat({ isZH }: { isZH: boolean }) {
 
 export default function EmmaAiWorkspace({ isZH }: { isZH: boolean }) {
   const [mode, setMode] = useState<AiMode>('compliance')
+  const [rosterContext, setRosterContext] = useState({ date: '', versionId: '', rule: '', question: '' })
   const hkDate = useMemo(() => new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Hong_Kong' }).format(new Date()), [])
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search)
+    if (params.get('mode') === 'emergency') setMode('emergency')
+    if (params.get('mode') === 'compliance') setMode('compliance')
+    setRosterContext({
+      date: params.get('date') || '',
+      versionId: params.get('roster_version_id') || '',
+      rule: params.get('rule') || '',
+      question: params.get('question') || '',
+    })
+  }, [])
 
   return (
     <div className="min-h-full bg-[radial-gradient(circle_at_top_right,rgba(232,24,122,0.08),transparent_32%),linear-gradient(180deg,#fff_0%,#fff8fb_100%)] p-4 md:p-6">
@@ -191,12 +204,23 @@ export default function EmmaAiWorkspace({ isZH }: { isZH: boolean }) {
         <section className="rounded-[26px] border border-rose-100/80 bg-white/90 p-4 shadow-[0_28px_70px_-48px_rgba(232,24,122,0.65)] backdrop-blur-sm md:p-6">
           {mode === 'compliance' ? (
             <div className="space-y-5">
+              {rosterContext.rule && (
+                <div className="rounded-xl border border-sky-100 bg-sky-50 px-4 py-3 text-[11px] text-sky-800">
+                  <span className="font-bold">{isZH ? '更表規則內容' : 'Roster rule context'}:</span>{' '}
+                  {rosterContext.rule}{rosterContext.date ? ` · ${rosterContext.date}` : ''}
+                </div>
+              )}
               <AssistantBubble>
                 {isZH
                   ? '問我現時更表的人手比例、違規分鐘、適用門檻或驗證結果。我只會根據deterministic rule evidence解釋，不會自己創作法規。'
                   : 'Ask about staffing ratios, breach minutes, thresholds or roster validation. I explain deterministic rule evidence and do not invent rules.'}
               </AssistantBubble>
-              <ComplianceQaPanel isZH={isZH} date={hkDate} rosterVersionId="" />
+              <ComplianceQaPanel
+                isZH={isZH}
+                date={rosterContext.date || hkDate}
+                rosterVersionId={rosterContext.versionId}
+                initialQuestion={rosterContext.question}
+              />
             </div>
           ) : <EmergencyChat isZH={isZH} />}
         </section>
