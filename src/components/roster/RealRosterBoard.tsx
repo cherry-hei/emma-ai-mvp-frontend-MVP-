@@ -1,5 +1,8 @@
 'use client'
 
+// Design: Emma clinical warmth. This is the single roster workspace for
+// generate → edit → deterministic rule check → manager publish.
+
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ApiRuleError, api, optimizeAndPoll } from '@/lib/api'
 import type {
@@ -102,6 +105,43 @@ type SaveItem = {
   createdAt: string
 }
 
+type FocusedCell = { staffId: string; date: string } | null
+
+type ViolationGroup = {
+  key: string
+  ruleCode: string
+  items: NonNullable<ValidationOut['violations']>
+}
+
+type RatioGroup = {
+  key: string
+  label: string
+  rank?: string | null
+  items: NonNullable<ValidationOut['ratio_checks']>
+}
+
+function groupViolations(items: NonNullable<ValidationOut['violations']>): ViolationGroup[] {
+  const grouped = new Map<string, ViolationGroup>()
+  items.forEach((item) => {
+    const key = item.rule_code || 'unclassified_rule'
+    const existing = grouped.get(key)
+    if (existing) existing.items.push(item)
+    else grouped.set(key, { key, ruleCode: key, items: [item] })
+  })
+  return [...grouped.values()].sort((a, b) => b.items.length - a.items.length || a.ruleCode.localeCompare(b.ruleCode))
+}
+
+function groupRatios(items: NonNullable<ValidationOut['ratio_checks']>): RatioGroup[] {
+  const grouped = new Map<string, RatioGroup>()
+  items.forEach((item) => {
+    const key = `${item.label}|${item.rank || ''}`
+    const existing = grouped.get(key)
+    if (existing) existing.items.push(item)
+    else grouped.set(key, { key, label: item.label, rank: item.rank, items: [item] })
+  })
+  return [...grouped.values()].sort((a, b) => b.items.length - a.items.length || a.label.localeCompare(b.label))
+}
+
 export function RealRosterBoard() {
   const { lang } = useLang()
   const isZH = lang === 'zh'
@@ -123,6 +163,9 @@ export function RealRosterBoard() {
   const [cellIssues, setCellIssues] = useState<RuleIssue[]>([])
   const [newPeriodOpen, setNewPeriodOpen] = useState(false)
   const [validation, setValidation] = useState<ValidationOut | null>(null)
+  const [ruleReviewOpen, setRuleReviewOpen] = useState(false)
+  const [focusedCell, setFocusedCell] = useState<FocusedCell>(null)
+  const [expandedRuleGroups, setExpandedRuleGroups] = useState<Set<string>>(new Set())
 
   const [aiOpen, setAiOpen] = useState(false)
   const [aiLoading, setAiLoading] = useState(false)
@@ -151,9 +194,9 @@ export function RealRosterBoard() {
   const T = {
     period: isZH ? '週期' : 'Period', newPeriod: isZH ? '＋ 新週期' : '＋ New period',
     version: isZH ? '版本' : 'Version', manual: isZH ? '手動' : 'Manual',
-    ai: isZH ? '🤖 AI 更表建議' : '🤖 AI Roster Suggest', aiBusy: isZH ? '🤖 生成中…' : '🤖 Generating…',
-    validate: isZH ? '驗證' : 'Validate', saveDraft: isZH ? '儲存草稿' : 'Save draft',
-    publish: isZH ? '發佈' : 'Publish', staff: isZH ? '員工' : 'Staff',
+    ai: isZH ? '生成更表方案' : 'Generate roster options', aiBusy: isZH ? '生成中…' : 'Generating…',
+    validate: isZH ? '執行規則檢查' : 'Run rule checks', saveDraft: isZH ? '儲存草稿' : 'Save draft',
+    publish: isZH ? '批准並發佈' : 'Approve & publish', staff: isZH ? '員工' : 'Staff',
     filterRank: isZH ? '職級' : 'Rank',
     filterFloor: isZH ? '樓層/單位' : 'Floor/Unit',
     filterSearch: isZH ? '搜尋員工…' : 'Search staff…',
@@ -307,6 +350,36 @@ export function RealRosterBoard() {
   // results you publish, and published/archived versions are locked.
   const editable = currentVersion?.version_type === 'manual' && currentVersion?.status === 'draft'
 
+  const blockingViolations = useMemo(
+    () => (validation?.violations ?? []).filter((item) => !item.resolved && item.severity.toLowerCase() === 'hard'),
+    [validation],
+  )
+  const warningViolations = useMemo(
+    () => (validation?.violations ?? []).filter((item) => !item.resolved && item.severity.toLowerCase() !== 'hard'),
+    [validation],
+  )
+  const failingRatios = useMemo(
+    () => (validation?.ratio_checks ?? []).filter((item) => !item.passes),
+    [validation],
+  )
+  const blockingCount = validation?.hard_violation_count ?? 0
+  const warningCount = warningViolations.length + failingRatios.length
+  const passingCheckCount = (validation?.ratio_checks ?? []).filter((item) => item.passes).length
+  const blockingGroups = useMemo(() => groupViolations(blockingViolations), [blockingViolations])
+  const warningGroups = useMemo(() => groupViolations(warningViolations), [warningViolations])
+  const ratioGroups = useMemo(() => groupRatios(failingRatios), [failingRatios])
+
+  const issueCountByCell = useMemo(() => {
+    const counts = new Map<string, number>()
+    ;(validation?.violations ?? []).forEach((item) => {
+      if (!item.resolved && item.staff_id && item.date) {
+        const key = `${item.staff_id}|${item.date}`
+        counts.set(key, (counts.get(key) ?? 0) + 1)
+      }
+    })
+    return counts
+  }, [validation])
+
   const columns = useMemo(() => {
     if (grid?.period_start && grid?.period_end) return eachDate(grid.period_start, grid.period_end)
     return grid?.dates ?? []
@@ -384,6 +457,13 @@ export function RealRosterBoard() {
 
   async function handlePublish() {
     if (!activeVersionId) return
+    if (!validation || blockingCount > 0) {
+      setRuleReviewOpen(true)
+      return
+    }
+    if (warningCount > 0 && !window.confirm(isZH
+      ? `現時有${warningCount}項警告。規則引擎沒有阻止發佈；是否由院長確認後繼續？`
+      : `There are ${warningCount} warnings. The rules engine does not block publishing; continue with manager confirmation?`)) return
     setBusy('publish'); setError('')
     try {
       await api.publish(activeVersionId)
@@ -435,6 +515,38 @@ export function RealRosterBoard() {
     loadGrid(periodId, versionId)
   }
 
+  function focusIssue(staffId?: string | null, date?: string | null) {
+    if (!staffId || !date) return
+    const row = grid?.rows.find((item) => item.staff.id === staffId)
+    if (row) {
+      setFilterRank('ALL')
+      setFilterFloor('ALL')
+      setFilterSearch(row.staff.name_en || row.staff.name || row.staff.rank)
+    }
+    setFocusedCell({ staffId, date })
+    setRuleReviewOpen(false)
+    window.setTimeout(() => document.getElementById(`roster-cell-${staffId}-${date}`)?.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'center' }), 80)
+  }
+
+  function explainRule(rule: string, date?: string | null) {
+    const params = new URLSearchParams({ mode: 'compliance', rule })
+    if (activeVersionId) params.set('roster_version_id', activeVersionId)
+    if (date) params.set('date', date.slice(0, 10))
+    params.set('question', isZH
+      ? `請根據deterministic evidence解釋更表規則 ${rule} 的結果、影響及需要處理的步驟。`
+      : `Explain roster rule ${rule}, its impact and the next action using deterministic evidence only.`)
+    window.location.assign(`/insights?${params.toString()}`)
+  }
+
+  function toggleRuleGroup(key: string) {
+    setExpandedRuleGroups((current) => {
+      const next = new Set(current)
+      if (next.has(key)) next.delete(key)
+      else next.add(key)
+      return next
+    })
+  }
+
   // ── render ───────────────────────────────────────────────────────────────
   const periodLabel = grid?.period_start && grid?.period_end ? `${grid.period_start} → ${grid.period_end}` : ''
 
@@ -443,7 +555,10 @@ export function RealRosterBoard() {
       {/* Toolbar */}
       <div className="bg-white border-b border-gray-200 px-5 py-3 flex-shrink-0 space-y-2.5">
         <div className="flex items-center gap-3 flex-wrap">
-          <h1 className="text-xl font-bold text-gray-900">{isZH ? '更表' : 'Roster'}</h1>
+          <div>
+            <h1 className="text-xl font-bold text-gray-900">{isZH ? '更表工作區' : 'Roster Workspace'}</h1>
+            <p className="mt-0.5 text-[10px] text-gray-400">{isZH ? '生成方案 → 編輯更表 → 規則檢查 → 院長批准發佈' : 'Generate options → edit roster → run rule checks → manager approval'}</p>
+          </div>
 
           <label className="text-xs text-gray-500">{T.period}</label>
           <select
@@ -463,6 +578,19 @@ export function RealRosterBoard() {
               className="px-3.5 py-1.5 text-white text-xs font-semibold rounded-lg disabled:opacity-60"
               style={{ background: PINK }}>{aiLoading ? T.aiBusy : T.ai}</button>
           </div>
+        </div>
+
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-4" aria-label={isZH ? '更表工作流程' : 'Roster workflow'}>
+          {[
+            isZH ? '1 生成方案' : '1 Generate',
+            isZH ? '2 選擇及編輯' : '2 Select & edit',
+            isZH ? '3 規則檢查' : '3 Rule check',
+            isZH ? '4 批准發佈' : '4 Approve',
+          ].map((step, index) => (
+            <div key={step} className={`rounded-lg border px-3 py-2 text-[10px] font-semibold ${index === 2 && validation ? (validation.passes ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-rose-200 bg-rose-50 text-rose-700') : 'border-slate-200 bg-slate-50 text-slate-600'}`}>
+              {step}
+            </div>
+          ))}
         </div>
 
         {/* Version tabs + actions */}
@@ -512,9 +640,10 @@ export function RealRosterBoard() {
               {busy === 'save' ? '…' : T.saveDraft}
             </button>
             <button onClick={handlePublish} disabled={!activeVersionId || busy === 'publish'}
+              title={blockingCount > 0 ? (isZH ? '先檢視及處理blocking rules' : 'Review and resolve blocking rules first') : undefined}
               className="text-xs px-3 py-1.5 rounded-lg text-white font-semibold disabled:opacity-50"
-              style={{ background: PINK }}>
-              {busy === 'publish' ? '…' : T.publish}
+              style={{ background: blockingCount > 0 ? '#475569' : PINK }}>
+              {busy === 'publish' ? '…' : blockingCount > 0 ? (isZH ? '發佈前檢視規則' : 'Review rules before publishing') : T.publish}
             </button>
             <button onClick={() => setShowSaveList((v) => !v)}
               className="text-xs px-3 py-1.5 rounded-lg border border-gray-200 bg-white text-gray-700 font-semibold hover:bg-gray-50">
@@ -568,28 +697,137 @@ export function RealRosterBoard() {
         )}
       </div>
 
-      {/* Validation panel */}
+      {/* Compact validation status: details live in an overlay so the roster grid keeps its height. */}
       {validation && (
-        <div className="px-5 py-2 border-b border-gray-200 bg-white flex-shrink-0">
-          <div className="flex items-center gap-2 flex-wrap text-xs">
-            <span className="font-semibold" style={{ color: validation.passes ? '#15803d' : '#be123c' }}>
-              {validation.passes ? `✓ ${T.passes}` : `✗ ${T.fails}`}
+        <div className="flex-shrink-0 border-b border-gray-200 bg-white px-5 py-2" aria-live="polite">
+          <div className="flex min-h-8 flex-wrap items-center gap-2 text-xs">
+            <span className={`font-bold ${blockingCount > 0 ? 'text-rose-700' : warningCount > 0 ? 'text-amber-700' : 'text-emerald-700'}`}>
+              {blockingCount > 0
+                ? (isZH ? '此草稿需要檢視' : 'This draft needs review')
+                : warningCount > 0
+                  ? (isZH ? '可以發佈，但請先檢視警告' : 'Publishable with warnings to review')
+                  : (isZH ? '已準備好發佈' : 'Ready to publish')}
             </span>
-            <span className="text-gray-400">· {validation.method}</span>
-            {validation.hard_violation_count > 0 && (
-              <span className="text-rose-600">· {validation.hard_violation_count} {isZH ? '違規' : 'violations'}</span>
-            )}
-            {validation.violations.slice(0, 4).map((v, i) => (
-              <span key={i} className="text-[10px] px-2 py-0.5 rounded-full bg-rose-50 text-rose-600 border border-rose-100">
-                {v.rule_code}{v.message ? `: ${v.message}` : ''}
-              </span>
-            ))}
-            {validation.ratio_checks.filter((c) => !c.passes).slice(0, 4).map((c, i) => (
-              <span key={`r${i}`} className="text-[10px] px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 border border-amber-100">
-                {c.label} - {c.actual}/{c.required}
-              </span>
-            ))}
+            <span className="text-[10px] text-gray-400">{validation.method}</span>
+            <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${blockingCount ? 'bg-rose-100 text-rose-700' : 'bg-gray-100 text-gray-500'}`}>
+              {isZH ? '阻塞規則' : 'Blocking rules'} {blockingGroups.length}
+            </span>
+            <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${warningCount ? 'bg-amber-100 text-amber-800' : 'bg-gray-100 text-gray-500'}`}>
+              {isZH ? '警告類別' : 'Warning groups'} {warningGroups.length + ratioGroups.length}
+            </span>
+            <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-semibold text-emerald-700">
+              {isZH ? '通過檢查' : 'Checks passed'} {passingCheckCount}
+            </span>
+            <button onClick={() => setRuleReviewOpen(true)} className="ml-auto rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-[10px] font-bold text-slate-700 hover:bg-slate-50">
+              {isZH ? '檢視規則' : 'Review rules'}
+            </button>
           </div>
+        </div>
+      )}
+
+      {ruleReviewOpen && validation && (
+        <div className="fixed inset-0 z-[70] flex items-end justify-end md:items-stretch" role="dialog" aria-modal="true" aria-label={isZH ? '規則檢視' : 'Rule review'}>
+          <button className="absolute inset-0 bg-slate-950/25 backdrop-blur-[1px]" onClick={() => setRuleReviewOpen(false)} aria-label={isZH ? '關閉規則檢視' : 'Close rule review'} />
+          <aside className="relative flex max-h-[84vh] w-full flex-col overflow-hidden rounded-t-2xl border border-slate-200 bg-white shadow-2xl md:max-h-none md:max-w-md md:rounded-none md:rounded-l-2xl">
+            <div className="flex items-start justify-between gap-3 border-b border-slate-100 px-5 py-4">
+              <div>
+                <h2 className="text-base font-black text-slate-950">{isZH ? '更表規則檢視' : 'Roster rule review'}</h2>
+                <p className="mt-1 text-[10px] leading-relaxed text-slate-500">{isZH ? '規則引擎決定結果；Emma AI只可解釋同一份證據。' : 'The rules engine decides the result; Emma AI can only explain the same evidence.'}</p>
+              </div>
+              <button onClick={() => setRuleReviewOpen(false)} className="rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs text-slate-500 hover:bg-slate-50">✕</button>
+            </div>
+
+            <div className="flex-1 space-y-5 overflow-y-auto px-5 py-4">
+              <section>
+                <div className="mb-2 flex items-center justify-between">
+                  <h3 className="text-xs font-black uppercase tracking-wide text-rose-700">{isZH ? '必須處理' : 'Blocking'}</h3>
+                  <span className="rounded-full bg-rose-100 px-2 py-0.5 text-[10px] font-bold text-rose-700">{blockingCount}</span>
+                </div>
+                <div className="space-y-2">
+                  {blockingGroups.map((group) => {
+                    const first = group.items[0]
+                    const expanded = expandedRuleGroups.has(`hard:${group.key}`)
+                    const dates = [...new Set(group.items.map((item) => item.date).filter(Boolean))]
+                    const located = group.items.find((item) => item.staff_id && item.date)
+                    return (
+                      <article key={group.key} className="rounded-xl border border-rose-200 bg-rose-50/60 p-3">
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="min-w-0">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <div className="text-xs font-bold text-slate-900">{group.ruleCode}</div>
+                              <span className="rounded-full bg-white px-2 py-0.5 text-[9px] font-bold text-rose-700">{group.items.length} {isZH ? '項結果' : 'results'}</span>
+                            </div>
+                            <p className="mt-1 text-[11px] leading-relaxed text-slate-600">{first?.message || (isZH ? '規則引擎未有返回詳細說明。' : 'No detailed message was returned by the rules engine.')}</p>
+                            <p className="mt-2 text-[10px] text-slate-500">{dates.length ? `${dates.length} ${isZH ? '個日期' : 'dates'} · ${dates[0]}${dates.length > 1 ? ` → ${dates[dates.length - 1]}` : ''}` : (isZH ? '未有日期資料' : 'Date unavailable')}</p>
+                          </div>
+                          <span className="rounded-full bg-rose-100 px-2 py-0.5 text-[9px] font-bold text-rose-700">HARD</span>
+                        </div>
+                        <div className="mt-3 flex flex-wrap gap-2">
+                          {located && <button onClick={() => focusIssue(located.staff_id, located.date)} className="rounded-lg bg-slate-950 px-3 py-1.5 text-[10px] font-bold text-white">{isZH ? '顯示首個受影響更次' : 'Show first affected shift'}</button>}
+                          <button onClick={() => explainRule(group.ruleCode, first?.date)} className="rounded-lg border border-rose-200 bg-white px-3 py-1.5 text-[10px] font-bold text-rose-700">{isZH ? '由Emma AI解釋' : 'Explain in Emma AI'}</button>
+                          <button onClick={() => toggleRuleGroup(`hard:${group.key}`)} className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-[10px] font-bold text-slate-600">{expanded ? (isZH ? '收起例子' : 'Hide examples') : (isZH ? '查看例子' : 'View examples')}</button>
+                        </div>
+                        {expanded && (
+                          <div className="mt-3 space-y-1.5 border-t border-rose-100 pt-3">
+                            {group.items.slice(0, 6).map((item, index) => (
+                              <div key={`${item.rule_code}-${index}`} className="rounded-lg bg-white/75 px-2.5 py-2 text-[10px] text-slate-600">
+                                <b>{item.date || (isZH ? '日期未有提供' : 'Date unavailable')}</b>{item.message ? ` · ${item.message}` : ''}
+                              </div>
+                            ))}
+                            {group.items.length > 6 && <p className="text-[10px] text-rose-600">{isZH ? `只顯示首6項；尚有${group.items.length - 6}項。` : `Showing the first 6; ${group.items.length - 6} more results remain.`}</p>}
+                          </div>
+                        )}
+                      </article>
+                    )
+                  })}
+                  {blockingGroups.length === 0 && blockingCount > 0 && <div className="rounded-xl border border-dashed border-rose-200 p-3 text-[11px] text-rose-700">{isZH ? `規則引擎報告${blockingCount}項阻塞，但未返回逐項資料。請重新執行規則檢查或查看validation evidence。` : `The rules engine reports ${blockingCount} blockers but returned no item-level data. Run the checks again or review the validation evidence.`}</div>}
+                  {blockingCount === 0 && <div className="rounded-xl border border-emerald-100 bg-emerald-50 p-3 text-[11px] text-emerald-700">{isZH ? '沒有阻塞發佈的規則。' : 'No rules are blocking publication.'}</div>}
+                </div>
+              </section>
+
+              <section>
+                <div className="mb-2 flex items-center justify-between">
+                  <h3 className="text-xs font-black uppercase tracking-wide text-amber-700">{isZH ? '需要檢視' : 'Warnings'}</h3>
+                  <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-bold text-amber-800">{warningCount}</span>
+                </div>
+                <div className="space-y-2">
+                  {warningGroups.map((group) => {
+                    const first = group.items[0]
+                    return (
+                      <article key={group.key} className="rounded-xl border border-amber-200 bg-amber-50/60 p-3">
+                        <div className="flex flex-wrap items-center gap-2"><div className="text-xs font-bold text-slate-900">{group.ruleCode}</div><span className="rounded-full bg-white px-2 py-0.5 text-[9px] font-bold text-amber-800">{group.items.length} {isZH ? '項結果' : 'results'}</span></div>
+                        <p className="mt-1 text-[11px] leading-relaxed text-slate-600">{first?.message || (isZH ? '需要院長檢視。' : 'Manager review is required.')}</p>
+                        <button onClick={() => explainRule(group.ruleCode, first?.date)} className="mt-3 rounded-lg border border-amber-200 bg-white px-3 py-1.5 text-[10px] font-bold text-amber-800">{isZH ? '由Emma AI解釋' : 'Explain in Emma AI'}</button>
+                      </article>
+                    )
+                  })}
+                  {ratioGroups.map((group) => {
+                    const first = group.items[0]
+                    const largestGap = Math.max(...group.items.map((item) => Math.max(item.required - item.actual, 0)))
+                    const expanded = expandedRuleGroups.has(`ratio:${group.key}`)
+                    return (
+                      <article key={group.key} className="rounded-xl border border-amber-200 bg-amber-50/60 p-3">
+                        <div className="flex items-start justify-between gap-2">
+                          <div>
+                            <div className="flex flex-wrap items-center gap-2"><div className="text-xs font-bold text-slate-900">{group.label}</div><span className="rounded-full bg-white px-2 py-0.5 text-[9px] font-bold text-amber-800">{group.items.length} {isZH ? '個時段' : 'windows'}</span></div>
+                            <p className="mt-1 text-[11px] text-slate-600">{group.rank ? `${group.rank} · ` : ''}{isZH ? '最大人手缺口' : 'Largest staffing gap'}: {largestGap}</p>
+                            <p className="mt-1 text-[10px] text-slate-500">{first?.window_start} → {group.items[group.items.length - 1]?.window_end}</p>
+                          </div>
+                          <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[9px] font-bold text-amber-800">RATIO</span>
+                        </div>
+                        <div className="mt-3 flex flex-wrap gap-2">
+                          <button onClick={() => explainRule(group.label, first?.window_start)} className="rounded-lg border border-amber-200 bg-white px-3 py-1.5 text-[10px] font-bold text-amber-800">{isZH ? '由Emma AI解釋' : 'Explain in Emma AI'}</button>
+                          <button onClick={() => toggleRuleGroup(`ratio:${group.key}`)} className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-[10px] font-bold text-slate-600">{expanded ? (isZH ? '收起時段' : 'Hide windows') : (isZH ? '查看時段' : 'View windows')}</button>
+                        </div>
+                        {expanded && <div className="mt-3 space-y-1.5 border-t border-amber-100 pt-3">{group.items.slice(0, 6).map((item, index) => <div key={`${item.label}-${index}`} className="rounded-lg bg-white/75 px-2.5 py-2 text-[10px] text-slate-600"><b>{item.window_start}</b> · {isZH ? '實際／要求' : 'Actual／required'} {item.actual}／{item.required}</div>)}{group.items.length > 6 && <p className="text-[10px] text-amber-700">{isZH ? `只顯示首6個時段；尚有${group.items.length - 6}個。` : `Showing the first 6 windows; ${group.items.length - 6} more remain.`}</p>}</div>}
+                      </article>
+                    )
+                  })}
+                  {warningCount === 0 && <div className="rounded-xl border border-emerald-100 bg-emerald-50 p-3 text-[11px] text-emerald-700">{isZH ? '沒有需要院長檢視的警告。' : 'No warnings require manager review.'}</div>}
+                </div>
+              </section>
+            </div>
+          </aside>
         </div>
       )}
 
@@ -665,14 +903,17 @@ export function RealRosterBoard() {
                     const st = cell?.shift_type
                     const style = st ? (SHIFT_STYLE[st] ?? DEFAULT_STYLE) : null
                     return (
-                      <td key={iso}
+                      <td key={iso} id={`roster-cell-${row.staff.id}-${iso}`}
                         onClick={() => editable && (setCellIssues([]), setEditing({
                           staffId: row.staff.id, staffName: row.staff.name_en || row.staff.name,
                           staffRank: row.staff.rank,
                           date: iso, shiftType: st ?? '', tasks: cell?.tasks ?? [],
                           wasWorking: !!st,
                         }))}
-                        className={`border-r border-gray-100 p-1 align-top ${editable ? 'cursor-pointer hover:bg-pink-50/40' : ''}`}>
+                        className={`relative border-r border-gray-100 p-1 align-top ${editable ? 'cursor-pointer hover:bg-pink-50/40' : ''} ${focusedCell?.staffId === row.staff.id && focusedCell.date === iso ? 'bg-rose-50 ring-2 ring-inset ring-[#E8187A]' : ''}`}>
+                        {(issueCountByCell.get(`${row.staff.id}|${iso}`) ?? 0) > 0 && (
+                          <span className="absolute right-0.5 top-0.5 h-2 w-2 rounded-full bg-rose-500 ring-2 ring-white" title={isZH ? '此更次有規則提示' : 'This shift has a rule alert'} />
+                        )}
                         {st ? (
                           <div className="rounded px-1 py-0.5 text-[9px] font-bold text-center"
                             style={{ background: style!.bg, color: style!.fg }}>{st}</div>

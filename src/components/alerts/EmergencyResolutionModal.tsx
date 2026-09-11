@@ -5,7 +5,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { api } from '@/lib/api'
 import type {
-  EmergencyAiSuggestion, Incident, ReplacementCandidate, ReplacementOffer,
+  Incident, ReplacementCandidate, ReplacementOffer,
 } from '@/lib/apiTypes'
 
 const PINK = '#E8187A'
@@ -39,7 +39,6 @@ export default function EmergencyResolutionModal({ incidentId, onClose, onResolv
 }) {
   const [incident, setIncident] = useState<Incident | null>(null)
   const [candidates, setCandidates] = useState<ReplacementCandidate[]>([])
-  const [suggestion, setSuggestion] = useState<EmergencyAiSuggestion | null>(null)
   const [offers, setOffers] = useState<ReplacementOffer[]>([])
   const [selected, setSelected] = useState<string[]>([])
   const [note, setNote] = useState('')
@@ -67,11 +66,6 @@ export default function EmergencyResolutionModal({ incidentId, onClose, onResolv
       setCandidates(candidateRows)
       setOffers(offerRows)
       setSelected((current) => current.length ? current : candidateRows.filter((c) => c.compliance_ok).slice(0, 3).map((c) => c.candidate_staff_id))
-      try {
-        setSuggestion(await api.incidentAiSuggestion(incidentId))
-      } catch {
-        setSuggestion(null)
-      }
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to load replacement workflow')
     } finally {
@@ -97,10 +91,9 @@ export default function EmergencyResolutionModal({ incidentId, onClose, onResolv
 
   const L = {
     title: isZH ? '緊急病假替補' : 'Emergency Sick Leave Cover',
-    sub: isZH ? '規則引擎篩選 · AI只解釋 · 員工回覆 · 院長最後批准' : 'Rules decide eligibility · AI explains · Staff responds · Manager approves',
+    sub: isZH ? '規則引擎篩選 · 員工回覆 · 院長最後批准' : 'Rules decide eligibility · Staff responds · Manager approves',
     eligible: isZH ? '合規候選人' : 'Eligible candidates',
     blocked: isZH ? '規則排除' : 'Excluded by rules',
-    ai: isZH ? 'AI 建議解釋' : 'AI-assisted explanation',
     select: isZH ? '選擇要通知的員工' : 'Choose staff to notify',
     note: isZH ? '通知備註（不要輸入病歷或其他敏感資料）' : 'Offer note — do not include medical or other sensitive data',
     send: isZH ? `發送 ${selected.length} 個接更邀請` : `Send ${selected.length} cover offer${selected.length === 1 ? '' : 's'}`,
@@ -111,8 +104,6 @@ export default function EmergencyResolutionModal({ incidentId, onClose, onResolv
     noOffer: isZH ? '尚未發送邀請。更表只會在員工接受並由院長批准後更新。' : 'No offers sent. The roster changes only after staff accepts and the manager approves.',
     success: isZH ? '替補已批准；其他邀請已自動關閉，更表及審計紀錄由backend更新。' : 'Cover approved. Other offers were closed and the backend updated the roster and audit trail.',
     close: isZH ? '關閉' : 'Close',
-    degraded: isZH ? '目前使用deterministic降級解釋' : 'Deterministic degraded explanation',
-    provider: isZH ? '解釋來源' : 'Explanation source',
     noReason: isZH ? '候選次序沿用規則引擎分數。' : 'Candidate order follows the deterministic score.',
   }
 
@@ -191,7 +182,7 @@ export default function EmergencyResolutionModal({ incidentId, onClose, onResolv
                 <div><div className="text-[9px] uppercase tracking-wider text-gray-400">Incident</div><b>{incident.incident_type}</b></div>
               </div>
 
-              <div className="grid gap-4 lg:grid-cols-[1.45fr_.85fr]">
+              <div className="grid gap-4">
                 <section className="rounded-xl border border-gray-200 bg-white p-4">
                   <div className="mb-3 flex items-center justify-between">
                     <div>
@@ -230,18 +221,6 @@ export default function EmergencyResolutionModal({ incidentId, onClose, onResolv
                   )}
                 </section>
 
-                <section className="rounded-xl border border-slate-200 bg-slate-950 p-4 text-white">
-                  <div className="flex items-center justify-between gap-2">
-                    <h3 className="text-sm font-bold">{L.ai}</h3>
-                    <span className="rounded-full bg-white/10 px-2 py-1 text-[9px] text-slate-200">{suggestion?.provider || 'deterministic'}</span>
-                  </div>
-                  <p className="mt-3 text-xs leading-relaxed text-slate-200">{suggestion?.reason || L.noReason}</p>
-                  <div className="mt-4 space-y-2 text-[10px] text-slate-300">
-                    <div>{L.provider}: <b className="text-white">{suggestion?.provider || 'offline'}</b></div>
-                    <div>{isZH ? '符合資格人數' : 'Eligible count'}: <b className="text-white">{suggestion?.eligible_count ?? eligible.length}</b></div>
-                    {(suggestion?.degraded || !suggestion?.explained) && <div className="rounded-lg border border-amber-400/30 bg-amber-400/10 p-2 text-amber-200">{L.degraded}</div>}
-                  </div>
-                </section>
               </div>
 
               {!activeOffers.length && !approved && (

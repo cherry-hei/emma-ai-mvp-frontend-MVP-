@@ -50,7 +50,7 @@ export default function DashboardPage() {
     title:         isZH ? '儀表板' : 'Dashboard',
     kpi_sl:        isZH ? 'SL/DSL 總事件' : 'SL/DSL Events',
     kpi_sl_sub:    isZH ? '本月實際' : 'This month, actual',
-    kpi_ai:        isZH ? 'Emma AI 自動處理' : 'Auto-resolved by AI',
+    kpi_ai:        isZH ? '本月已完成替補' : 'Covers completed',
     kpi_resp:      isZH ? '平均響應時間' : 'Avg Response Time',
     kpi_resp_sub:  isZH ? '人手處理需 45min' : 'Manual handling: 45min',
     kpi_comp:      isZH ? '合規達標率' : 'Compliance Rate',
@@ -68,7 +68,6 @@ export default function DashboardPage() {
     alert_title:   isZH ? '最近事件' : 'Recent Incidents',
     resolved:      isZH ? '已處理' : 'Resolved',
     pending:       isZH ? '待處理' : 'Pending',
-    ai_title:      isZH ? 'Emma AI 本月摘要' : 'Emma AI Monthly Summary',
     view_all:      isZH ? '查看全部' : 'View All',
     total_staff:   isZH ? '總員工：' : 'Total: ',
     total:         isZH ? '共' : 'Total:',
@@ -92,8 +91,8 @@ export default function DashboardPage() {
   const KPI = [
     { label: L.kpi_sl,   value: String(k.incidents_month), unit: L.cases, color: PINK,
       sub: L.kpi_sl_sub },
-    { label: L.kpi_ai,   value: String(k.auto_resolved),   unit: L.cases, color: '#10b981',
-      sub: `${k.auto_resolved_pct}% ${isZH ? '自動解決' : 'auto-resolved'}` },
+    { label: L.kpi_ai,   value: String(Math.max(0, k.incidents_month - k.open_alerts)), unit: L.cases, color: '#10b981',
+      sub: isZH ? '員工回覆及院長批准後完成' : 'Completed after staff response and manager approval' },
     { label: L.kpi_resp, value: String(k.avg_response_minutes), unit: 'min', color: '#f59e0b',
       sub: L.kpi_resp_sub },
     { label: L.kpi_comp, value: String(k.compliance_rate_pct), unit: '%', color: '#6366f1',
@@ -263,22 +262,6 @@ export default function DashboardPage() {
           )}
         </div>
 
-      </div>
-
-      {/* Emma AI summary - derived from this facility's own numbers */}
-      <div className="rounded-2xl p-5 text-white" style={{ background: 'linear-gradient(135deg, #1a1a2e, #2d2d5e)' }}>
-        <div className="flex items-center gap-2 mb-3">
-          <span className="text-xl">🤖</span>
-          <span className="text-sm font-bold">{L.ai_title}</span>
-        </div>
-        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
-          {data.highlights.map((h) => (
-            <div key={h.key} className="rounded-xl p-3 text-[11px] leading-relaxed text-gray-300"
-              style={{ background: 'rgba(255,255,255,0.08)' }}>
-              {isZH ? h.text_zh : h.text_en}
-            </div>
-          ))}
-        </div>
       </div>
 
     </div>

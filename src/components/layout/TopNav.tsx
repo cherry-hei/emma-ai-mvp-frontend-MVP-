@@ -77,7 +77,8 @@ export function TopNav({ onMenuToggle }: { onMenuToggle?: () => void } = {}) {
       {canOpenRoute(user?.role, ROUTE_FEATURE[ROUTES.insights]) && (
         <button
           onClick={() => router.push(ROUTES.insights)}
-          className="flex min-h-8 items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-[10px] font-bold transition-all hover:-translate-y-px"
+          aria-label="Open Emma AI"
+          className="flex min-h-8 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg border px-2.5 py-1.5 text-[10px] font-bold transition-all hover:-translate-y-px"
           style={{
             borderColor: pathname?.startsWith(ROUTES.insights) ? '#E8187A' : '#f6c6db',
             color: pathname?.startsWith(ROUTES.insights) ? '#ffffff' : '#E8187A',
@@ -85,7 +86,7 @@ export function TopNav({ onMenuToggle }: { onMenuToggle?: () => void } = {}) {
           }}
         >
           <span aria-hidden>✦</span>
-          <span className="hidden lg:inline">Emma AI</span>
+          <span>Emma AI</span>
         </button>
       )}
 

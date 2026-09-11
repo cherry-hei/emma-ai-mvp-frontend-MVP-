@@ -553,9 +553,9 @@ export const api = {
   eventTriggers: () => apiFetch<EventTrigger[]>('/reports/event-triggers'),
   regulatoryDocs: () => apiFetch<RegulatoryDoc[]>('/reports/regulatory-docs'),
   reports: () => apiFetch<ReportRow[]>('/reports'),
-  generateReport: (reportType: string) =>
+  generateReport: (reportType: string, periodId?: string) =>
     apiFetch<GeneratedReport>('/reports/generate', {
-      method: 'POST', body: JSON.stringify({ report_type: reportType }),
+      method: 'POST', body: JSON.stringify({ report_type: reportType, period_id: periodId || undefined }),
     }),
   runReportSchedule: (scheduleId: string) =>
     apiFetch<GeneratedReport>(`/reports/schedules/${scheduleId}/run`, { method: 'POST' }),
