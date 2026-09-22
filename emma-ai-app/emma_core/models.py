@@ -35,15 +35,24 @@ class FacilityLite(BaseModel):
     name: str | None = None
 
 
+class OrganisationLite(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    id: str | None = None
+    code: str | None = None
+    name: str | None = None
+
+
 class Profile(BaseModel):
     model_config = ConfigDict(extra="ignore")
     id: str
     auth_user_id: str | None = None
     facility_id: str | None = None
+    org_id: str | None = None
     email: str | None = None
     role: Role
     staff_id: str | None = None
     facility: FacilityLite | None = None
+    organisation: OrganisationLite | None = None
 
 
 # ── roster grid view (already typed) ────────────────────────────────────────

@@ -31,6 +31,7 @@ from ..constants import AssignmentStatus, RosterStatus
 from ..shifttime import paid_minutes
 from .plan import ParsedCell, ParsedRoster, ParsedStaff
 from .vocab import LEAVE_CODES
+from ..services.organisations import org_id_for
 
 # Contract defaults per employment type, from the scheduling specification.
 # Imported labour rests 12 hours between duties; local staff 11.
@@ -170,10 +171,10 @@ def _ensure_shift_definitions(client, facility_id: str, parsed: ParsedRoster,
                               result: LoadResult, *, write: bool) -> None:
     """Register every duty code the sheets use, plus the non-working codes their
     leave vocabulary needs, so a manual edit can pick any of them."""
-    # SQL: select shift_type from shift_definitions where facility_id = :facility_id
+    # SQL: select shift_type from shift_definitions where org_id = :org_id
     existing = {r["shift_type"] for r in
                 client.table("shift_definitions").select("shift_type")
-                .eq("facility_id", facility_id).execute().data}
+                .eq("org_id", org_id_for(client, facility_id)).execute().data}
     rows = []
     for window in parsed.profile.shift_windows:
         if window.code in existing:
@@ -255,11 +256,11 @@ def _ensure_task_definitions(client, facility_id: str, parsed: ParsedRoster,
     """Register the task codes the cells carry (A1-A8 / P1-P6 / N2-N3) and the
     standing duties Home B writes on its floor row."""
     # SQL: select id, task_code, required_rank, shift_type, active
-    #      from task_definitions where facility_id = :facility_id
+    #      from task_definitions where org_id = :org_id
     dictionary = TaskDictionary(
         client.table("task_definitions")
         .select("id,task_code,required_rank,shift_type,active")
-        .eq("facility_id", facility_id).execute().data)
+        .eq("org_id", org_id_for(client, facility_id)).execute().data)
 
     # Keyed by (code, rank): the homes' rosters are the evidence of which rank
     # performs which code, and a code the facility has not defined for that rank

@@ -67,6 +67,14 @@ class AuthCtx:
         return self.profile.facility_id or ""
 
     @property
+    def org_id(self) -> str:
+        """The charity the caller belongs to. Falls back to the home's charity so
+        an older profile row still resolves while the column is being filled."""
+        if self.profile.org_id:
+            return self.profile.org_id
+        return (self.profile.organisation.id if self.profile.organisation else "") or ""
+
+    @property
     def profile_id(self) -> str:
         return self.profile.id
 

@@ -33,6 +33,7 @@ from ..shifttime import duty_segments, envelope, paid_minutes
 from ..solver.timeutils import to_minutes
 from . import compliance, validation
 from ._common import assignments_for_shifts
+from .organisations import org_id_for
 
 _AUDIT_RANKS = {"RN", "EN", "HW"}      # slots of these ranks involve medication duty
 _LEAVE_TYPES = {"AL"}                  # source cells meaning hard unavailability
@@ -812,7 +813,7 @@ def _writeback_night_recovery(client, facility_id: str, version_id: str,
                               inputs: SolverInputs, assignments) -> None:
     definitions = (
         client.table("shift_definitions").select("*")
-        .eq("facility_id", facility_id)
+        .eq("org_id", org_id_for(client, facility_id))
         .in_("shift_type", ["SLEEP", "DO"])
         .execute().data
     )
@@ -890,7 +891,7 @@ def _writeback_part_time_cl(client, facility_id: str, version_id: str,
 
     definitions = (
         client.table("shift_definitions").select("*")
-        .eq("facility_id", facility_id)
+        .eq("org_id", org_id_for(client, facility_id))
         .eq("shift_type", "CL")
         .limit(1)
         .execute().data

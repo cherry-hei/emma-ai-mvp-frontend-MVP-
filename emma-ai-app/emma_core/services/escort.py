@@ -25,16 +25,17 @@ the edit, would trade real roster data for tidy reference data.
 from __future__ import annotations
 
 from ..importers import naac
+from .organisations import org_id_for
 
 
 def list_locations(client, facility_id: str, *, include_inactive: bool = False) -> list[dict]:
     """Facility codes plus the shared template rows (facility_id null)."""
     # SQL: select * from escort_locations
-    #      where (facility_id = :facility_id or facility_id is null)
+    #      where (org_id = :org_id or facility_id is null)
     #        [and active]
     #      order by code
     query = (client.table("escort_locations").select("*")
-             .or_(f"facility_id.eq.{facility_id},facility_id.is.null"))
+             .or_(f"org_id.eq.{org_id_for(client, facility_id)},facility_id.is.null"))
     if not include_inactive:
         query = query.eq("active", True)
     return query.order("code").execute().data
@@ -54,12 +55,16 @@ def upsert_location(client, facility_id: str, *, code: str, name_en: str | None 
         "name_zh": name_zh, "aliases": aliases or [], "active": True,
     }
     # SQL: select id from escort_locations
-    #      where facility_id = :facility_id and code = :code
+    #      where org_id = :org_id and code = :code
     existing = (client.table("escort_locations").select("id")
-                .eq("facility_id", facility_id).eq("code", code).execute().data)
+                .eq("org_id", org_id_for(client, facility_id))
+                .eq("code", code).execute().data)
     if existing:
+        # An existing code belongs to the charity and may have been created by a
+        # sister home, so update everything about it except which home made it.
         # SQL: update escort_locations set ... where id = :id returning *
-        return (client.table("escort_locations").update(row)
+        return (client.table("escort_locations")
+                .update({k: v for k, v in row.items() if k != "facility_id"})
                 .eq("id", existing[0]["id"]).execute().data[0])
     # SQL: insert into escort_locations (...) values (...) returning *
     return client.table("escort_locations").insert(row).execute().data[0]

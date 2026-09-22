@@ -104,6 +104,15 @@ class _Query:
                 r.update(self._payload)
             return _Result(hit)
         # select
+        # The real table fills org_id from the home on write, so a fixture that
+        # names only the home still reads back inside its charity. Without this
+        # every dictionary lookup comes back empty and the failure surfaces three
+        # layers away as a missing shift definition.
+        if self._t in ("shift_definitions", "task_definitions", "escort_locations"):
+            homes = {h["id"]: h.get("org_id") for h in self._store.get("facilities", [])}
+            for row in rows:
+                if row.get("org_id") is None and row.get("facility_id") in homes:
+                    row["org_id"] = homes[row["facility_id"]]
         out = [r for r in rows if self._match(r)]
         if self._order:
             out.sort(key=lambda r: r.get(self._order) or r.get("_seq", 0), reverse=self._desc)
@@ -128,7 +137,7 @@ T = {"A": ("07:00:00", "15:00:00", False), "P": ("13:30:00", "21:30:00", False),
 def build_store(*, understaffed=False):
     fake = FakeSupabase()
     d = fake.data
-    d["facilities"] = [{"id": "f1", "code": "A", "name": "Home A"}]
+    d["facilities"] = [{"id": "f1", "code": "A", "name": "Home A", "org_id": "org-1"}]
     d["roster_periods"] = [{"id": "p1", "facility_id": "f1", "period_start": "2026-07-01",
                             "period_end": "2026-07-02", "cycle_type": "28day"}]
     d["roster_versions"] = [{"id": "mv1", "facility_id": "f1", "period_id": "p1",

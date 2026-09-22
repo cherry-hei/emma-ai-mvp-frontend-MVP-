@@ -18,9 +18,11 @@ from typing import Iterable
 from uuid import UUID
 
 from ..constants import can_cover_rank
+from ..db import get_service_client
 from ..errors import TaskEligibilityError
 from ..shifttime import day_spans, duty_spans, to_minutes
 from ._common import assignments_for_shifts
+from .organisations import org_id_for
 
 PHASE4_RULE_CODES = ("task_eligibility", "event_staffing", "floor_coverage")
 TASK_SOURCE_TYPES = {"manual", "event", "solver", "legacy_cell"}
@@ -603,14 +605,14 @@ def _shift_defs_by_type(client, facility_id: str) -> dict[str, dict]:
     only matches an ordinary code by way of the code's own duty window.
     """
     rows = (client.table("shift_definitions").select("*")
-            .eq("facility_id", facility_id).execute().data)
+            .eq("org_id", org_id_for(client, facility_id)).execute().data)
     return {row["shift_type"]: row for row in rows}
 
 
 def _task_definition(client, facility_id: str, task_id: str) -> dict:
     rows = (client.table("task_definitions").select("*")
             .eq("id", task_id).eq("active", True).execute().data)
-    if not rows or rows[0].get("facility_id") not in (None, facility_id):
+    if not rows or rows[0].get("org_id") not in (None, org_id_for(client, facility_id)):
         raise ValueError("task definition not found")
     return rows[0]
 
@@ -641,6 +643,13 @@ def _persist_violations(
     roster_version_id: str | None,
     violations: Iterable[dict],
 ) -> None:
+    """Record why a roster edit was refused, on whatever client is passed.
+
+    The caller chooses: a refusal raised inside a user's request passes the
+    service client, because `authenticated` cannot write this table and the
+    refusal would come back as a permission error instead of the reasons the
+    editor needs. Batch validation passes its own client and keeps it.
+    """
     rows = []
     for violation in violations:
         rows.append({
@@ -686,7 +695,7 @@ def _raise_task_issues(
         },
     }
     _persist_violations(
-        client, facility_id, shift.get("roster_version_id"), [violation])
+        get_service_client(), facility_id, shift.get("roster_version_id"), [violation])
     reasons = ", ".join(issue["reason"] for issue in issues)
     raise TaskEligibilityError(
         f"{label} cannot be assigned to this staff member: {reasons}",
@@ -782,7 +791,7 @@ def validate_task_labels(
         raise ValueError("staff member not found")
     staff = staff_rows[0]
     definitions = (client.table("task_definitions").select("*")
-                   .or_(f"facility_id.eq.{facility_id},facility_id.is.null")
+                   .or_(f"org_id.eq.{org_id_for(client, facility_id)},facility_id.is.null")
                    .eq("active", True).execute().data)
     qualifications = _active_qualification_map(
         client, facility_id, [staff_id], on_date=on_date).get(staff_id, set())
@@ -823,7 +832,8 @@ def validate_task_labels(
                             "issues": issues},
             })
     if violations:
-        _persist_violations(client, facility_id, roster_version_id, violations)
+        _persist_violations(get_service_client(), facility_id, roster_version_id,
+                            violations)
         # One cell edit can carry several bad labels. Report every rejected
         # label with its own reasons so the editor can mark them individually
         # instead of the manager fixing one, re-saving, and finding the next.
@@ -900,7 +910,7 @@ def _escort_fields(client, facility_id: str, task: dict,
     #        and upper(code) = upper(:location) and active
     matches = [
         row for row in (client.table("escort_locations").select("id,code")
-                        .or_(f"facility_id.eq.{facility_id},facility_id.is.null")
+                        .or_(f"org_id.eq.{org_id_for(client, facility_id)},facility_id.is.null")
                         .eq("active", True).execute().data)
         if str(row["code"]).upper() == location.upper()
     ]
@@ -1654,7 +1664,7 @@ def validate_roster_rules(
              .eq("facility_id", facility_id).execute().data)
 
     task_defs = (client.table("task_definitions").select("*")
-                 .or_(f"facility_id.eq.{facility_id},facility_id.is.null")
+                 .or_(f"org_id.eq.{org_id_for(client, facility_id)},facility_id.is.null")
                  .eq("active", True).execute().data)
     # Older roster cells store labels in shift_assignments.tasks. Materialize
     # them only for a persisted validation. The pure path reconciles an

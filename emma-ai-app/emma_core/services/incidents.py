@@ -20,6 +20,7 @@ from ._common import (
     resolve_period, shift_minutes, staff_brief, staff_by_id, to_min,
 )
 from .compliance import compute_ratios
+from .organisations import org_id_for
 
 CERT_WARN_DAYS = 90
 AUDIT_RANKS = {"RN", "EN", "HW"}       # slots whose duties include medication
@@ -192,7 +193,7 @@ def _recovery_targets(
     definitions = (
         client.table("shift_definitions")
         .select("*")
-        .eq("facility_id", facility_id)
+        .eq("org_id", org_id_for(client, facility_id))
         .execute()
         .data
     )

@@ -18,6 +18,7 @@ class FakeQuery:
         self.table = table
         self.action = "select"
         self.filters: list[tuple[str, str, object]] = []
+        self.row_limit: int | None = None
 
     def select(self, _columns: str = "*"):
         return self
@@ -53,6 +54,10 @@ class FakeQuery:
     def or_(self, _expression: str):
         return self
 
+    def limit(self, count: int):
+        self.row_limit = count
+        return self
+
     def order(self, _column: str, **_kwargs):
         return self
 
@@ -73,11 +78,9 @@ class FakeQuery:
         if self.action != "select":
             self.client.mutations.append((self.action, self.table))
             return SimpleNamespace(data=[])
-        return SimpleNamespace(data=[
-            deepcopy(row)
-            for row in self.client.rows.get(self.table, ())
-            if self._matches(row)
-        ])
+        rows = [deepcopy(row) for row in self.client.rows.get(self.table, ())
+                if self._matches(row)]
+        return SimpleNamespace(data=rows[:self.row_limit] if self.row_limit else rows)
 
 
 class FakeClient:
@@ -104,6 +107,10 @@ def _snapshot(**updates) -> RosterSnapshot:
 
 def test_read_only_phase4_validation_never_materializes_legacy_tasks():
     client = FakeClient({
+        "facilities": [{
+            "id": "facility-1",
+            "org_id": "org-1",
+        }],
         "roster_versions": [{
             "id": "roster-1",
             "facility_id": "facility-1",
@@ -168,6 +175,10 @@ def test_read_only_phase4_validation_never_materializes_legacy_tasks():
 
 def test_persisted_phase4_validation_keeps_materialization_and_audit_writes():
     client = FakeClient({
+        "facilities": [{
+            "id": "facility-1",
+            "org_id": "org-1",
+        }],
         "roster_versions": [{
             "id": "roster-1",
             "facility_id": "facility-1",

@@ -21,6 +21,7 @@ from __future__ import annotations
 
 from ..importers import naac
 from . import escort, facility_config
+from .organisations import org_id_for
 
 FACILITY_CODE = "NAAC"
 
@@ -44,11 +45,11 @@ def seed_shift_definitions(client, facility_id: str, *,
     break is on the floor longer than it is paid for, and payroll follows the
     column. That is why `paid_minutes_override` is set on every row.
     """
-    # SQL: select shift_type from shift_definitions where facility_id = :facility_id
+    # SQL: select shift_type from shift_definitions where org_id = :org_id
     existing = {
         row["shift_type"] for row in
         client.table("shift_definitions").select("shift_type")
-        .eq("facility_id", facility_id).execute().data
+        .eq("org_id", org_id_for(client, facility_id)).execute().data
     }
     written = []
     for spec in naac.load_shift_codes().values():
@@ -77,17 +78,23 @@ def seed_task_definitions(client, facility_id: str, *,
     whether an escort destination is required, instead of matching against a
     hardcoded list of codes that a home cannot extend.
     """
-    # SQL: select task_code from task_definitions where facility_id = :facility_id
+    org_id = org_id_for(client, facility_id)
+    # Matched by hand rather than by `on conflict`. The only unique index here is
+    # over (facility_id, task_code, required_rank) and it is partial, which
+    # Postgres will not accept as a conflict target; these codes also carry no
+    # rank, and a null rank makes every row unique again, so a blind insert
+    # quietly builds a second copy of the whole dictionary on the second run.
+    #
+    # SQL: select id, task_code from task_definitions where org_id = :org_id
     existing = {
-        row["task_code"] for row in
-        client.table("task_definitions").select("task_code")
-        .eq("facility_id", facility_id).execute().data
+        row["task_code"]: row["id"] for row in
+        client.table("task_definitions").select("id,task_code")
+        .eq("org_id", org_id).execute().data
     }
-    rows = []
+    written: list[dict] = []
+    new_rows: list[dict] = []
     for spec in naac.load_task_codes().values():
-        if spec.code in existing and not overwrite:
-            continue
-        rows.append({
+        row = {
             "facility_id": facility_id,
             "task_code": spec.code,
             "task_name": spec.name_en or spec.code,
@@ -97,13 +104,21 @@ def seed_task_definitions(client, facility_id: str, *,
             # The medication markers are the ones a home audits people for.
             "requires_audit": spec.category == "medication",
             "active": True,
-        })
-    if not rows:
-        return []
-    # SQL: insert into task_definitions (...) values (...), ...
-    #      on conflict (facility_id, task_code) do update set ...
-    return (client.table("task_definitions")
-            .upsert(rows, on_conflict="facility_id,task_code").execute().data)
+        }
+        if spec.code not in existing:
+            new_rows.append(row)
+        elif overwrite:
+            # The code belongs to the charity and a sister home may have created
+            # it, so a corrected sheet updates the entry without claiming it.
+            row.pop("facility_id")
+            # SQL: update task_definitions set ... where id = :id returning *
+            written.extend(client.table("task_definitions").update(row)
+                           .eq("id", existing[spec.code]).execute().data)
+    if new_rows:
+        # SQL: insert into task_definitions (...) values (...), ... returning *
+        written.extend(client.table("task_definitions")
+                       .insert(new_rows).execute().data)
+    return written
 
 
 def provision(client, *, facility_code: str = FACILITY_CODE,

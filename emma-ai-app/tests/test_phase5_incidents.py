@@ -116,6 +116,7 @@ class FakeClient:
     def __init__(self):
         self.next_id = 100
         self.rows = {
+            "facilities": [{"id": "facility-1", "org_id": "org-1"}],
             "sl_incidents": [{
                 "id": "incident-1",
                 "facility_id": "facility-1",
@@ -248,6 +249,11 @@ class FakeClient:
                 "facility_id": "facility-1",
             }],
         }
+        # The dictionaries hang off the charity now, so a row seeded with only a
+        # home would be invisible to the services that read them.
+        for table in ("shift_definitions", "task_definitions", "escort_locations"):
+                for row in self.rows.get(table, ()):
+                        row.setdefault("org_id", "org-1")
 
     def table(self, name):
         return FakeQuery(self, name)

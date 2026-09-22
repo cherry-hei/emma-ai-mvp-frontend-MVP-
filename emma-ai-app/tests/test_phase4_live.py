@@ -39,6 +39,32 @@ def _auth(token: str) -> dict:
     return {"Authorization": f"Bearer {token}"}
 
 
+def _manual_rosters(headers: dict) -> list[tuple[dict, dict]]:
+    """Every period that holds a manual roster, in the order the API lists them.
+
+    Taking period zero and assuming a manual roster is in it was the earlier
+    habit, and it breaks the moment someone opens next month in the demo without
+    drafting into it. The failure then reads as whatever the test is named after,
+    which for the cross-facility check meant a red line that looked like an
+    isolation leak and was an empty period.
+    """
+    out = []
+    for period in client.get("/roster-periods", headers=headers).json():
+        versions = client.get("/roster-versions", headers=headers,
+                              params={"period_id": period["id"]}).json()
+        manual = next((v for v in versions if v["version_type"] == "manual"), None)
+        if manual:
+            out.append((period, manual))
+    return out
+
+
+def _period_with_manual(headers: dict) -> tuple[dict, dict]:
+    found = _manual_rosters(headers)
+    if not found:
+        pytest.skip("no period in this fixture holds a manual roster")
+    return found[0]
+
+
 @pytest.fixture(scope="module")
 def token() -> str:
     return _token("super_a@emma.local")
@@ -53,23 +79,26 @@ def token_b() -> str:
 def home_a(token) -> dict:
     """Home A's manual roster, indexed by (rank, shift code) for cell lookup."""
     h = _auth(token)
-    period = client.get("/roster-periods", headers=h).json()[0]
-    versions = client.get("/roster-versions", params={"period_id": period["id"]},
-                          headers=h).json()
-    manual = next(v for v in versions if v["version_type"] == "manual")
-    grid = client.get(f"/rosters/{period['id']}",
-                      params={"version_id": manual["id"]}, headers=h).json()
-    cells: dict[tuple[str, str], dict] = {}
-    for row in grid["rows"]:
-        for cell in row["cells"]:
-            if cell.get("assignment_id"):
-                cells.setdefault(
-                    (row["staff"]["rank"], cell["shift_type"]),
-                    {"assignment_id": cell["assignment_id"], "date": cell["date"],
-                     "staff_id": row["staff"]["id"], "tasks": cell.get("tasks", [])})
-    tasks = {t["task_code"]: t for t in client.get("/task-definitions", headers=h).json()}
-    return {"period": period, "version": manual, "cells": cells,
-            "tasks": tasks, "grid": grid}
+    # A manual roster with nothing written in it indexes to nothing, and every
+    # test downstream then fails on an empty dictionary rather than on its own
+    # subject. Walk on to the next one until a roster has cells in it.
+    for period, manual in _manual_rosters(h):
+        grid = client.get(f"/rosters/{period['id']}",
+                          params={"version_id": manual["id"]}, headers=h).json()
+        cells: dict[tuple[str, str], dict] = {}
+        for row in grid["rows"]:
+            for cell in row["cells"]:
+                if cell.get("assignment_id"):
+                    cells.setdefault(
+                        (row["staff"]["rank"], cell["shift_type"]),
+                        {"assignment_id": cell["assignment_id"], "date": cell["date"],
+                         "staff_id": row["staff"]["id"], "tasks": cell.get("tasks", [])})
+        if cells:
+            tasks = {t["task_code"]: t
+                     for t in client.get("/task-definitions", headers=h).json()}
+            return {"period": period, "version": manual, "cells": cells,
+                    "tasks": tasks, "grid": grid}
+    pytest.skip("no manual roster in this fixture has any assignment in it")
 
 
 def _reasons(response) -> set[str]:
@@ -372,10 +401,7 @@ def test_floor_rule_crud_and_condition_validation(token_b):
 
 def test_floor_shortfall_is_reported_with_minute_level_evidence(token_b):
     h = _auth(token_b)
-    period = client.get("/roster-periods", headers=h).json()[0]
-    manual = next(v for v in client.get("/roster-versions", headers=h,
-                                        params={"period_id": period["id"]}).json()
-                  if v["version_type"] == "manual")
+    period, manual = _period_with_manual(h)
     result = client.post("/validate-roster", headers=h,
                          json={"roster_version_id": manual["id"]}).json()
     floor = [v for v in result["violations"] if v["rule_code"] == "floor_coverage"]
@@ -471,10 +497,7 @@ def test_phase4_writes_cannot_cross_the_facility_boundary(token, token_b):
 
 def test_cross_facility_task_assignment_is_refused(token, token_b):
     h_b = _auth(token_b)
-    period = client.get("/roster-periods", headers=h_b).json()[0]
-    manual = next(v for v in client.get("/roster-versions", headers=h_b,
-                                        params={"period_id": period["id"]}).json()
-                  if v["version_type"] == "manual")
+    period, manual = _period_with_manual(h_b)
     grid = client.get(f"/rosters/{period['id']}", headers=h_b,
                       params={"version_id": manual["id"]}).json()
     b_assignment = next(c["assignment_id"] for row in grid["rows"]

@@ -28,12 +28,14 @@ def refresh_session(refresh_token: str):
 
 
 def get_profile(client, auth_user_id: str) -> Profile | None:
-    # SQL: select p.*, jsonb_build_object('code', f.code, 'name', f.name) as facility
+    # SQL: select p.*, jsonb_build_object('code', f.code, 'name', f.name) as facility,
+    #             jsonb_build_object('id', o.id, 'code', o.code, 'name', o.name) as organisation
     #      from users_profile p
     #      left join facilities f on f.id = p.facility_id
+    #      left join organisations o on o.id = p.org_id
     #      where p.auth_user_id = :auth_user_id
     #      limit 1
     rows = (client.table("users_profile")
-            .select("*, facility:facilities(code,name)")
+            .select("*, facility:facilities(code,name), organisation:organisations(id,code,name)")
             .eq("auth_user_id", auth_user_id).limit(1).execute().data)
     return Profile.model_validate(rows[0]) if rows else None

@@ -1,0 +1,153 @@
+{
+  "_note": "Synthetic trial tenant. The duty codes are NAAC's own, read from the extracted 代號及時數 sheet. Units, people and the duty pattern are a representative cycle and stay provisional until NAAC returns the confirmed sheet with its active codes, exceptions, ranks and unit structure. Every name here is invented and must stay invented.",
+  "organisation": {
+    "code": "NAAC",
+    "name": "NAAC"
+  },
+  "facility": {
+    "code": "NAAC",
+    "name": "大興宿舍",
+    "type": "RCHE",
+    "scheduling_cycle_days": 42,
+    "capacity": 60
+  },
+  "units": [
+    {
+      "code": "1F",
+      "name": "1/F",
+      "unit_type": "floor"
+    },
+    {
+      "code": "2F",
+      "name": "2/F",
+      "unit_type": "floor"
+    },
+    {
+      "code": "3F",
+      "name": "3/F",
+      "unit_type": "floor"
+    }
+  ],
+  "codes": {
+    "source": "naac"
+  },
+  "staff": [
+    {
+      "name": "示範護士一",
+      "name_en": "Demo RN One",
+      "rank": "RN",
+      "unit": "1F",
+      "gender": "F",
+      "contracted_hours": 44
+    },
+    {
+      "name": "示範護士二",
+      "name_en": "Demo RN Two",
+      "rank": "RN",
+      "unit": "2F",
+      "gender": "M",
+      "contracted_hours": 44
+    },
+    {
+      "name": "示範保健員一",
+      "name_en": "Demo HW One",
+      "rank": "HW",
+      "unit": "1F",
+      "gender": "F",
+      "contracted_hours": 44
+    },
+    {
+      "name": "示範保健員二",
+      "name_en": "Demo HW Two",
+      "rank": "HW",
+      "unit": "3F",
+      "gender": "F",
+      "contracted_hours": 44
+    },
+    {
+      "name": "示範護理員一",
+      "name_en": "Demo PCW One",
+      "rank": "PCW",
+      "unit": "2F",
+      "gender": "M",
+      "contracted_hours": 44
+    },
+    {
+      "name": "示範護理員二",
+      "name_en": "Demo PCW Two",
+      "rank": "PCW",
+      "unit": "3F",
+      "gender": "F",
+      "employment_type": "local_pt",
+      "contracted_hours": 24,
+      "pattern": [
+        "A9",
+        "O",
+        "P130",
+        "O",
+        "A9",
+        "O",
+        "O"
+      ]
+    }
+  ],
+  "accounts": [
+    {
+      "email": "super.naac@emma.local",
+      "role": "superintendent"
+    },
+    {
+      "email": "admin.naac@emma.local",
+      "role": "admin"
+    },
+    {
+      "email": "staff.rn.naac@emma.local",
+      "role": "staff",
+      "staff": "Demo RN One"
+    },
+    {
+      "email": "staff.hw.naac@emma.local",
+      "role": "staff",
+      "staff": "Demo HW One"
+    },
+    {
+      "email": "staff.pcw.naac@emma.local",
+      "role": "staff",
+      "staff": "Demo PCW One"
+    }
+  ],
+  "roster": {
+    "start": "2026-10-01",
+    "weeks": 6,
+    "cycle_type": "6week",
+    "pattern": {
+      "RN": [
+        "A7",
+        "A7",
+        "P1",
+        "P1",
+        "N10",
+        "NO",
+        "O"
+      ],
+      "HW": [
+        "B8",
+        "B8",
+        "P2",
+        "P2",
+        "O",
+        "O",
+        "A730"
+      ],
+      "PCW": [
+        "A9",
+        "A9",
+        "P130",
+        "P130",
+        "O",
+        "O",
+        "A730"
+      ]
+    }
+  }
+}

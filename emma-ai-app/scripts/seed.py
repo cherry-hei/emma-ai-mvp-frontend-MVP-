@@ -34,6 +34,19 @@ def ins(table: str, row: dict) -> str:
     return res.data[0]["id"]
 
 
+def org(code: str, name: str) -> str:
+    """The charity a home belongs to, created once and reused on every re-seed.
+
+    Not wiped with the homes: the organisation row outlives the fixture, and a
+    dangling charity with no homes is harmless where a missing one is not.
+    """
+    # SQL: select id from organisations where code = :code
+    rows = sb.table("organisations").select("id").eq("code", code).execute().data
+    if rows:
+        return rows[0]["id"]
+    return ins("organisations", {"code": code, "name": name})
+
+
 def ins_many(table: str, rows: list[dict]) -> list[str]:
     if not rows:
         return []
@@ -899,6 +912,7 @@ def main() -> None:
     fa = ins("facilities", {
         "code": "A", "name": "Care Home A (救世軍式)", "type": "RCHE",
         "scheduling_cycle_days": 28, "capacity": 85,
+        "org_id": org("ORG_A", "Care Home A (救世軍式)"),
     })
     east = ins("facility_units", {"facility_id": fa, "unit_type": "wing", "name": "East Wing", "code": "EW"})
     west = ins("facility_units", {"facility_id": fa, "unit_type": "wing", "name": "West Wing", "code": "WW"})
@@ -1003,6 +1017,7 @@ def main() -> None:
     fb = ins("facilities", {
         "code": "B", "name": "Care Home B (多層院舍)", "type": "RCHE",
         "scheduling_cycle_days": 31, "capacity": 60,
+        "org_id": org("ORG_B", "Care Home B (多層院舍)"),
     })
     f1 = ins("facility_units", {"facility_id": fb, "unit_type": "floor", "name": "1/F", "code": "1F"})
     f2 = ins("facility_units", {"facility_id": fb, "unit_type": "floor", "name": "2/F", "code": "2F"})

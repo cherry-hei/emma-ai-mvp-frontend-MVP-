@@ -8,6 +8,7 @@ from . import audit
 from ..constants import AssignmentStatus, OverrideAction, PublishEvent, RosterStatus
 from ..models import RosterCell, RosterGrid, RosterRow, ShiftDef, StaffLite
 from ._common import as_date, assignments_for_shifts
+from .organisations import org_id_for
 
 
 def _now() -> str:
@@ -130,10 +131,11 @@ def get_roster_grid(client, facility_id: str, period_id: str | None = None, *,
 
 def get_shift_defs(client, facility_id: str) -> list[ShiftDef]:
     # SQL: select * from shift_definitions
-    #      where facility_id = :facility_id
-    #      order by is_working desc      -- working codes first, OFF/leave last
+    #      where org_id = :org_id          -- the charity's dictionary, not the home's
+    #      order by is_working desc        -- working codes first, OFF/leave last
     rows = (client.table("shift_definitions").select("*")
-            .eq("facility_id", facility_id).order("is_working", desc=True)
+            .eq("org_id", org_id_for(client, facility_id))
+            .order("is_working", desc=True)
             .execute().data)
     return [ShiftDef.model_validate(r) for r in rows]
 
@@ -145,7 +147,7 @@ def list_task_definitions(client, facility_id: str) -> list[dict]:
     #        and active = true
     #      order by task_code
     return (client.table("task_definitions").select("*")
-            .or_(f"facility_id.eq.{facility_id},facility_id.is.null")
+            .or_(f"org_id.eq.{org_id_for(client, facility_id)},facility_id.is.null")
             .eq("active", True).order("task_code").execute().data)
 
 

@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from ..shifttime import paid_minutes
 from ._common import iso
+from .organisations import org_id_for
 
 # The keys the importer and the engine agree on. Free-form keys are allowed - a
 # home can carry its own - but these are the ones the platform reads.
@@ -251,13 +252,17 @@ def upsert_shift_definition(client, facility_id: str, *, shift_type: str,
                               else None),
     }
     # SQL: select id from shift_definitions
-    #      where facility_id = :facility_id and shift_type = :shift_type
+    #      where org_id = :org_id and shift_type = :shift_type
     existing = (client.table("shift_definitions").select("id")
-                .eq("facility_id", facility_id).eq("shift_type", shift_type)
-                .execute().data)
+                .eq("org_id", org_id_for(client, facility_id))
+                .eq("shift_type", shift_type).execute().data)
     if existing:
+        # The code belongs to the charity, so a sister home editing it edits the
+        # shared entry rather than forking one. Which home first created it is
+        # not something an edit should rewrite.
         # SQL: update shift_definitions set ... where id = :id returning *
-        return (client.table("shift_definitions").update(row)
+        return (client.table("shift_definitions")
+                .update({k: v for k, v in row.items() if k != "facility_id"})
                 .eq("id", existing[0]["id"]).execute().data[0])
     # SQL: insert into shift_definitions (...) values (...) returning *
     return client.table("shift_definitions").insert(row).execute().data[0]

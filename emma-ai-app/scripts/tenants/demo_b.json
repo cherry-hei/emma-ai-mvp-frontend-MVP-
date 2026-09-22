@@ -1,0 +1,12 @@
+{
+  "_note": "The existing demo home, so the smoke test can be exercised before NAAC exists. Not a NAAC tenant and must never be described as one in an acceptance test.",
+  "organisation": {"code": "ORG_B", "name": "Care Home B (多層院舍)"},
+  "facility": {"code": "B", "name": "Care Home B (多層院舍)"},
+  "accounts": [
+    {"email": "super_b@emma.local", "role": "superintendent"},
+    {"email": "manager.b@emma.local", "role": "superintendent"},
+    {"email": "staff.rn.b@emma.local", "role": "staff"},
+    {"email": "staff.hw.b@emma.local", "role": "staff"},
+    {"email": "staff.pcw.b@emma.local", "role": "staff"}
+  ]
+}

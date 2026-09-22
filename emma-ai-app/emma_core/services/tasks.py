@@ -11,6 +11,7 @@ from __future__ import annotations
 from datetime import date as Date
 
 from ._common import assignments_for_shifts, now_iso, to_min
+from .organisations import org_id_for
 
 # Task labels the facility considers time-critical; drives the staff app's HIGH tag.
 HIGH_PRIORITY_HINTS = ("med", "medication", "wound", "vital", "aom", "icp")
@@ -127,7 +128,7 @@ def task_definitions_by_label(client, facility_id: str) -> dict[str, dict]:
     #      where (facility_id = :facility_id or facility_id is null)   -- null = global default
     #        and active = true
     rows = (client.table("task_definitions").select("*")
-            .or_(f"facility_id.eq.{facility_id},facility_id.is.null")
+            .or_(f"org_id.eq.{org_id_for(client, facility_id)},facility_id.is.null")
             .eq("active", True).execute().data)
     out: dict[str, dict] = {}
     for r in rows:

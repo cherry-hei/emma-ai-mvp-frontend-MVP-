@@ -21,6 +21,7 @@ from ..constants import can_cover_rank
 from ..shifttime import envelope, paid_minutes, to_minutes
 from . import compliance, scheduling
 from ._common import assignments_for_shifts
+from .organisations import org_id_for
 
 
 EXTERNAL_AGENCY_TYPES = frozenset({"agency", "outsource", "casual"})
@@ -1953,7 +1954,7 @@ def load_snapshot(client, facility_id: str, roster_version_id: str) -> RosterSna
     task_definitions = (
         client.table("task_definitions")
         .select("*")
-        .or_(f"facility_id.eq.{facility_id},facility_id.is.null")
+        .or_(f"org_id.eq.{org_id_for(client, facility_id)},facility_id.is.null")
         .eq("active", True)
         .execute()
         .data

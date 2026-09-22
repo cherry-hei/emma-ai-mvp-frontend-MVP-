@@ -11,6 +11,7 @@ from __future__ import annotations
 from datetime import date as Date
 
 from ._common import as_date, iso, resolve_period, shift_minutes
+from .organisations import org_id_for
 
 CERT_WARN_DAYS = 90
 NIGHT_CODES = {"N", "AN", "7P"}
@@ -130,7 +131,7 @@ def staff_analysis(client, facility_id: str, staff_id: str) -> dict:
     #        and active = true
     # (the rank match runs in Python so `required_rank is null` rows stay in scope)
     expected = (client.table("task_definitions").select("task_code,task_name,required_rank,requires_audit")
-                .or_(f"facility_id.eq.{facility_id},facility_id.is.null")
+                .or_(f"org_id.eq.{org_id_for(client, facility_id)},facility_id.is.null")
                 .eq("active", True).execute().data)
     performed = {_norm(k) for k in task_counts}
     gaps = []
