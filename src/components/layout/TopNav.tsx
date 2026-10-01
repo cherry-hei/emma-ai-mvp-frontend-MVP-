@@ -45,7 +45,7 @@ export function TopNav({ onMenuToggle }: { onMenuToggle?: () => void } = {}) {
       {/* Mobile hamburger */}
       <button
         onClick={onMenuToggle}
-        className="md:hidden p-1.5 rounded-lg hover:bg-gray-100 transition-colors"
+        className="md:hidden p-1.5 rounded-lg hover:bg-accent transition-colors"
         aria-label="Toggle menu"
       >
         <svg className="w-5 h-5 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -93,7 +93,7 @@ export function TopNav({ onMenuToggle }: { onMenuToggle?: () => void } = {}) {
 
       {/* Search */}
       <div className="relative hidden sm:block">
-        <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400 text-xs">🔍</span>
+        <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground text-xs">🔍</span>
         <input
           type="text"
           value={search}
@@ -106,7 +106,7 @@ export function TopNav({ onMenuToggle }: { onMenuToggle?: () => void } = {}) {
 
       {/* Notifications */}
       <div className="relative cursor-pointer">
-        <span className="text-gray-400">🔔</span>
+        <span className="text-muted-foreground">🔔</span>
         <span
           className="absolute -top-1 -right-1 text-[8px] text-white rounded-full w-3.5 h-3.5 flex items-center justify-center"
           style={{ background: PINK }}
@@ -119,7 +119,7 @@ export function TopNav({ onMenuToggle }: { onMenuToggle?: () => void } = {}) {
           onClick={() => setMenuOpen(o => !o)}
           aria-expanded={menuOpen}
           aria-label={isZH ? '開啟帳戶及顯示設定' : 'Open account and display settings'}
-          className="flex items-center gap-2 pl-1 pr-2 py-1 rounded-full hover:bg-gray-50 transition-colors"
+          className="flex items-center gap-2 pl-1 pr-2 py-1 rounded-full hover:bg-accent transition-colors"
         >
           <div
             className="w-7 h-7 rounded-full flex items-center justify-center text-white text-xs font-semibold"
@@ -128,14 +128,14 @@ export function TopNav({ onMenuToggle }: { onMenuToggle?: () => void } = {}) {
             {avatarLetter}
           </div>
           <div className="hidden sm:block text-left leading-tight max-w-[150px]">
-            <div className="text-[11px] font-semibold text-gray-800 truncate">
+            <div className="text-[11px] font-semibold text-foreground truncate">
               {user?.facilityName ?? '-'}
             </div>
-            <div className="text-[9px] text-gray-400 truncate">
+            <div className="text-[9px] text-muted-foreground truncate">
               {roleLabel(user?.role, isZH) || user?.email}
             </div>
           </div>
-          <span className="text-gray-400 text-[10px]">▾</span>
+          <span className="text-muted-foreground text-[10px]">▾</span>
         </button>
 
         {menuOpen && (
@@ -147,24 +147,24 @@ export function TopNav({ onMenuToggle }: { onMenuToggle?: () => void } = {}) {
             />
             <div className="absolute right-0 top-full mt-1 w-72 rounded-xl border border-border bg-popover text-popover-foreground shadow-lg z-50 p-1">
               <div className="px-3 py-2">
-                <div className="text-[10px] text-gray-400">{isZH ? '已登入' : 'Signed in as'}</div>
-                <div className="text-xs font-semibold text-gray-800 truncate">{user?.email ?? '-'}</div>
-                <div className="text-[10px] text-gray-500 mt-0.5 truncate">
+                <div className="text-[10px] text-muted-foreground">{isZH ? '已登入' : 'Signed in as'}</div>
+                <div className="text-xs font-semibold text-foreground truncate">{user?.email ?? '-'}</div>
+                <div className="text-[10px] text-muted-foreground mt-0.5 truncate">
                   {user?.facilityName}{user?.role ? ` · ${roleLabel(user.role, isZH)}` : ''}
                 </div>
               </div>
-              <div className="h-px bg-gray-100 my-1" />
-              <div className="px-3 py-2 text-[10px] font-semibold text-gray-500">{isZH ? '語言' : 'Language'}</div>
+              <div className="h-px bg-border my-1" />
+              <div className="px-3 py-2 text-[10px] font-semibold text-muted-foreground">{isZH ? '語言' : 'Language'}</div>
               <div className="flex gap-1 px-2 pb-2" role="group" aria-label={isZH ? '語言' : 'Language'}>
                 {(['zh', 'en'] as const).map(code => (
                   <button key={code} type="button" aria-pressed={lang === code}
                     onClick={() => { setLang(code); setMenuOpen(false) }}
-                    className={`flex-1 rounded-lg px-2 py-1.5 text-xs font-medium ${lang === code ? 'bg-pink-100 text-pink-700' : 'text-gray-700 hover:bg-gray-50'}`}>
+                    className={`flex-1 rounded-lg px-2 py-1.5 text-xs font-medium ${lang === code ? 'bg-pink-100 text-pink-700' : 'text-foreground hover:bg-accent'}`}>
                     {code === 'zh' ? '繁體中文' : 'English'}
                   </button>
                 ))}
               </div>
-              <div className="h-px bg-gray-100 my-1" />
+              <div className="h-px bg-border my-1" />
               <div className="px-3 py-2 text-xs font-semibold">{isZH ? '文字大小' : 'Text size'}</div>
               <div className="flex gap-1 px-2 pb-2" role="group" aria-label={isZH ? '文字大小' : 'Text size'}>
                 {([['standard', 'A', '16px'], ['comfortable', 'AA', '18px'], ['large', 'AAA', '20px']] as [TextSize, string, string][]).map(([size, label, px]) => (
@@ -186,7 +186,7 @@ export function TopNav({ onMenuToggle }: { onMenuToggle?: () => void } = {}) {
               <div className="h-px bg-border my-1" />
               <button
                 onClick={() => { setMenuOpen(false); signOut() }}
-                className="w-full text-left px-3 py-2 rounded-lg text-xs font-medium text-gray-700 hover:bg-gray-50 transition-colors"
+                className="w-full text-left px-3 py-2 rounded-lg text-xs font-medium text-foreground hover:bg-accent transition-colors"
               >
                 {isZH ? '切換帳戶 / 登出' : 'Switch account / Sign out'}
               </button>
