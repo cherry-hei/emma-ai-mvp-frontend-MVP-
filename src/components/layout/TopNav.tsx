@@ -3,6 +3,7 @@ import { useState } from 'react'
 import { usePathname, useRouter } from 'next/navigation'
 import { useLang } from '@/components/layout/LanguageContext'
 import { useAuth, roleLabel } from '@/components/layout/AuthContext'
+import { useDisplayPreferences, type TextSize } from '@/components/layout/DisplayPreferencesContext'
 import { ROUTES, ROUTE_FEATURE, activeItem, canOpenRoute } from '@/components/layout/navRoutes'
 
 const PINK = '#f28f9e'
@@ -23,6 +24,7 @@ export function TopNav({ onMenuToggle }: { onMenuToggle?: () => void } = {}) {
   const router = useRouter()
   const { lang, setLang, t }  = useLang()
   const { user, signOut } = useAuth()
+  const { textSize, setTextSize, theme, setTheme } = useDisplayPreferences()
   const isZH = lang === 'zh'
 
   // Derived from the URL, not click state: arriving from the sidebar, a deep link
@@ -38,8 +40,7 @@ export function TopNav({ onMenuToggle }: { onMenuToggle?: () => void } = {}) {
 
   return (
     <header
-      className="h-12 flex items-center px-3 md:px-4 gap-2 md:gap-4 border-b flex-shrink-0"
-      style={{ background: '#ffffff', borderColor: '#f3f4f6' }}
+      className="h-12 flex items-center px-3 md:px-4 gap-2 md:gap-4 border-b border-border bg-card flex-shrink-0"
     >
       {/* Mobile hamburger */}
       <button
@@ -144,7 +145,7 @@ export function TopNav({ onMenuToggle }: { onMenuToggle?: () => void } = {}) {
               aria-hidden
               onClick={() => setMenuOpen(false)}
             />
-            <div className="absolute right-0 top-full mt-1 w-60 rounded-xl border border-gray-200 bg-white shadow-lg z-50 p-1">
+            <div className="absolute right-0 top-full mt-1 w-72 rounded-xl border border-border bg-popover text-popover-foreground shadow-lg z-50 p-1">
               <div className="px-3 py-2">
                 <div className="text-[10px] text-gray-400">{isZH ? '已登入' : 'Signed in as'}</div>
                 <div className="text-xs font-semibold text-gray-800 truncate">{user?.email ?? '-'}</div>
@@ -164,6 +165,25 @@ export function TopNav({ onMenuToggle }: { onMenuToggle?: () => void } = {}) {
                 ))}
               </div>
               <div className="h-px bg-gray-100 my-1" />
+              <div className="px-3 py-2 text-xs font-semibold">{isZH ? '文字大小' : 'Text size'}</div>
+              <div className="flex gap-1 px-2 pb-2" role="group" aria-label={isZH ? '文字大小' : 'Text size'}>
+                {([['standard', 'A', '16px'], ['comfortable', 'AA', '18px'], ['large', 'AAA', '20px']] as [TextSize, string, string][]).map(([size, label, px]) => (
+                  <button key={size} type="button" onClick={() => setTextSize(size)} aria-pressed={textSize === size}
+                    className={`min-h-10 flex-1 rounded-lg border text-xs font-bold ${textSize === size ? 'border-pink-500 bg-pink-100 text-pink-800' : 'border-border bg-background text-foreground'}`}
+                    title={`${label} · ${px}`}>
+                    {label}<span className="block font-normal text-[10px]">{px}</span>
+                  </button>
+                ))}
+              </div>
+              <p className="px-3 pb-1 text-[10px] text-muted-foreground">{isZH ? '只在此裝置保存；仍可用瀏覽器放大。' : 'Saved on this device; browser zoom remains available.'}</p>
+              <div className="h-px bg-border my-1" />
+              <button type="button" onClick={() => setTheme(theme === 'light' ? 'dark' : 'light')}
+                className="w-full text-left rounded-lg px-3 py-2 text-xs hover:bg-accent"
+                aria-pressed={theme === 'dark'}>
+                {theme === 'dark' ? '☾ ' : '☼ '}{isZH ? '深色模式（預覽）' : 'Dark mode (preview)'} · {theme === 'dark' ? 'On' : 'Off'}
+              </button>
+              <p className="px-3 pb-1 text-[10px] text-muted-foreground">{isZH ? '舊頁面仍需逐頁對比測試。' : 'Legacy pages still need contrast review.'}</p>
+              <div className="h-px bg-border my-1" />
               <button
                 onClick={() => { setMenuOpen(false); signOut() }}
                 className="w-full text-left px-3 py-2 rounded-lg text-xs font-medium text-gray-700 hover:bg-gray-50 transition-colors"

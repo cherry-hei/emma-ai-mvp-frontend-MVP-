@@ -25,9 +25,13 @@ from emma_core.models import (
     LeaveDecisionRequest, LeaveRequestCreate, RecommendationRequest, RevokeRequest,
     WithdrawRequest,
 )
-from emma_core.permissions import Feature, can_decide, can_read, is_self_only
+from emma_core.permissions import (
+    Feature, can_decide, can_read, can_recommend, is_self_only,
+)
+from emma_core.services import duty_request_window as window_svc
 from emma_core.services import leave as svc
 from emma_core.services import recommendations as rec_svc
+from emma_core.services import roster as roster_svc
 from emma_core.services.me import resolve_staff_id
 
 router = APIRouter(tags=["leave"])
@@ -75,6 +79,13 @@ def create_request(body: LeaveRequestCreate, ctx: AuthCtx = Depends(get_ctx)):
             )
         staff_id = own_staff_id
     else:
+        # A non-self account must actually hold the leave-review grant before it
+        # can submit on another person's behalf.  Without this, any role outside
+        # the FRONTLINE self-only branch could reach the service-role workflow
+        # write simply by naming a staff_id.
+        if not can_recommend(ctx.profile.role, Feature.APPROVE_LEAVE):
+            raise api_error(403, "forbidden",
+                            "Your role may not create leave requests for staff.")
         staff_id = body.staff_id or resolve_staff_id(ctx.profile)
     if not (
         ctx.client.table("staff").select("id")
@@ -83,6 +94,25 @@ def create_request(body: LeaveRequestCreate, ctx: AuthCtx = Depends(get_ctx)):
         .execute().data
     ):
         raise api_error(404, "not_found", "staff member not found")
+    # Read with the caller's RLS-scoped client before leave uses its workflow
+    # service client. This applies equally to self-service and manager-assisted
+    # requests; the request body never selects a facility.
+    try:
+        window_svc.assert_request_allowed(
+            ctx.client, ctx.facility_id, leave_type=body.leave_type,
+            date_start=body.date_start, date_end=body.date_end,
+        )
+    except window_svc.DutyRequestWindowError as exc:
+        raise api_error(422, "duty_request_window_closed", str(exc)) from exc
+    if body.leave_type == "duty_request":
+        # A staff-app dropdown is not an authorization or dictionary boundary.
+        # Validate the submitted code again against the authenticated facility's
+        # org-scoped dictionary before the privileged workflow write.
+        allowed = {item.shift_type for item in roster_svc.get_shift_defs(
+            ctx.client, ctx.facility_id
+        )}
+        if body.requested_shift_type not in allowed:
+            raise api_error(422, "invalid_shift_code", "requested shift code is not in this organisation")
     return svc.create_request(
         get_service_client(), ctx.facility_id,
         staff_id=staff_id, leave_type=body.leave_type,

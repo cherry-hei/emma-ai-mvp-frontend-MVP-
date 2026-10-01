@@ -6,15 +6,15 @@ import { Providers } from './providers'
 const inter = Inter({ subsets: ['latin'] })
 
 export const metadata: Metadata = {
-  title: 'Emma AI – Medical Intelligence',
-  description: 'AI-powered roster management for RCHE',
+  title: 'Emma AI – Care-home scheduling',
+  description: 'Care-home scheduling and compliance workspace',
   manifest: '/manifest.json',
   appleWebApp: { capable: true, title: 'Emma AI', statusBarStyle: 'default' },
-  icons: { icon: '/icons/emma-192.png', apple: '/icons/emma-192.png' },
+  icons: { icon: '/emma-mark.png', apple: '/emma-mark.png' },
 }
 
 export const viewport: Viewport = {
-  themeColor: '#e87a8e',
+  themeColor: '#E8187A',
 }
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

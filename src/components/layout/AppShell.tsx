@@ -4,6 +4,7 @@ import { usePathname, useRouter } from 'next/navigation'
 import { Sidebar } from './Sidebar'
 import { TopNav } from './TopNav'
 import { useAuth } from './AuthContext'
+import { DisplayPreferencesProvider } from './DisplayPreferencesContext'
 import {
   CHROMELESS, canOpenRoute, fallbackRoute, isGuardedRoute, routeFeature,
 } from './navRoutes'
@@ -72,9 +73,11 @@ export function AppShell({ children }: { children: ReactNode }) {
   if (bare) return <>{children}</>
 
   return (
-    <ResponsiveShell>
-      {children}
-    </ResponsiveShell>
+    <DisplayPreferencesProvider>
+      <ResponsiveShell>
+        {children}
+      </ResponsiveShell>
+    </DisplayPreferencesProvider>
   )
 }
 
@@ -86,7 +89,7 @@ function ResponsiveShell({ children }: { children: ReactNode }) {
   useEffect(() => { setSidebarOpen(false) }, [pathname])
 
   return (
-    <div className="flex h-screen overflow-hidden bg-gray-50">
+    <div className="flex h-screen overflow-hidden bg-background text-foreground">
       {/* Desktop sidebar - hidden on mobile */}
       <div className="hidden md:block">
         <Sidebar />

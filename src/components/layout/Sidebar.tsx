@@ -7,7 +7,7 @@ import { ROUTES, ROUTE_FEATURE, canOpenRoute, isActiveRoute } from '@/components
 const PINK       = '#E8187A'
 const PINK_HOVER = '#c9156a'
 
-const NAV = [
+const NAV: { key: string; icon: string; path: string; badge?: string }[] = [
   { key: 'nav_dashboard',   icon: '🏠',  path: ROUTES.dashboard  },
   { key: 'nav_roster',      icon: '📅',  path: ROUTES.roster     },
   { key: 'nav_compliance',  icon: '✅',  path: ROUTES.compliance },
@@ -65,17 +65,13 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void } = {}) {
 
   return (
     <aside
-      className="w-48 flex flex-col flex-shrink-0 border-r"
-      style={{ background: '#ffffff', borderColor: '#e5e7eb' }}
+      className="w-48 flex flex-col flex-shrink-0 border-r border-border bg-card"
     >
       {/* Logo */}
-      <div className="p-4 border-b" style={{ borderColor: '#f3f4f6' }}>
-        <div className="text-xl font-bold" style={{ color: PINK, letterSpacing: '-0.5px' }}>
-          Emma AI
-        </div>
-        <div className="text-[8px] tracking-[2.5px] mt-0.5 text-gray-400">
-          MEDICAL INTELLIGENCE
-        </div>
+      <div className="p-4 border-b border-border flex items-center gap-2">
+        <img src="/emma-mark.png" alt="" width={34} height={34} className="shrink-0 dark:hidden" />
+        <img src="/emma-mark-dark.png" alt="" width={34} height={34} className="hidden shrink-0 dark:block" />
+        <div className="text-lg font-bold tracking-tight text-foreground">Emma <span style={{ color: PINK }}>AI</span></div>
       </div>
 
       {/* Site selector - reflects the signed-in account's facility + role */}

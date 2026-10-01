@@ -232,7 +232,9 @@ def test_leave_create_authorizes_target_then_uses_service_client(monkeypatch):
         date_end=date(2026, 7, 1),
     )
 
-    result = leave_router.create_request(body, _ctx(user_client))
+    result = leave_router.create_request(
+        body, _ctx(user_client, role="NURSE_MGR")
+    )
 
     assert result["status"] == "pending"
     assert calls == [(service_client, "cw1")]

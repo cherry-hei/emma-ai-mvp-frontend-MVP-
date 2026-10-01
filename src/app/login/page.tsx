@@ -67,8 +67,9 @@ export default function LoginPage() {
       <div className="w-full max-w-sm">
         {/* Brand */}
         <div className="text-center mb-6">
-          <div className="text-3xl font-bold" style={{ color: PINK, letterSpacing: '-0.5px' }}>Emma AI</div>
-          <div className="text-[9px] tracking-[3px] mt-1 text-gray-400">MEDICAL INTELLIGENCE</div>
+          <img src="/emma-mark.png" alt="" width={76} height={76} className="mx-auto mb-2" />
+          <div className="text-3xl font-bold tracking-tight" style={{ color: '#2A1B38' }}>Emma <span style={{ color: PINK }}>AI</span></div>
+          <div className="mt-1 text-xs text-gray-600">{isZH ? '院舍排更與合規工作平台' : 'Care-home scheduling and compliance workspace'}</div>
         </div>
 
         <div className="bg-white rounded-2xl shadow-xl border border-gray-100 p-7">

@@ -1,11 +1,12 @@
 'use client'
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { api, downloadReportCsv } from '@/lib/api'
+import { api, apiFetch, downloadReportCsv } from '@/lib/api'
 import type { LeaveCategory, LeaveGroup, LeaveRequest, LeaveStats, Unit } from '@/lib/apiTypes'
 import { useLang } from '@/components/layout/LanguageContext'
 import { useAuth } from '@/components/layout/AuthContext'
 import { canDecide, canRecommend, grantFor } from '@/lib/permissions'
+import { DutyWindowPanel } from '@/components/approval/DutyWindowPanel'
 
 const PINK = '#f28f9e'
 const PINK_HOVER = '#e87a8e'
@@ -99,6 +100,7 @@ function ApprovalCard({ request, role, isZH, onAction, busy }: {
   busy: boolean
 }) {
   const [showRejectModal, setShowRejectModal] = useState(false)
+  const [showRecommendModal, setShowRecommendModal] = useState(false)
   const [showWithdrawModal, setShowWithdrawModal] = useState(false)
 
   const recs = request.recommendations ?? []
@@ -224,10 +226,12 @@ function ApprovalCard({ request, role, isZH, onAction, busy }: {
           <div className="flex flex-col gap-2 rounded-lg border border-sky-100 bg-sky-50 px-3 py-2 sm:flex-row sm:items-center sm:justify-between">
             <div>
               <div className="text-[10px] font-semibold text-sky-800">
-                {isZH ? 'A.5 更表同步核對' : 'A.5 roster sync verification'}
+                {isZH ? '批准後更表／排班鎖核對' : 'Approval / roster-lock verification'}
               </div>
               <div className="mt-0.5 text-[9px] leading-relaxed text-sky-700">
-                {isZH ? '批准狀態已保存；請在更表確認AL／SL code已寫入正確日期。未見更表更新，不代表前端可以代寫。' : 'Approval is saved. Confirm the AL／SL code appears on the correct roster date. The frontend never writes a fake roster value.'}
+                {['DO', 'duty_request'].includes(request.leave_type)
+                  ? (isZH ? '批准後會記錄未來排更限制／鎖，唔代表已立即改動當前更表；請核對後端lock和下一次排更結果。' : 'Approval creates a future roster constraint/lock, not an immediate current-roster edit. Verify the saved lock and the next roster run.')
+                  : (isZH ? '批准已保存；請核對假期限制。若需要即時更表顯示，仍須確認後端更表及審核紀錄。' : 'Approval is saved; verify the leave constraint. Immediate roster visibility still needs backend and audit verification.')}
               </div>
             </div>
             <a href="/roster" className="shrink-0 rounded-lg border border-sky-200 bg-white px-3 py-1.5 text-[10px] font-semibold text-sky-700 hover:bg-sky-50">
@@ -276,7 +280,7 @@ function ApprovalCard({ request, role, isZH, onAction, busy }: {
             {/* Recommender sees Recommend Approve / Recommend Reject */}
             {isRecommender && isPending && (
               <>
-                <button disabled={busy} onClick={() => onAction(request.id, 'recommend_approve')}
+                <button disabled={busy} onClick={() => setShowRecommendModal(true)}
                   className="px-3 py-1.5 text-[10px] rounded-lg border border-emerald-200 text-emerald-700 font-medium disabled:opacity-50 hover:bg-emerald-50 transition-colors">
                   {isZH ? '👍 建議批准' : '👍 Recommend Approve'}
                 </button>
@@ -299,6 +303,12 @@ function ApprovalCard({ request, role, isZH, onAction, busy }: {
       </div>
 
       {/* Modals */}
+      {showRecommendModal && <ReasonModal
+        title={isZH ? '建議批准的理由（必填）' : 'Reason for recommending approval (required)'}
+        placeholder={isZH ? '請填寫依據…' : 'Enter rationale…'}
+        onConfirm={reason => { setShowRecommendModal(false); onAction(request.id, 'recommend_approve', reason) }}
+        onCancel={() => setShowRecommendModal(false)}
+      />}
       {showRejectModal && (
         <ReasonModal
           title={isRecommender
@@ -401,6 +411,13 @@ export default function ApprovalPage() {
     setBusyId(id)
     setError('')
     try {
+      if (action === 'recommend_approve' || action === 'recommend_reject') {
+        await apiFetch(`/leave-requests/${encodeURIComponent(id)}/recommendation`, {
+          method: 'POST', body: JSON.stringify({ recommendation: action === 'recommend_approve' ? 'approve' : 'reject', reason: note }),
+        })
+        load()
+        return
+      }
       if (action === 'withdraw') {
         await api.revokeLeaveRequest(id, note || (isZH ? '管理員撤回批准' : 'Approval revoked by manager'))
         setSyncNotice(isZH ? '批准已撤回。請在更表核對原有shift／tasks是否已恢復。' : 'Approval revoked. Verify the original shift／tasks were restored on the roster.')
@@ -415,21 +432,13 @@ export default function ApprovalPage() {
           case 'approve': return 'approve'
           case 'reject': return 'reject'
           case 'review': return 'review'
-          case 'recommend_approve': return 'review' // recommend uses review for now
-          case 'recommend_reject': return 'review'  // recommend uses review for now
           default: return action
         }
       })() as 'approve' | 'reject' | 'review'
 
-      const decisionNote = action === 'recommend_approve'
-        ? `[RECOMMEND APPROVE] ${note || ''}`
-        : action === 'recommend_reject'
-        ? `[RECOMMEND REJECT] ${note}`
-        : note
-
-      await api.decideLeaveRequest(id, apiDecision, decisionNote || undefined)
+      await api.decideLeaveRequest(id, apiDecision, note || undefined)
       if (action === 'approve') {
-        setSyncNotice(isZH ? '申請已批准。請立即在更表核對AL／SL code；A.5只在backend roster-cell真正更新後才算完成。' : 'Request approved. Verify the AL／SL code on the roster now; A.5 is complete only after the backend roster cell changes.')
+        setSyncNotice(isZH ? '審批已保存。假期／指定更期將作後續排更限制；請核對實際更表、排更鎖及audit，切勿假設已自動改格。' : 'Decision saved. Leave/duty requests become future roster constraints; verify actual roster, locks and audit rather than assuming an immediate cell edit.')
       }
       load()
       api.leaveStats().then(setStats).catch(() => {})
@@ -465,6 +474,8 @@ export default function ApprovalPage() {
           {error}
         </div>
       )}
+
+      <DutyWindowPanel />
 
       {/* KPI boxes */}
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
