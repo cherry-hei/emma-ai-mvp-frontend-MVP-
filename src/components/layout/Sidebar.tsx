@@ -68,7 +68,7 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void } = {}) {
     >
       {/* Logo */}
       <div className="p-4 border-b border-border flex items-center gap-2">
-        <img src="/icons/emma-badge.png" alt="" width={34} height={34} className="shrink-0 rounded-md" />
+        <img src="/icons/emma-curves-96.png" alt="" width={34} height={34} className="shrink-0" />
         <div className="text-lg font-bold tracking-tight text-foreground">Emma <span style={{ color: PINK }}>AI</span></div>
       </div>
 

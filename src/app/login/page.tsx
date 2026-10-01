@@ -67,6 +67,7 @@ export default function LoginPage() {
       <div className="w-full max-w-sm">
         {/* Brand */}
         <div className="text-center mb-6">
+          <img src="/icons/emma-curves-192.png" alt="" width={72} height={72} className="mx-auto mb-2" />
           <div className="text-3xl font-bold" style={{ color: PINK, letterSpacing: '-0.5px' }}>Emma AI</div>
           <div className="text-[9px] tracking-[3px] mt-1 text-gray-400">MEDICAL INTELLIGENCE</div>
         </div>

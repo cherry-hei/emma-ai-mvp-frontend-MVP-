@@ -81,7 +81,7 @@ export function TopNav({ onMenuToggle }: { onMenuToggle?: () => void } = {}) {
           aria-label="Open Emma AI"
           className={`flex min-h-8 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg border px-2.5 py-1.5 text-[10px] font-bold transition-all hover:-translate-y-px ${pathname?.startsWith(ROUTES.insights) ? 'border-pink-600 bg-pink-600 text-white' : 'border-pink-200 bg-pink-50 text-pink-700 dark:border-pink-700 dark:bg-pink-950/40 dark:text-pink-200'}`}
         >
-          <img src="/icons/emma-badge.png" alt="" width={18} height={18} className="rounded-sm" />
+          <img src="/icons/emma-curves-96.png" alt="" width={18} height={18} />
           <span>Emma AI</span>
         </button>
       )}

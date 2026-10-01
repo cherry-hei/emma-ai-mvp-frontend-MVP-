@@ -10,7 +10,7 @@ export const metadata: Metadata = {
   description: 'Care-home scheduling and compliance workspace',
   manifest: '/manifest.json',
   appleWebApp: { capable: true, title: 'Emma AI', statusBarStyle: 'default' },
-  icons: { icon: '/icons/emma-192.png', apple: '/icons/emma-192.png' },
+  icons: { icon: '/icons/emma-curves-192.png', apple: '/icons/emma-curves-192.png' },
 }
 
 export const viewport: Viewport = {
