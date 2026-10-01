@@ -125,10 +125,14 @@ def sync_assignment_tasks(client, facility_id: str, assignment: dict,
 
 def task_definitions_by_label(client, facility_id: str) -> dict[str, dict]:
     # SQL: select * from task_definitions
-    #      where (facility_id = :facility_id or facility_id is null)   -- null = global default
+    #      where org_id = :org_id
+    #         or (org_id is null and facility_id is null)  -- truly global only
     #        and active = true
+    # This explicit filter is required even for service-role callers that bypass
+    # RLS. Another charity's org-owned row with no facility is not a template.
     rows = (client.table("task_definitions").select("*")
-            .or_(f"org_id.eq.{org_id_for(client, facility_id)},facility_id.is.null")
+            .or_(f"org_id.eq.{org_id_for(client, facility_id)},"
+                 "and(org_id.is.null,facility_id.is.null)")
             .eq("active", True).execute().data)
     out: dict[str, dict] = {}
     for r in rows:
