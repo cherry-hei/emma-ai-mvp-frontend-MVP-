@@ -8,10 +8,39 @@ import ast
 import json
 from pathlib import Path
 import runpy
+import sys
 import unittest
 
 APP = Path(__file__).resolve().parents[1]
 MODULE = APP / "emma_core/exports/manifest.py"
+
+# Guard the tested code before executing it. Only this module, the synthetic
+# JSON, and the interpreter's standard library may be read by the test run.
+STDLIB = Path(unittest.__file__).resolve().parent.parent
+FIXTURE = APP / "emma_core/exports/templates/naac_m3_17.json"
+
+
+def offline_guard(event, args):
+    if event.startswith(("socket.", "subprocess.", "os.exec", "os.spawn")) or event == "os.system":
+        raise AssertionError("Offline test forbids network and process access")
+    if event == "open":
+        filename, mode, flags = args
+        if not isinstance(filename, (str, bytes)):
+            raise AssertionError("Offline test forbids file descriptor access")
+        path = Path(filename).resolve()
+        if mode is None or set(mode) & set("wax+"):
+            raise AssertionError("Offline test forbids file writes")
+        if path not in (MODULE, FIXTURE) and not path.is_relative_to(STDLIB):
+            raise AssertionError("Offline test forbids unrelated file access")
+    if event == "import":
+        name = args[0].split(".")[0]
+        if name not in sys.stdlib_module_names:
+            raise AssertionError("Offline test forbids application and third-party imports")
+
+
+if __name__ == "__main__":
+    sys.addaudithook(offline_guard)
+MODULES_BEFORE = frozenset(sys.modules)
 API = runpy.run_path(str(MODULE))
 validate = API["validate_naac_m3_17"]
 validate_generic = API["validate_manifest"]
@@ -66,7 +95,8 @@ class ManifestTests(unittest.TestCase):
         extra.update(id="invalid_extra", name="Invalid extra", order=18)
         self.manifest["sheets"].append(extra)
         self.manifest["sheet_count"] = 18
-        self.assertEqual(validate_generic(self.manifest).sheet_count, 18)
+        with self.assertRaises(ManifestError):
+            validate_generic(self.manifest)
         with self.assertRaises(ManifestError):
             validate(self.manifest)
 
@@ -297,6 +327,68 @@ class ManifestTests(unittest.TestCase):
         self.assertEqual(validate_generic(self.manifest).sheet_count, 1)
         with self.assertRaises(ManifestError):
             validate(self.manifest)
+
+    def test_current_template_cannot_bypass_inventory_via_generic_entry(self):
+        for change in ("missing", "rename", "reorder"):
+            with self.subTest(change=change):
+                candidate = deepcopy(self.manifest)
+                sheets = candidate["sheets"]
+                if change == "missing":
+                    sheets.pop()
+                    candidate["sheet_count"] = len(sheets)
+                elif change == "rename":
+                    sheets[0]["name"] = "Renamed"
+                else:
+                    sheets[0], sheets[1] = sheets[1], sheets[0]
+                    for position, sheet in enumerate(sheets, 1):
+                        sheet["order"] = position
+                with self.assertRaises(ManifestError):
+                    validate_generic(candidate)
+
+    def test_unknown_current_version_rejected(self):
+        self.manifest["template_version"] = "unapproved-version"
+        with self.assertRaises(ManifestError):
+            validate_generic(self.manifest)
+
+    def test_weekly_coverage_cannot_be_removed_or_reordered(self):
+        for change in ("none", "missing", "reordered"):
+            with self.subTest(change=change):
+                candidate = deepcopy(self.manifest)
+                weekly = candidate["sheets"][4:10]
+                if change == "none":
+                    for sheet in weekly:
+                        sheet.update(renderer="reference_table", layout_id="naac_reference", week_index=None)
+                elif change == "missing":
+                    weekly[5].update(renderer="reference_table", layout_id="naac_reference", week_index=None)
+                else:
+                    weekly[0]["week_index"], weekly[1]["week_index"] = 2, 1
+                with self.assertRaises(ManifestError):
+                    validate(candidate)
+
+    def test_macro_connection_and_formula_payloads_rejected(self):
+        for field, payload in (("macros", ["synthetic_macro"]),
+                               ("external_connections", ["https://invalid.example"]),
+                               ("formula", "=SUM(A1:A2)")):
+            for nested in (False, True):
+                with self.subTest(field=field, nested=nested):
+                    candidate = deepcopy(self.manifest)
+                    target = candidate["sheets"][0] if nested else candidate
+                    target[field] = payload
+                    with self.assertRaises(ManifestError):
+                        validate(candidate)
+
+    def test_missing_print_and_calculation_metadata_rejected(self):
+        for field in ("visibility", "print", "calculation_status"):
+            with self.subTest(field=field):
+                del_candidate = deepcopy(self.manifest)
+                del del_candidate["sheets"][0][field]
+                with self.assertRaises(ManifestError):
+                    validate(del_candidate)
+
+    def test_no_application_or_third_party_modules_loaded(self):
+        unexpected = set(sys.modules) - MODULES_BEFORE - sys.stdlib_module_names - {"<run_path>"}
+        unexpected = {name for name in unexpected if name.split(".")[0] not in sys.stdlib_module_names}
+        self.assertEqual(unexpected, set())
 
     def test_error_does_not_echo_input(self):
         self.manifest["template_id"] = "=SYNTHETIC_UNTRUSTED_MARKER"

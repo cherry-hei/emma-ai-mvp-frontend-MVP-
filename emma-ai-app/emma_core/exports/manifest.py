@@ -93,7 +93,7 @@ def _metadata(value: object, path: str, choices: tuple,
     return item["value"]
 
 
-def validate_manifest(manifest: object) -> ValidationResult:
+def _validate_schema(manifest: object) -> ValidationResult:
     """Validate an already-decoded object without modifying it.
 
     Unknown fields are rejected at every level. Formula and conditional-rule
@@ -180,8 +180,10 @@ def validate_manifest(manifest: object) -> ValidationResult:
 
 def validate_naac_m3_17(manifest: object) -> ValidationResult:
     """Enforce the current inventory, even if a caller changes its template ID."""
-    result = validate_manifest(manifest)
+    result = _validate_schema(manifest)
     _require(manifest["template_id"] == "naac-m3-17", "template_id", "expected naac-m3-17")
+    _require(manifest["template_version"] == "draft-1", "template_version",
+             "unsupported NAAC template version; separate approval required")
     sheets = manifest["sheets"]
     _require(tuple(s["name"] for s in sheets) == NAAC_SHEET_NAMES and
              tuple(s["id"] for s in sheets) == NAAC_SHEET_IDS,
@@ -191,3 +193,15 @@ def validate_naac_m3_17(manifest: object) -> ValidationResult:
             "staff_summary" if 10 <= index <= 15 else "reference_table")
         _require(sheet["renderer"] == expected, f"sheets[{index}].renderer", "incorrect sheet role")
     return result
+
+
+def validate_manifest(manifest: object) -> ValidationResult:
+    """Validate schema, pinning the known NAAC template to its approved inventory.
+
+    Other template IDs support future configuration schema checks only, never
+    Founder approval or NAAC acceptance. Use validate_naac_m3_17 at a NAAC
+    boundary so changing a supplied template ID cannot bypass its inventory.
+    """
+    if type(manifest) is dict and manifest.get("template_id") == "naac-m3-17":
+        return validate_naac_m3_17(manifest)
+    return _validate_schema(manifest)
