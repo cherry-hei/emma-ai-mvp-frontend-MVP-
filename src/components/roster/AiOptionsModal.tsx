@@ -55,31 +55,31 @@ export function AiOptionsModal({
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-6"
       style={{ background: 'rgba(0,0,0,0.45)' }} onClick={onClose}>
-      <div className="bg-white w-full max-w-4xl rounded-3xl shadow-2xl overflow-hidden max-h-[88vh] flex flex-col"
+      <div className="bg-card w-full max-w-4xl rounded-3xl shadow-2xl overflow-hidden max-h-[88vh] flex flex-col"
         onClick={(e) => e.stopPropagation()}>
-        <div className="px-7 py-4 border-b border-gray-100 flex items-center justify-between">
+        <div className="px-7 py-4 border-b border-border flex items-center justify-between">
           <div>
-            <h2 className="text-lg font-bold text-gray-900">{L.title}</h2>
-            {periodLabel && <div className="text-[11px] text-gray-400 mt-0.5">{periodLabel}</div>}
+            <h2 className="text-lg font-bold text-foreground">{L.title}</h2>
+            {periodLabel && <div className="text-xs text-muted-foreground mt-0.5">{periodLabel}</div>}
           </div>
           <button onClick={onClose}
-            className="w-8 h-8 rounded-full bg-gray-100 hover:bg-gray-200 text-gray-600 font-bold">✕</button>
+            className="w-8 h-8 rounded-full bg-muted hover:bg-muted text-muted-foreground font-bold">✕</button>
         </div>
 
         <div className="p-7 overflow-y-auto">
           {loading ? (
             <div className="py-16 text-center">
-              <div className="inline-block w-10 h-10 border-4 border-gray-200 rounded-full animate-spin"
+              <div className="inline-block w-10 h-10 border-4 border-border rounded-full animate-spin"
                 style={{ borderTopColor: PINK }} />
-              <div className="mt-4 text-sm text-gray-600">{L.generating}</div>
-              <div className="mt-1 text-xs text-gray-400 uppercase tracking-widest">{status}</div>
+              <div className="mt-4 text-sm text-muted-foreground">{L.generating}</div>
+              <div className="mt-1 text-xs text-muted-foreground uppercase tracking-widest">{status}</div>
             </div>
           ) : error ? (
             <div className="py-12 text-center text-sm text-rose-600">{error}</div>
           ) : (
             <div className="space-y-3">
               {publishError && (
-                <div className="rounded-xl bg-rose-50 border border-rose-100 px-4 py-2 text-xs text-rose-600">
+                <div className="rounded-xl bg-rose-50 border border-rose-100 px-4 py-2 text-xs text-rose-600 dark:border-rose-900 dark:bg-rose-950 dark:text-rose-200">
                   {publishError}
                 </div>
               )}
@@ -92,24 +92,24 @@ export function AiOptionsModal({
                 const scoreColor = passing ? '#15803d' : '#be123c'
                 return (
                   <div key={o.plan_mode}
-                    className="rounded-2xl border border-gray-200 p-5 flex flex-col"
+                    className="rounded-2xl border border-border p-5 flex flex-col"
                     style={o.plan_mode === 'C' ? { borderColor: PINK, boxShadow: `0 0 0 1px ${PINK}` } : undefined}>
                     <div className="flex items-center justify-between">
-                      <div className="text-xs font-black tracking-widest text-gray-400">{o.plan_mode}</div>
-                      <span className="text-[10px] font-bold px-2 py-0.5 rounded-full text-white"
+                      <div className="text-xs font-black tracking-widest text-muted-foreground">{o.plan_mode}</div>
+                      <span className="text-xs font-bold px-2 py-0.5 rounded-full text-white"
                         style={{ background: STATUS_COLOR[o.status] ?? '#6b7280' }}>
                         {o.status}
                       </span>
                     </div>
-                    <div className="mt-1 text-sm font-bold text-gray-900">{m.title}</div>
-                    <div className="text-[11px] text-gray-500 mb-3">{m.desc}</div>
+                    <div className="mt-1 text-sm font-bold text-foreground">{m.title}</div>
+                    <div className="text-xs text-muted-foreground mb-3">{m.desc}</div>
 
                     <div className="flex items-end gap-1">
                       <span className="text-3xl font-black" style={{ color: scoreColor }}>{o.constraint_score}</span>
-                      <span className="text-[10px] text-gray-400 mb-1.5 uppercase">{L.score}</span>
+                      <span className="text-xs text-muted-foreground mb-1.5 uppercase">{L.score}</span>
                     </div>
-                    <div className="text-[11px] text-gray-500 mb-3">
-                      {L.violations}: <span className="font-bold text-gray-800">{o.hard_violation_count}</span>
+                    <div className="text-xs text-muted-foreground mb-3">
+                      {L.violations}: <span className="font-bold text-foreground">{o.hard_violation_count}</span>
                     </div>
 
                     <div className="grid grid-cols-3 gap-2 mb-4">
@@ -118,15 +118,15 @@ export function AiOptionsModal({
                         { k: L.ot, v: `${o.kpi.ot_hours}h` },
                         { k: L.gap, v: o.kpi.coverage_gap },
                       ].map((s) => (
-                        <div key={s.k} className="bg-gray-50 rounded-xl p-2 text-center">
-                          <div className="text-sm font-bold text-gray-900">{s.v}</div>
-                          <div className="text-[9px] text-gray-400 uppercase">{s.k}</div>
+                        <div key={s.k} className="bg-muted rounded-xl p-2 text-center">
+                          <div className="text-sm font-bold text-foreground">{s.v}</div>
+                          <div className="text-xs text-muted-foreground uppercase">{s.k}</div>
                         </div>
                       ))}
                     </div>
 
                     {o.infeasible_reasons.length > 0 && (
-                      <div className="text-[10px] text-rose-500 mb-3">
+                      <div className="text-xs text-rose-500 mb-3">
                         {o.infeasible_reasons.slice(0, 2).join('; ')}
                       </div>
                     )}

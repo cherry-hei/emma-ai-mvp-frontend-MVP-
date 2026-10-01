@@ -79,12 +79,12 @@ export default function DashboardPage() {
   if (error) {
     return (
       <div className="p-5">
-        <div className="rounded-xl border border-rose-200 bg-rose-50 p-4 text-xs text-rose-700">{error}</div>
+        <div className="rounded-xl border border-rose-200 bg-rose-50 p-4 text-xs text-rose-700 dark:border-rose-900 dark:bg-rose-950 dark:text-rose-200">{error}</div>
       </div>
     )
   }
   if (!data) {
-    return <div className="p-5 text-xs text-gray-400">{L.loading}</div>
+    return <div className="p-5 text-xs text-muted-foreground">{L.loading}</div>
   }
 
   const k = data.kpis
@@ -111,43 +111,42 @@ export default function DashboardPage() {
 
       {/* Header */}
       <div>
-        <h1 className="text-lg font-bold text-gray-900">{L.title}</h1>
-        <p className="text-xs text-gray-500 mt-0.5">{subtitle}</p>
+        <h1 className="text-lg font-bold text-foreground">{L.title}</h1>
+        <p className="text-xs text-muted-foreground mt-0.5">{subtitle}</p>
       </div>
 
       {/* KPI cards */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         {KPI.map((c) => (
-          <div key={c.label} className="bg-white border border-gray-200 rounded-xl p-4">
-            <div className="text-[9px] text-gray-500 uppercase tracking-wider mb-1">{c.label}</div>
+          <div key={c.label} className="bg-card border border-border rounded-xl p-4">
+            <div className="text-xs text-muted-foreground uppercase tracking-wider mb-1">{c.label}</div>
             <div className="flex items-end gap-0.5">
               <span className="text-[28px] font-bold tabular-nums leading-none" style={{ color: c.color }}>
                 {c.value}
               </span>
-              <span className="text-xs text-gray-400 mb-1">{c.unit}</span>
+              <span className="text-xs text-muted-foreground mb-1">{c.unit}</span>
             </div>
-            <div className="text-[10px] text-gray-400 mt-1">{c.sub}</div>
+            <div className="text-xs text-muted-foreground mt-1">{c.sub}</div>
           </div>
         ))}
       </div>
 
       {/* SL/DSL distribution */}
-      <div className="bg-white border border-gray-200 rounded-xl p-4">
+      <div className="bg-card border border-border rounded-xl p-4">
         <div className="flex items-center justify-between mb-3">
-          <div className="text-sm font-semibold text-gray-900">{L.distrib_title}</div>
+          <div className="text-sm font-semibold text-foreground">{L.distrib_title}</div>
           <div className="flex items-center gap-2">
-            <span className="text-xs font-bold px-2.5 py-1 rounded-full"
-              style={{ background: '#fce8f3', color: PINK }}>
+            <span className="text-xs font-bold px-2.5 py-1 rounded-full bg-pink-100 text-pink-700 dark:bg-pink-950 dark:text-pink-200">
               {L.total} {totalIncidents} {L.cases}
             </span>
             <button onClick={() => router.push('/alert')}
-              className="text-[10px] font-medium hover:underline" style={{ color: PINK }}>
+              className="text-xs font-medium hover:underline" style={{ color: PINK }}>
               {L.view_all} →
             </button>
           </div>
         </div>
         {totalIncidents === 0 ? (
-          <div className="text-[11px] text-gray-400 py-3">{L.no_incidents}</div>
+          <div className="text-xs text-muted-foreground py-3">{L.no_incidents}</div>
         ) : (
           <div className="space-y-2.5">
             {data.incident_distribution.map((a) => {
@@ -157,17 +156,17 @@ export default function DashboardPage() {
                   <span className="text-base w-6 text-center flex-shrink-0">{style.icon}</span>
                   <div className="flex-1 min-w-0">
                     <div className="flex justify-between items-center mb-1">
-                      <span className="text-xs font-medium text-gray-700">{a.incident_type}</span>
+                      <span className="text-xs font-medium text-foreground">{a.incident_type}</span>
                       <span className="text-xs font-bold tabular-nums" style={{ color: style.color }}>
                         {a.count} {L.cases}
                       </span>
                     </div>
-                    <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
+                    <div className="h-2 bg-muted rounded-full overflow-hidden">
                       <div className="h-full rounded-full transition-all"
                         style={{ width: `${a.pct}%`, background: style.color }} />
                     </div>
                   </div>
-                  <span className="text-[10px] text-gray-400 w-8 text-right flex-shrink-0">{a.pct}%</span>
+                  <span className="text-xs text-muted-foreground w-8 text-right flex-shrink-0">{a.pct}%</span>
                 </div>
               )
             })}
@@ -178,14 +177,14 @@ export default function DashboardPage() {
       {/* 3-col row */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
 
-        <div className="bg-white border border-gray-200 rounded-xl p-4">
-          <div className="text-sm font-semibold text-gray-900 mb-3">{L.quick_title}</div>
+        <div className="bg-card border border-border rounded-xl p-4">
+          <div className="text-sm font-semibold text-foreground mb-3">{L.quick_title}</div>
           <div className="grid grid-cols-2 gap-2">
             {QUICK_LINKS.map((q) => (
               <button key={q.key} onClick={() => router.push(q.path)}
-                className="flex flex-col items-center gap-1.5 p-3 rounded-xl border border-gray-100 hover:border-pink-200 hover:bg-pink-50/40 transition-all">
+                className="flex flex-col items-center gap-1.5 p-3 rounded-xl border border-border hover:border-pink-200 hover:bg-pink-50/40 dark:hover:border-pink-800 dark:hover:bg-pink-950/40 transition-all">
                 <span className="text-xl">{q.icon}</span>
-                <span className="text-[10px] font-medium text-gray-700 text-center">
+                <span className="text-xs font-medium text-foreground text-center">
                   {L[q.key as keyof typeof L]}
                 </span>
               </button>
@@ -193,66 +192,66 @@ export default function DashboardPage() {
           </div>
         </div>
 
-        <div className="bg-white border border-gray-200 rounded-xl p-4">
+        <div className="bg-card border border-border rounded-xl p-4">
           <div className="flex items-baseline gap-2 mb-3">
-            <span className="text-sm font-semibold text-gray-900">{L.shift_title}</span>
+            <span className="text-sm font-semibold text-foreground">{L.shift_title}</span>
             {/* Between roster cycles this is the nearest rostered day, not today.
                 Saying which day it is keeps it from reading as live staffing. */}
             {data.shift_distribution_date && data.shift_distribution_date !== data.date && (
-              <span className="text-[10px] text-amber-600">{data.shift_distribution_date}</span>
+              <span className="text-xs text-amber-600">{data.shift_distribution_date}</span>
             )}
           </div>
           {data.shift_distribution.length === 0 ? (
-            <div className="text-[11px] text-gray-400 py-3">{L.no_roster}</div>
+            <div className="text-xs text-muted-foreground py-3">{L.no_roster}</div>
           ) : (
             <div className="space-y-3">
               {data.shift_distribution.map((s, i) => (
                 <div key={s.shift_type} className="flex items-center gap-3">
-                  <span className="text-[11px] font-bold w-8 text-gray-700">{s.shift_type}</span>
-                  <div className="flex-1 h-2 bg-gray-100 rounded-full overflow-hidden">
+                  <span className="text-xs font-bold w-8 text-foreground">{s.shift_type}</span>
+                  <div className="flex-1 h-2 bg-muted rounded-full overflow-hidden">
                     <div className="h-full rounded-full transition-all"
                       style={{ width: `${s.pct}%`, background: SHIFT_COLORS[i % SHIFT_COLORS.length] }} />
                   </div>
-                  <span className="text-[10px] text-gray-500 w-6 text-right tabular-nums">{s.count}</span>
+                  <span className="text-xs text-muted-foreground w-6 text-right tabular-nums">{s.count}</span>
                 </div>
               ))}
             </div>
           )}
-          <div className="mt-4 pt-3 border-t border-gray-100">
-            <div className="text-[10px] text-gray-500">
-              {L.total_staff}<span className="font-bold text-gray-800">{data.total_staff}</span>
+          <div className="mt-4 pt-3 border-t border-border">
+            <div className="text-xs text-muted-foreground">
+              {L.total_staff}<span className="font-bold text-foreground">{data.total_staff}</span>
             </div>
           </div>
         </div>
 
-        <div className="bg-white border border-gray-200 rounded-xl p-4">
+        <div className="bg-card border border-border rounded-xl p-4">
           <div className="flex items-center justify-between mb-3">
-            <div className="text-sm font-semibold text-gray-900">{L.alert_title}</div>
+            <div className="text-sm font-semibold text-foreground">{L.alert_title}</div>
             <button onClick={() => router.push('/alert')}
-              className="text-[10px] font-medium hover:underline" style={{ color: PINK }}>
+              className="text-xs font-medium hover:underline" style={{ color: PINK }}>
               {L.view_all}
             </button>
           </div>
           {data.recent_incidents.length === 0 ? (
-            <div className="text-[11px] text-gray-400 py-3">{L.no_incidents}</div>
+            <div className="text-xs text-muted-foreground py-3">{L.no_incidents}</div>
           ) : (
             <div className="space-y-2.5">
               {data.recent_incidents.map((a) => (
                 <div key={a.id} className="flex items-center gap-2.5">
-                  <div className="w-8 h-7 rounded-full flex items-center justify-center text-[9px] font-bold text-white flex-shrink-0"
+                  <div className="w-8 h-7 rounded-full flex items-center justify-center text-xs font-bold text-white flex-shrink-0"
                     style={{ background: INCIDENT_STYLE[a.incident_type]?.color ?? PINK }}>
                     {a.incident_type}
                   </div>
                   <div className="flex-1 min-w-0">
-                    <div className="text-[11px] font-medium text-gray-800 truncate">
+                    <div className="text-xs font-medium text-foreground truncate">
                       {a.name_en || a.name}
                     </div>
-                    <div className="text-[9px] text-gray-400">
+                    <div className="text-xs text-muted-foreground">
                       {[a.unit_name, a.date].filter(Boolean).join(' · ')}
                     </div>
                   </div>
-                  <span className={`text-[9px] px-1.5 py-0.5 rounded-full font-medium ${
-                    a.resolved ? 'bg-emerald-100 text-emerald-700' : 'bg-rose-100 text-rose-600'
+                  <span className={`text-xs px-1.5 py-0.5 rounded-full font-medium ${
+                    a.resolved ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-200' : 'bg-rose-100 text-rose-600 dark:bg-rose-950 dark:text-rose-200'
                   }`}>
                     {a.resolved ? L.resolved : L.pending}
                   </span>

@@ -4,16 +4,17 @@ import { usePathname, useRouter } from 'next/navigation'
 import { Sidebar } from './Sidebar'
 import { TopNav } from './TopNav'
 import { useAuth } from './AuthContext'
+import { DisplayPreferencesProvider } from './DisplayPreferencesContext'
 import {
   CHROMELESS, canOpenRoute, fallbackRoute, isGuardedRoute, routeFeature,
 } from './navRoutes'
 
 function Splash() {
   return (
-    <div className="flex h-screen items-center justify-center bg-gray-50">
+    <div className="flex h-screen items-center justify-center bg-background">
       <div className="flex flex-col items-center gap-3">
         <div
-          className="h-8 w-8 animate-spin rounded-full border-2 border-gray-200"
+          className="h-8 w-8 animate-spin rounded-full border-2 border-border"
           style={{ borderTopColor: '#E8187A' }}
         />
         <div className="text-sm font-semibold" style={{ color: '#E8187A' }}>Emma AI</div>
@@ -72,9 +73,11 @@ export function AppShell({ children }: { children: ReactNode }) {
   if (bare) return <>{children}</>
 
   return (
-    <ResponsiveShell>
-      {children}
-    </ResponsiveShell>
+    <DisplayPreferencesProvider>
+      <ResponsiveShell>
+        {children}
+      </ResponsiveShell>
+    </DisplayPreferencesProvider>
   )
 }
 
@@ -86,7 +89,7 @@ function ResponsiveShell({ children }: { children: ReactNode }) {
   useEffect(() => { setSidebarOpen(false) }, [pathname])
 
   return (
-    <div className="flex h-screen overflow-hidden bg-gray-50">
+    <div className="flex h-screen overflow-hidden bg-background text-foreground">
       {/* Desktop sidebar - hidden on mobile */}
       <div className="hidden md:block">
         <Sidebar />

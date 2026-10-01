@@ -29,6 +29,7 @@ KNOWN_KEYS = (
     "duty_supervisor_quota",  # per-person '#' allocation for a cycle
     "meal_breaks",          # when each batch eats, and who eats late
     "coverage_minimums",    # statutory staff-on-duty windows
+    "duty_request_window",  # owner-controlled frontline DO/duty-request window
 )
 
 

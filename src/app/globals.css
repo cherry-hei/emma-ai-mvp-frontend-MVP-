@@ -128,3 +128,14 @@
     @apply font-sans;
   }
 }
+
+@layer utilities {
+  /* Legacy 7–11px labels were illegible at browser 100% and did not respond
+     to the account's root type scale. Dense roster cells may still scroll. */
+  html :is([class~="text-[7px]"], [class~="text-[8px]"], [class~="text-[9px]"], [class~="text-[10px]"]) {
+    font-size: .75rem;
+  }
+  html [class~="text-[11px]"] {
+    font-size: .8125rem;
+  }
+}

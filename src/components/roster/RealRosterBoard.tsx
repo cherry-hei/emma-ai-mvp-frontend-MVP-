@@ -15,6 +15,7 @@ import { canSeeTask, reasonText } from '@/lib/shiftRules'
 import { AiOptionsModal } from './AiOptionsModal'
 import { CreateEventModal } from './CreateEventModal'
 import { BatchCreateShiftModal } from '@/components/modals/BatchCreateShiftModal'
+import { moveWindow, windowDates, type RosterWindowMode } from '@/lib/rosterWindow'
 
 const PINK = '#E8187A'
 
@@ -185,6 +186,9 @@ export function RealRosterBoard() {
   const [filterRank, setFilterRank] = useState('ALL')
   const [filterFloor, setFilterFloor] = useState('ALL')
   const [filterSearch, setFilterSearch] = useState('')
+  const [viewMode, setViewMode] = useState<RosterWindowMode>('WEEK_ALL')
+  const [focusDate, setFocusDate] = useState('')
+  const [selectedStaffId, setSelectedStaffId] = useState('')
   const gridRequestRef = useRef(0)
   const validationRequestRef = useRef(0)
   // Which period's logs are currently in state, so the writer below never saves
@@ -222,6 +226,11 @@ export function RealRosterBoard() {
     saveListEmpty: isZH ? '暫無未發佈的更改' : 'No unpublished changes',
     publishListTitle: isZH ? '發佈記錄' : 'Publish List',
     publishListEmpty: isZH ? '暫無發佈記錄' : 'No published records yet',
+    weekView: isZH ? '全體週表' : 'All-staff week',
+    monthView: isZH ? '全體月表' : 'All-staff month',
+    staffView: isZH ? '單一員工' : 'Single staff',
+    chooseStaff: isZH ? '選擇員工' : 'Choose staff',
+    shiftCode: isZH ? '更期代號' : 'Shift code',
     actionEdit: isZH ? '編輯更次' : 'Edit shift',
     actionCreate: isZH ? '新增更次' : 'New shift',
     actionDelete: isZH ? '刪除更次' : 'Delete shift',
@@ -319,6 +328,9 @@ export function RealRosterBoard() {
       const nextGrid = await api.rosterGrid(pid, vid ? { versionId: vid } : undefined)
       if (requestId !== gridRequestRef.current) return
       setGrid(nextGrid)
+      const first = nextGrid.period_start ?? nextGrid.dates[0] ?? ''
+      const last = nextGrid.period_end ?? nextGrid.dates[nextGrid.dates.length - 1] ?? first
+      setFocusDate(prev => prev >= first && prev <= last ? prev : first)
       setLoading(false)
       if (nextGrid.version_id) {
         try {
@@ -384,6 +396,14 @@ export function RealRosterBoard() {
     if (grid?.period_start && grid?.period_end) return eachDate(grid.period_start, grid.period_end)
     return grid?.dates ?? []
   }, [grid])
+
+  // All three views share the same period/version payload and saveCell endpoint.
+  // Restrict visible dates to the period rather than inventing cross-period shifts.
+  const dates = useMemo(() => windowDates(columns, viewMode, focusDate || columns[0] || ''), [columns, viewMode, focusDate])
+  const effectiveStaffId = grid?.rows.some(row => row.staff.id === selectedStaffId)
+    ? selectedStaffId : grid?.rows[0]?.staff.id ?? ''
+  const canMoveBack = !!columns.length && !!windowDates(columns, viewMode, moveWindow(focusDate || columns[0], viewMode, -1)).length
+  const canMoveForward = !!columns.length && !!windowDates(columns, viewMode, moveWindow(focusDate || columns[0], viewMode, 1)).length
 
   // staffId → (date → cell)
   const cellLookup = useMemo(() => {
@@ -519,6 +539,8 @@ export function RealRosterBoard() {
     if (!staffId || !date) return
     const row = grid?.rows.find((item) => item.staff.id === staffId)
     if (row) {
+      setViewMode('WEEK_ALL')
+      setFocusDate(date.slice(0, 10))
       setFilterRank('ALL')
       setFilterFloor('ALL')
       setFilterSearch(row.staff.name_en || row.staff.name || row.staff.rank)
@@ -553,25 +575,25 @@ export function RealRosterBoard() {
   return (
     <div className="flex flex-col h-full overflow-hidden">
       {/* Toolbar */}
-      <div className="bg-white border-b border-gray-200 px-5 py-3 flex-shrink-0 space-y-2.5">
+      <div className="bg-card border-b border-border px-5 py-3 flex-shrink-0 space-y-2.5">
         <div className="flex items-center gap-3 flex-wrap">
           <div>
-            <h1 className="text-xl font-bold text-gray-900">{isZH ? '更表工作區' : 'Roster Workspace'}</h1>
-            <p className="mt-0.5 text-[10px] text-gray-400">{isZH ? '生成方案 → 編輯更表 → 規則檢查 → 院長批准發佈' : 'Generate options → edit roster → run rule checks → manager approval'}</p>
+            <h1 className="text-xl font-bold text-foreground">{isZH ? '更表工作區' : 'Roster Workspace'}</h1>
+            <p className="mt-0.5 text-xs text-muted-foreground">{isZH ? '生成方案 → 編輯更表 → 規則檢查 → 院長批准發佈' : 'Generate options → edit roster → run rule checks → manager approval'}</p>
           </div>
 
-          <label className="text-xs text-gray-500">{T.period}</label>
+          <label className="text-xs text-muted-foreground">{T.period}</label>
           <select
             value={periodId}
             onChange={(e) => setPeriodId(e.target.value)}
-            className="text-xs border border-gray-200 rounded-lg px-2 py-1.5 bg-white max-w-[220px]"
+            className="text-xs border border-border rounded-lg px-2 py-1.5 bg-card max-w-[220px]"
           >
             {periods.map((p) => (
               <option key={p.id} value={p.id}>{p.period_start} → {p.period_end} · {p.status}</option>
             ))}
           </select>
           <button onClick={() => setNewPeriodOpen(true)}
-            className="text-xs px-2.5 py-1.5 border border-gray-200 rounded-lg hover:bg-gray-50">{T.newPeriod}</button>
+            className="text-xs px-2.5 py-1.5 border border-border rounded-lg hover:bg-muted">{T.newPeriod}</button>
 
           <div className="ml-auto flex items-center gap-2">
             <button onClick={handleAI} disabled={aiLoading || !periodId}
@@ -587,7 +609,7 @@ export function RealRosterBoard() {
             isZH ? '3 規則檢查' : '3 Rule check',
             isZH ? '4 批准發佈' : '4 Approve',
           ].map((step, index) => (
-            <div key={step} className={`rounded-lg border px-3 py-2 text-[10px] font-semibold ${index === 2 && validation ? (validation.passes ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-rose-200 bg-rose-50 text-rose-700') : 'border-slate-200 bg-slate-50 text-slate-600'}`}>
+            <div key={step} className={`rounded-lg border px-3 py-2 text-xs font-semibold ${index === 2 && validation ? (validation.passes ? 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900 dark:bg-emerald-950 dark:text-emerald-200' : 'border-rose-200 bg-rose-50 text-rose-700 dark:border-rose-900 dark:bg-rose-950 dark:text-rose-200') : 'border-border bg-muted text-muted-foreground'}`}>
               {step}
             </div>
           ))}
@@ -595,7 +617,7 @@ export function RealRosterBoard() {
 
         {/* Version tabs + actions */}
         <div className="flex items-center gap-2 flex-wrap">
-          <span className="text-xs text-gray-500">{T.version}:</span>
+          <span className="text-xs text-muted-foreground">{T.version}:</span>
           {versions.map((v) => {
             const sc = scores[v.id]
             const active = v.id === activeVersionId
@@ -604,39 +626,39 @@ export function RealRosterBoard() {
               <button key={v.id} onClick={() => setVersionId(v.id)}
                 className="px-2.5 py-1 rounded-lg text-xs font-medium border transition-all flex items-center gap-1.5"
                 style={{
-                  borderColor: active ? PINK : '#e5e7eb',
-                  background: active ? '#fff0f5' : '#fff',
-                  color: active ? PINK : '#6b7280',
+                  borderColor: active ? PINK : 'var(--border)',
+                  background: active ? 'color-mix(in oklab, var(--primary) 12%, var(--card))' : 'var(--card)',
+                  color: active ? PINK : 'var(--muted-foreground)',
                 }}>
                 <span>{label}</span>
-                <span className="text-[9px] px-1 rounded"
-                  style={{ background: v.status === 'published' ? '#dcfce7' : '#f1f5f9', color: v.status === 'published' ? '#166534' : '#64748b' }}>
+                <span className="text-xs px-1 rounded"
+                  style={{ background: v.status === 'published' ? '#dcfce7' : 'var(--muted)', color: v.status === 'published' ? '#166534' : 'var(--muted-foreground)' }}>
                   {v.status}
                 </span>
-                {sc && <span className="text-[9px] font-bold" style={{ color: sc.publishable ? '#15803d' : '#be123c' }}>· {sc.constraint_score}</span>}
+                {sc && <span className="text-xs font-bold" style={{ color: sc.publishable ? '#15803d' : '#be123c' }}>· {sc.constraint_score}</span>}
               </button>
             )
           })}
 
           <div className="ml-auto flex items-center gap-2 flex-wrap">
             <button onClick={handleCreateShift} disabled={!editable || !grid?.rows.length}
-              className="text-xs px-3 py-1.5 border border-gray-200 rounded-lg hover:bg-gray-50 disabled:opacity-50">
+              className="text-xs px-3 py-1.5 border border-border rounded-lg hover:bg-muted disabled:opacity-50">
               {T.createShift}
             </button>
             <button onClick={() => setBatchShiftOpen(true)} disabled={!editable || !grid?.rows.length}
-              className="text-xs px-3 py-1.5 border border-gray-200 rounded-lg hover:bg-gray-50 disabled:opacity-50">
+              className="text-xs px-3 py-1.5 border border-border rounded-lg hover:bg-muted disabled:opacity-50">
               {T.batchCreate}
             </button>
             <button onClick={() => setCreateEventOpen(true)} disabled={!periodId}
-              className="text-xs px-3 py-1.5 border border-gray-200 rounded-lg hover:bg-gray-50 disabled:opacity-50">
+              className="text-xs px-3 py-1.5 border border-border rounded-lg hover:bg-muted disabled:opacity-50">
               {T.createEvent}
             </button>
             <button onClick={handleValidate} disabled={!activeVersionId || busy === 'validate'}
-              className="text-xs px-3 py-1.5 border border-gray-200 rounded-lg hover:bg-gray-50 disabled:opacity-50">
+              className="text-xs px-3 py-1.5 border border-border rounded-lg hover:bg-muted disabled:opacity-50">
               {busy === 'validate' ? '…' : T.validate}
             </button>
             <button onClick={handleSaveDraft} disabled={!editable || busy === 'save'}
-              className="text-xs px-3 py-1.5 border border-gray-200 rounded-lg hover:bg-gray-50 disabled:opacity-50">
+              className="text-xs px-3 py-1.5 border border-border rounded-lg hover:bg-muted disabled:opacity-50">
               {busy === 'save' ? '…' : T.saveDraft}
             </button>
             <button onClick={handlePublish} disabled={!activeVersionId || busy === 'publish'}
@@ -646,11 +668,11 @@ export function RealRosterBoard() {
               {busy === 'publish' ? '…' : blockingCount > 0 ? (isZH ? '發佈前檢視規則' : 'Review rules before publishing') : T.publish}
             </button>
             <button onClick={() => setShowSaveList((v) => !v)}
-              className="text-xs px-3 py-1.5 rounded-lg border border-gray-200 bg-white text-gray-700 font-semibold hover:bg-gray-50">
+              className="text-xs px-3 py-1.5 rounded-lg border border-border bg-card text-foreground font-semibold hover:bg-muted">
               {T.saveList} ({pendingLog.length})
             </button>
             <button onClick={() => setShowPublishList((v) => !v)}
-              className="text-xs px-3 py-1.5 rounded-lg border border-gray-200 bg-white text-gray-700 font-semibold hover:bg-gray-50">
+              className="text-xs px-3 py-1.5 rounded-lg border border-border bg-card text-foreground font-semibold hover:bg-muted">
               {T.publishList} ({publishedLog.length})
             </button>
           </div>
@@ -658,24 +680,24 @@ export function RealRosterBoard() {
 
         {/* status line */}
         <div className="flex items-center gap-3 min-h-[16px]">
-          {periodLabel && <span className="text-[11px] text-gray-400">{periodLabel}</span>}
-          {!editable && currentVersion && <span className="text-[11px] text-amber-600">{T.readonly}</span>}
-          {notice && <span className="text-[11px] font-medium text-emerald-600">{notice}</span>}
-          {error && <span className="text-[11px] font-medium text-rose-600">{error}</span>}
+          {periodLabel && <span className="text-xs text-muted-foreground">{periodLabel}</span>}
+          {!editable && currentVersion && <span className="text-xs text-amber-600">{T.readonly}</span>}
+          {notice && <span className="text-xs font-medium text-emerald-600">{notice}</span>}
+          {error && <span className="text-xs font-medium text-rose-600">{error}</span>}
         </div>
 
         {/* Filter bar */}
         {grid && grid.rows.length > 0 && (
           <div className="flex items-center gap-2 flex-wrap">
             <select value={filterRank} onChange={(e) => setFilterRank(e.target.value)}
-              className="text-xs px-2.5 py-1.5 border border-gray-200 rounded-lg bg-white">
+              className="text-xs px-2.5 py-1.5 border border-border rounded-lg bg-card">
               <option value="ALL">{T.allRanks}</option>
               {Array.from(new Set(grid.rows.map((r) => r.staff.rank))).sort().map((rank) => (
                 <option key={rank} value={rank}>{rank}</option>
               ))}
             </select>
             <select value={filterFloor} onChange={(e) => setFilterFloor(e.target.value)}
-              className="text-xs px-2.5 py-1.5 border border-gray-200 rounded-lg bg-white">
+              className="text-xs px-2.5 py-1.5 border border-border rounded-lg bg-card">
               <option value="ALL">{T.allFloors}</option>
               {Array.from(new Set(grid.rows.map((r) => r.staff.unit_name).filter(Boolean))).sort().map((unit) => (
                 <option key={unit} value={unit!}>{unit}</option>
@@ -683,23 +705,53 @@ export function RealRosterBoard() {
             </select>
             <input type="text" value={filterSearch} onChange={(e) => setFilterSearch(e.target.value)}
               placeholder={T.filterSearch}
-              className="text-xs px-2.5 py-1.5 border border-gray-200 rounded-lg bg-white w-40" />
+              className="text-xs px-2.5 py-1.5 border border-border rounded-lg bg-card w-40" />
             <button onClick={() => { setFilterRank('ALL'); setFilterFloor('ALL'); setFilterSearch('') }}
-              className="text-[10px] text-gray-400 hover:text-gray-600">✕ Clear</button>
+              className="text-xs text-muted-foreground hover:text-foreground">✕ Clear</button>
             <div className="ml-auto">
               <button onClick={() => window.open(`/api/export/roster?period_id=${periodId}`, '_blank')}
                 disabled={!periodId}
-                className="text-xs px-3 py-1.5 border border-gray-200 rounded-lg hover:bg-gray-50 disabled:opacity-50">
+                className="text-xs px-3 py-1.5 border border-border rounded-lg hover:bg-muted disabled:opacity-50">
                 {T.exportRoster}
               </button>
             </div>
+          </div>
+        )}
+
+        {grid && grid.rows.length > 0 && (
+          <div className="flex flex-wrap items-center gap-2 border-t border-border pt-2" aria-label={isZH ? '更表視圖' : 'Roster views'}>
+            {([
+              ['WEEK_ALL', T.weekView], ['MONTH_ALL', T.monthView], ['STAFF', T.staffView],
+            ] as Array<[RosterWindowMode, string]>).map(([mode, label]) => (
+              <button key={mode} type="button" aria-pressed={viewMode === mode}
+                onClick={() => setViewMode(mode)}
+                className={`rounded-lg px-3 py-1.5 text-xs font-semibold ${viewMode === mode ? 'bg-pink-100 text-pink-700 dark:bg-pink-950 dark:text-pink-200' : 'bg-muted text-muted-foreground hover:bg-muted'}`}>
+                {label}
+              </button>
+            ))}
+            <button type="button" disabled={!canMoveBack} aria-label={isZH ? '上一段日期' : 'Previous window'}
+              onClick={() => setFocusDate(current => moveWindow(current || columns[0], viewMode, -1))}
+              className="rounded-lg border border-border px-2 py-1 text-xs disabled:opacity-40">←</button>
+            <span className="text-xs font-medium text-muted-foreground">{dates[0] ?? '—'} → {dates[dates.length - 1] ?? '—'}</span>
+            <button type="button" disabled={!canMoveForward} aria-label={isZH ? '下一段日期' : 'Next window'}
+              onClick={() => setFocusDate(current => moveWindow(current || columns[0], viewMode, 1))}
+              className="rounded-lg border border-border px-2 py-1 text-xs disabled:opacity-40">→</button>
+            {viewMode === 'STAFF' && (
+              <label className="ml-auto flex items-center gap-2 text-xs text-muted-foreground">
+                {T.chooseStaff}
+                <select value={effectiveStaffId} onChange={event => setSelectedStaffId(event.target.value)}
+                  className="max-w-[200px] rounded-lg border border-border bg-card px-2 py-1.5 text-xs">
+                  {grid.rows.map(row => <option key={row.staff.id} value={row.staff.id}>{row.staff.rank} · {row.staff.name_en || row.staff.name}</option>)}
+                </select>
+              </label>
+            )}
           </div>
         )}
       </div>
 
       {/* Compact validation status: details live in an overlay so the roster grid keeps its height. */}
       {validation && (
-        <div className="flex-shrink-0 border-b border-gray-200 bg-white px-5 py-2" aria-live="polite">
+        <div className="flex-shrink-0 border-b border-border bg-card px-5 py-2" aria-live="polite">
           <div className="flex min-h-8 flex-wrap items-center gap-2 text-xs">
             <span className={`font-bold ${blockingCount > 0 ? 'text-rose-700' : warningCount > 0 ? 'text-amber-700' : 'text-emerald-700'}`}>
               {blockingCount > 0
@@ -708,17 +760,17 @@ export function RealRosterBoard() {
                   ? (isZH ? '可以發佈，但請先檢視警告' : 'Publishable with warnings to review')
                   : (isZH ? '已準備好發佈' : 'Ready to publish')}
             </span>
-            <span className="text-[10px] text-gray-400">{validation.method}</span>
-            <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${blockingCount ? 'bg-rose-100 text-rose-700' : 'bg-gray-100 text-gray-500'}`}>
+            <span className="text-xs text-muted-foreground">{validation.method}</span>
+            <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${blockingCount ? 'bg-rose-100 text-rose-700' : 'bg-muted text-muted-foreground'}`}>
               {isZH ? '阻塞規則' : 'Blocking rules'} {blockingGroups.length}
             </span>
-            <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${warningCount ? 'bg-amber-100 text-amber-800' : 'bg-gray-100 text-gray-500'}`}>
+            <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${warningCount ? 'bg-amber-100 text-amber-800' : 'bg-muted text-muted-foreground'}`}>
               {isZH ? '警告類別' : 'Warning groups'} {warningGroups.length + ratioGroups.length}
             </span>
-            <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-semibold text-emerald-700">
+            <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-xs font-semibold text-emerald-700">
               {isZH ? '通過檢查' : 'Checks passed'} {passingCheckCount}
             </span>
-            <button onClick={() => setRuleReviewOpen(true)} className="ml-auto rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-[10px] font-bold text-slate-700 hover:bg-slate-50">
+            <button onClick={() => setRuleReviewOpen(true)} className="ml-auto rounded-lg border border-border bg-card px-3 py-1.5 text-xs font-bold text-foreground hover:bg-muted">
               {isZH ? '檢視規則' : 'Review rules'}
             </button>
           </div>
@@ -728,20 +780,20 @@ export function RealRosterBoard() {
       {ruleReviewOpen && validation && (
         <div className="fixed inset-0 z-[70] flex items-end justify-end md:items-stretch" role="dialog" aria-modal="true" aria-label={isZH ? '規則檢視' : 'Rule review'}>
           <button className="absolute inset-0 bg-slate-950/25 backdrop-blur-[1px]" onClick={() => setRuleReviewOpen(false)} aria-label={isZH ? '關閉規則檢視' : 'Close rule review'} />
-          <aside className="relative flex max-h-[84vh] w-full flex-col overflow-hidden rounded-t-2xl border border-slate-200 bg-white shadow-2xl md:max-h-none md:max-w-md md:rounded-none md:rounded-l-2xl">
-            <div className="flex items-start justify-between gap-3 border-b border-slate-100 px-5 py-4">
+          <aside className="relative flex max-h-[84vh] w-full flex-col overflow-hidden rounded-t-2xl border border-border bg-card shadow-2xl md:max-h-none md:max-w-md md:rounded-none md:rounded-l-2xl">
+            <div className="flex items-start justify-between gap-3 border-b border-border px-5 py-4">
               <div>
-                <h2 className="text-base font-black text-slate-950">{isZH ? '更表規則檢視' : 'Roster rule review'}</h2>
-                <p className="mt-1 text-[10px] leading-relaxed text-slate-500">{isZH ? '規則引擎決定結果；Emma AI只可解釋同一份證據。' : 'The rules engine decides the result; Emma AI can only explain the same evidence.'}</p>
+                <h2 className="text-base font-black text-foreground">{isZH ? '更表規則檢視' : 'Roster rule review'}</h2>
+                <p className="mt-1 text-xs leading-relaxed text-muted-foreground">{isZH ? '規則引擎決定結果；Emma AI只可解釋同一份證據。' : 'The rules engine decides the result; Emma AI can only explain the same evidence.'}</p>
               </div>
-              <button onClick={() => setRuleReviewOpen(false)} className="rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs text-slate-500 hover:bg-slate-50">✕</button>
+              <button onClick={() => setRuleReviewOpen(false)} className="rounded-lg border border-border px-2.5 py-1.5 text-xs text-muted-foreground hover:bg-muted">✕</button>
             </div>
 
             <div className="flex-1 space-y-5 overflow-y-auto px-5 py-4">
               <section>
                 <div className="mb-2 flex items-center justify-between">
                   <h3 className="text-xs font-black uppercase tracking-wide text-rose-700">{isZH ? '必須處理' : 'Blocking'}</h3>
-                  <span className="rounded-full bg-rose-100 px-2 py-0.5 text-[10px] font-bold text-rose-700">{blockingCount}</span>
+                  <span className="rounded-full bg-rose-100 px-2 py-0.5 text-xs font-bold text-rose-700">{blockingCount}</span>
                 </div>
                 <div className="space-y-2">
                   {blockingGroups.map((group) => {
@@ -750,54 +802,54 @@ export function RealRosterBoard() {
                     const dates = [...new Set(group.items.map((item) => item.date).filter(Boolean))]
                     const located = group.items.find((item) => item.staff_id && item.date)
                     return (
-                      <article key={group.key} className="rounded-xl border border-rose-200 bg-rose-50/60 p-3">
+                      <article key={group.key} className="rounded-xl border border-rose-200 bg-rose-50/60 p-3 dark:border-rose-900 dark:bg-rose-950/60">
                         <div className="flex items-start justify-between gap-3">
                           <div className="min-w-0">
                             <div className="flex flex-wrap items-center gap-2">
-                              <div className="text-xs font-bold text-slate-900">{group.ruleCode}</div>
-                              <span className="rounded-full bg-white px-2 py-0.5 text-[9px] font-bold text-rose-700">{group.items.length} {isZH ? '項結果' : 'results'}</span>
+                              <div className="text-xs font-bold text-foreground">{group.ruleCode}</div>
+                              <span className="rounded-full bg-card px-2 py-0.5 text-xs font-bold text-rose-700">{group.items.length} {isZH ? '項結果' : 'results'}</span>
                             </div>
-                            <p className="mt-1 text-[11px] leading-relaxed text-slate-600">{first?.message || (isZH ? '規則引擎未有返回詳細說明。' : 'No detailed message was returned by the rules engine.')}</p>
-                            <p className="mt-2 text-[10px] text-slate-500">{dates.length ? `${dates.length} ${isZH ? '個日期' : 'dates'} · ${dates[0]}${dates.length > 1 ? ` → ${dates[dates.length - 1]}` : ''}` : (isZH ? '未有日期資料' : 'Date unavailable')}</p>
+                            <p className="mt-1 text-xs leading-relaxed text-muted-foreground">{first?.message || (isZH ? '規則引擎未有返回詳細說明。' : 'No detailed message was returned by the rules engine.')}</p>
+                            <p className="mt-2 text-xs text-muted-foreground">{dates.length ? `${dates.length} ${isZH ? '個日期' : 'dates'} · ${dates[0]}${dates.length > 1 ? ` → ${dates[dates.length - 1]}` : ''}` : (isZH ? '未有日期資料' : 'Date unavailable')}</p>
                           </div>
-                          <span className="rounded-full bg-rose-100 px-2 py-0.5 text-[9px] font-bold text-rose-700">HARD</span>
+                          <span className="rounded-full bg-rose-100 px-2 py-0.5 text-xs font-bold text-rose-700">HARD</span>
                         </div>
                         <div className="mt-3 flex flex-wrap gap-2">
-                          {located && <button onClick={() => focusIssue(located.staff_id, located.date)} className="rounded-lg bg-slate-950 px-3 py-1.5 text-[10px] font-bold text-white">{isZH ? '顯示首個受影響更次' : 'Show first affected shift'}</button>}
-                          <button onClick={() => explainRule(group.ruleCode, first?.date)} className="rounded-lg border border-rose-200 bg-white px-3 py-1.5 text-[10px] font-bold text-rose-700">{isZH ? '由Emma AI解釋' : 'Explain in Emma AI'}</button>
-                          <button onClick={() => toggleRuleGroup(`hard:${group.key}`)} className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-[10px] font-bold text-slate-600">{expanded ? (isZH ? '收起例子' : 'Hide examples') : (isZH ? '查看例子' : 'View examples')}</button>
+                          {located && <button onClick={() => focusIssue(located.staff_id, located.date)} className="rounded-lg bg-slate-950 px-3 py-1.5 text-xs font-bold text-white">{isZH ? '顯示首個受影響更次' : 'Show first affected shift'}</button>}
+                          <button onClick={() => explainRule(group.ruleCode, first?.date)} className="rounded-lg border border-rose-200 bg-card px-3 py-1.5 text-xs font-bold text-rose-700">{isZH ? '由Emma AI解釋' : 'Explain in Emma AI'}</button>
+                          <button onClick={() => toggleRuleGroup(`hard:${group.key}`)} className="rounded-lg border border-border bg-card px-3 py-1.5 text-xs font-bold text-muted-foreground">{expanded ? (isZH ? '收起例子' : 'Hide examples') : (isZH ? '查看例子' : 'View examples')}</button>
                         </div>
                         {expanded && (
                           <div className="mt-3 space-y-1.5 border-t border-rose-100 pt-3">
                             {group.items.slice(0, 6).map((item, index) => (
-                              <div key={`${item.rule_code}-${index}`} className="rounded-lg bg-white/75 px-2.5 py-2 text-[10px] text-slate-600">
+                              <div key={`${item.rule_code}-${index}`} className="rounded-lg bg-card/75 px-2.5 py-2 text-xs text-muted-foreground">
                                 <b>{item.date || (isZH ? '日期未有提供' : 'Date unavailable')}</b>{item.message ? ` · ${item.message}` : ''}
                               </div>
                             ))}
-                            {group.items.length > 6 && <p className="text-[10px] text-rose-600">{isZH ? `只顯示首6項；尚有${group.items.length - 6}項。` : `Showing the first 6; ${group.items.length - 6} more results remain.`}</p>}
+                            {group.items.length > 6 && <p className="text-xs text-rose-600">{isZH ? `只顯示首6項；尚有${group.items.length - 6}項。` : `Showing the first 6; ${group.items.length - 6} more results remain.`}</p>}
                           </div>
                         )}
                       </article>
                     )
                   })}
-                  {blockingGroups.length === 0 && blockingCount > 0 && <div className="rounded-xl border border-dashed border-rose-200 p-3 text-[11px] text-rose-700">{isZH ? `規則引擎報告${blockingCount}項阻塞，但未返回逐項資料。請重新執行規則檢查或查看validation evidence。` : `The rules engine reports ${blockingCount} blockers but returned no item-level data. Run the checks again or review the validation evidence.`}</div>}
-                  {blockingCount === 0 && <div className="rounded-xl border border-emerald-100 bg-emerald-50 p-3 text-[11px] text-emerald-700">{isZH ? '沒有阻塞發佈的規則。' : 'No rules are blocking publication.'}</div>}
+                  {blockingGroups.length === 0 && blockingCount > 0 && <div className="rounded-xl border border-dashed border-rose-200 p-3 text-xs text-rose-700">{isZH ? `規則引擎報告${blockingCount}項阻塞，但未返回逐項資料。請重新執行規則檢查或查看validation evidence。` : `The rules engine reports ${blockingCount} blockers but returned no item-level data. Run the checks again or review the validation evidence.`}</div>}
+                  {blockingCount === 0 && <div className="rounded-xl border border-emerald-100 bg-emerald-50 p-3 text-xs text-emerald-700 dark:border-emerald-900 dark:bg-emerald-950 dark:text-emerald-200">{isZH ? '沒有阻塞發佈的規則。' : 'No rules are blocking publication.'}</div>}
                 </div>
               </section>
 
               <section>
                 <div className="mb-2 flex items-center justify-between">
                   <h3 className="text-xs font-black uppercase tracking-wide text-amber-700">{isZH ? '需要檢視' : 'Warnings'}</h3>
-                  <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-bold text-amber-800">{warningCount}</span>
+                  <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-bold text-amber-800">{warningCount}</span>
                 </div>
                 <div className="space-y-2">
                   {warningGroups.map((group) => {
                     const first = group.items[0]
                     return (
-                      <article key={group.key} className="rounded-xl border border-amber-200 bg-amber-50/60 p-3">
-                        <div className="flex flex-wrap items-center gap-2"><div className="text-xs font-bold text-slate-900">{group.ruleCode}</div><span className="rounded-full bg-white px-2 py-0.5 text-[9px] font-bold text-amber-800">{group.items.length} {isZH ? '項結果' : 'results'}</span></div>
-                        <p className="mt-1 text-[11px] leading-relaxed text-slate-600">{first?.message || (isZH ? '需要院長檢視。' : 'Manager review is required.')}</p>
-                        <button onClick={() => explainRule(group.ruleCode, first?.date)} className="mt-3 rounded-lg border border-amber-200 bg-white px-3 py-1.5 text-[10px] font-bold text-amber-800">{isZH ? '由Emma AI解釋' : 'Explain in Emma AI'}</button>
+                      <article key={group.key} className="rounded-xl border border-amber-200 bg-amber-50/60 p-3 dark:border-amber-900 dark:bg-amber-950/60">
+                        <div className="flex flex-wrap items-center gap-2"><div className="text-xs font-bold text-foreground">{group.ruleCode}</div><span className="rounded-full bg-card px-2 py-0.5 text-xs font-bold text-amber-800">{group.items.length} {isZH ? '項結果' : 'results'}</span></div>
+                        <p className="mt-1 text-xs leading-relaxed text-muted-foreground">{first?.message || (isZH ? '需要院長檢視。' : 'Manager review is required.')}</p>
+                        <button onClick={() => explainRule(group.ruleCode, first?.date)} className="mt-3 rounded-lg border border-amber-200 bg-card px-3 py-1.5 text-xs font-bold text-amber-800">{isZH ? '由Emma AI解釋' : 'Explain in Emma AI'}</button>
                       </article>
                     )
                   })}
@@ -806,24 +858,24 @@ export function RealRosterBoard() {
                     const largestGap = Math.max(...group.items.map((item) => Math.max(item.required - item.actual, 0)))
                     const expanded = expandedRuleGroups.has(`ratio:${group.key}`)
                     return (
-                      <article key={group.key} className="rounded-xl border border-amber-200 bg-amber-50/60 p-3">
+                      <article key={group.key} className="rounded-xl border border-amber-200 bg-amber-50/60 p-3 dark:border-amber-900 dark:bg-amber-950/60">
                         <div className="flex items-start justify-between gap-2">
                           <div>
-                            <div className="flex flex-wrap items-center gap-2"><div className="text-xs font-bold text-slate-900">{group.label}</div><span className="rounded-full bg-white px-2 py-0.5 text-[9px] font-bold text-amber-800">{group.items.length} {isZH ? '個時段' : 'windows'}</span></div>
-                            <p className="mt-1 text-[11px] text-slate-600">{group.rank ? `${group.rank} · ` : ''}{isZH ? '最大人手缺口' : 'Largest staffing gap'}: {largestGap}</p>
-                            <p className="mt-1 text-[10px] text-slate-500">{first?.window_start} → {group.items[group.items.length - 1]?.window_end}</p>
+                            <div className="flex flex-wrap items-center gap-2"><div className="text-xs font-bold text-foreground">{group.label}</div><span className="rounded-full bg-card px-2 py-0.5 text-xs font-bold text-amber-800">{group.items.length} {isZH ? '個時段' : 'windows'}</span></div>
+                            <p className="mt-1 text-xs text-muted-foreground">{group.rank ? `${group.rank} · ` : ''}{isZH ? '最大人手缺口' : 'Largest staffing gap'}: {largestGap}</p>
+                            <p className="mt-1 text-xs text-muted-foreground">{first?.window_start} → {group.items[group.items.length - 1]?.window_end}</p>
                           </div>
-                          <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[9px] font-bold text-amber-800">RATIO</span>
+                          <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-bold text-amber-800">RATIO</span>
                         </div>
                         <div className="mt-3 flex flex-wrap gap-2">
-                          <button onClick={() => explainRule(group.label, first?.window_start)} className="rounded-lg border border-amber-200 bg-white px-3 py-1.5 text-[10px] font-bold text-amber-800">{isZH ? '由Emma AI解釋' : 'Explain in Emma AI'}</button>
-                          <button onClick={() => toggleRuleGroup(`ratio:${group.key}`)} className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-[10px] font-bold text-slate-600">{expanded ? (isZH ? '收起時段' : 'Hide windows') : (isZH ? '查看時段' : 'View windows')}</button>
+                          <button onClick={() => explainRule(group.label, first?.window_start)} className="rounded-lg border border-amber-200 bg-card px-3 py-1.5 text-xs font-bold text-amber-800">{isZH ? '由Emma AI解釋' : 'Explain in Emma AI'}</button>
+                          <button onClick={() => toggleRuleGroup(`ratio:${group.key}`)} className="rounded-lg border border-border bg-card px-3 py-1.5 text-xs font-bold text-muted-foreground">{expanded ? (isZH ? '收起時段' : 'Hide windows') : (isZH ? '查看時段' : 'View windows')}</button>
                         </div>
-                        {expanded && <div className="mt-3 space-y-1.5 border-t border-amber-100 pt-3">{group.items.slice(0, 6).map((item, index) => <div key={`${item.label}-${index}`} className="rounded-lg bg-white/75 px-2.5 py-2 text-[10px] text-slate-600"><b>{item.window_start}</b> · {isZH ? '實際／要求' : 'Actual／required'} {item.actual}／{item.required}</div>)}{group.items.length > 6 && <p className="text-[10px] text-amber-700">{isZH ? `只顯示首6個時段；尚有${group.items.length - 6}個。` : `Showing the first 6 windows; ${group.items.length - 6} more remain.`}</p>}</div>}
+                        {expanded && <div className="mt-3 space-y-1.5 border-t border-amber-100 pt-3">{group.items.slice(0, 6).map((item, index) => <div key={`${item.label}-${index}`} className="rounded-lg bg-card/75 px-2.5 py-2 text-xs text-muted-foreground"><b>{item.window_start}</b> · {isZH ? '實際／要求' : 'Actual／required'} {item.actual}／{item.required}</div>)}{group.items.length > 6 && <p className="text-xs text-amber-700">{isZH ? `只顯示首6個時段；尚有${group.items.length - 6}個。` : `Showing the first 6 windows; ${group.items.length - 6} more remain.`}</p>}</div>}
                       </article>
                     )
                   })}
-                  {warningCount === 0 && <div className="rounded-xl border border-emerald-100 bg-emerald-50 p-3 text-[11px] text-emerald-700">{isZH ? '沒有需要院長檢視的警告。' : 'No warnings require manager review.'}</div>}
+                  {warningCount === 0 && <div className="rounded-xl border border-emerald-100 bg-emerald-50 p-3 text-xs text-emerald-700 dark:border-emerald-900 dark:bg-emerald-950 dark:text-emerald-200">{isZH ? '沒有需要院長檢視的警告。' : 'No warnings require manager review.'}</div>}
                 </div>
               </section>
             </div>
@@ -835,26 +887,26 @@ export function RealRosterBoard() {
       <div className={`grid gap-0 flex-1 min-h-0 ${showSaveList || showPublishList ? 'grid-cols-1 xl:grid-cols-[1fr_340px]' : 'grid-cols-1'}`}>
       <div className="min-w-0 flex-1 overflow-auto px-5 py-3">
         {!periodId ? (
-          <div className="text-sm text-gray-400 p-8 text-center">{T.noPeriods}</div>
+          <div className="text-sm text-muted-foreground p-8 text-center">{T.noPeriods}</div>
         ) : loading ? (
-          <div className="text-sm text-gray-400 p-8 text-center">…</div>
-        ) : grid && grid.rows.length ? (
-          <table className="border-collapse bg-white rounded-xl border border-gray-200">
+          <div className="text-sm text-muted-foreground p-8 text-center">…</div>
+        ) : grid && grid.rows.length && dates.length ? (
+          <table className="border-collapse bg-card rounded-xl border border-border">
             <thead className="sticky top-0 z-10">
-              <tr className="bg-gray-50 border-b border-gray-200">
-                <th className="text-left px-3 py-2 text-[10px] font-semibold text-gray-500 border-r border-gray-200 sticky left-0 bg-gray-50 z-20 w-44 min-w-44">
+              <tr className="bg-muted border-b border-border">
+                <th className="text-left px-3 py-2 text-[10px] font-semibold text-muted-foreground border-r border-border sticky left-0 bg-muted z-20 w-44 min-w-44">
                   {T.staff}
                 </th>
-                <th className="px-1 py-1.5 text-center border-r border-gray-200 min-w-[44px] bg-gray-50">
-                  <div className="text-[8px] text-gray-400">{T.totalHrs}</div>
+                <th className="px-1 py-1.5 text-center border-r border-border min-w-[44px] bg-muted">
+                  <div className="text-[8px] text-muted-foreground">{T.totalHrs}</div>
                 </th>
-                {columns.map((iso) => {
+                {dates.map((iso) => {
                   const d = dayLabel(iso, isZH)
                   const dayEvents = eventsByDate.get(iso) ?? []
                   return (
-                    <th key={iso} className={`px-1 py-1.5 text-center border-r border-gray-100 min-w-[54px] ${d.weekend ? 'bg-pink-50' : 'bg-gray-50'}`}>
-                      <div className="text-[8px] text-gray-400">{d.wd}</div>
-                      <div className="text-[11px] font-bold text-gray-700">{d.dm}</div>
+                    <th key={iso} className={`px-1 py-1.5 text-center border-r border-border min-w-[54px] ${d.weekend ? 'bg-pink-50 dark:bg-pink-950/50' : 'bg-muted'}`}>
+                      <div className="text-[8px] text-muted-foreground">{d.wd}</div>
+                      <div className="text-[11px] font-bold text-foreground">{d.dm}</div>
                       {dayEvents.length > 0 && (
                         <div
                           className="mx-auto mt-0.5 h-1.5 w-1.5 rounded-full bg-amber-400"
@@ -869,6 +921,7 @@ export function RealRosterBoard() {
             <tbody>
               {grid.rows
                 .filter((row) => {
+                  if (viewMode === 'STAFF') return row.staff.id === effectiveStaffId
                   if (filterRank !== 'ALL' && row.staff.rank !== filterRank) return false
                   if (filterFloor !== 'ALL' && row.staff.unit_name !== filterFloor) return false
                   if (filterSearch) {
@@ -879,7 +932,7 @@ export function RealRosterBoard() {
                   return true
                 })
                 .map((row) => {
-                const workedHrs = columns.reduce((sum, iso) => {
+                const workedHrs = dates.reduce((sum, iso) => {
                   const cell = cellLookup.get(row.staff.id)?.get(iso)
                   if (!cell?.shift_type) return sum
                   const sDef = shiftDefs.find((d) => d.shift_type === cell.shift_type)
@@ -887,18 +940,18 @@ export function RealRosterBoard() {
                   return sum + (sDef.paid_minutes ?? 480) / 60
                 }, 0)
                 return (
-                <tr key={row.staff.id} className="border-t border-gray-100">
-                  <td className="px-3 py-2 border-r border-gray-200 sticky left-0 bg-white z-10 w-44 min-w-44">
-                    <div className="text-[12px] font-semibold text-gray-900 truncate">{row.staff.name_en || row.staff.name}</div>
-                    <div className="flex items-center gap-1.5 text-[10px] text-gray-400">
-                      <span className="font-bold text-gray-500">{row.staff.rank}</span>
+                <tr key={row.staff.id} className="border-t border-border">
+                  <td className="px-3 py-2 border-r border-border sticky left-0 bg-card z-10 w-44 min-w-44">
+                    <div className="text-[12px] font-semibold text-foreground truncate">{row.staff.name_en || row.staff.name}</div>
+                    <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground">
+                      <span className="font-bold text-muted-foreground">{row.staff.rank}</span>
                       {row.staff.unit_name && <span className="truncate">· {row.staff.unit_name}</span>}
                     </div>
                   </td>
-                  <td className="px-1 py-2 border-r border-gray-200 text-center">
-                    <div className="text-[10px] font-bold text-gray-600">{workedHrs.toFixed(1)}</div>
+                  <td className="px-1 py-2 border-r border-border text-center">
+                    <div className="text-[10px] font-bold text-muted-foreground">{workedHrs.toFixed(1)}</div>
                   </td>
-                  {columns.map((iso) => {
+                  {dates.map((iso) => {
                     const cell = cellLookup.get(row.staff.id)?.get(iso)
                     const st = cell?.shift_type
                     const style = st ? (SHIFT_STYLE[st] ?? DEFAULT_STYLE) : null
@@ -910,9 +963,9 @@ export function RealRosterBoard() {
                           date: iso, shiftType: st ?? '', tasks: cell?.tasks ?? [],
                           wasWorking: !!st,
                         }))}
-                        className={`relative border-r border-gray-100 p-1 align-top ${editable ? 'cursor-pointer hover:bg-pink-50/40' : ''} ${focusedCell?.staffId === row.staff.id && focusedCell.date === iso ? 'bg-rose-50 ring-2 ring-inset ring-[#E8187A]' : ''}`}>
+                        className={`relative border-r border-border p-1 align-top ${editable ? 'cursor-pointer hover:bg-pink-50/40 dark:hover:bg-pink-950/40' : ''} ${focusedCell?.staffId === row.staff.id && focusedCell.date === iso ? 'bg-rose-50 ring-2 ring-inset ring-[#E8187A] dark:bg-rose-950' : ''}`}>
                         {(issueCountByCell.get(`${row.staff.id}|${iso}`) ?? 0) > 0 && (
-                          <span className="absolute right-0.5 top-0.5 h-2 w-2 rounded-full bg-rose-500 ring-2 ring-white" title={isZH ? '此更次有規則提示' : 'This shift has a rule alert'} />
+                          <span className="absolute right-0.5 top-0.5 h-2 w-2 rounded-full bg-rose-500 ring-2 ring-card" title={isZH ? '此更次有規則提示' : 'This shift has a rule alert'} />
                         )}
                         {st ? (
                           <div className="rounded px-1 py-0.5 text-[9px] font-bold text-center"
@@ -921,7 +974,7 @@ export function RealRosterBoard() {
                           <div className="h-4" />
                         )}
                         {cell?.tasks?.slice(0, 2).map((t) => (
-                          <div key={t} className="text-[7px] text-gray-400 leading-tight truncate">• {t}</div>
+                          <div key={t} className="text-[7px] text-muted-foreground leading-tight truncate">• {t}</div>
                         ))}
                       </td>
                     )
@@ -931,28 +984,28 @@ export function RealRosterBoard() {
             </tbody>
           </table>
         ) : (
-          <div className="text-sm text-gray-400 p-8 text-center">{T.empty}</div>
+          <div className="text-sm text-muted-foreground p-8 text-center">{T.empty}</div>
         )}
       </div>
 
       {(showSaveList || showPublishList) && (
-        <div className="border-l border-gray-200 bg-white overflow-auto xl:min-w-[340px]">
+        <div className="border-l border-border bg-card overflow-auto xl:min-w-[340px]">
           {showSaveList && (
-            <div className="p-4 border-b border-gray-100">
-              <h3 className="text-sm font-bold text-gray-900 mb-2">{T.saveListTitle}</h3>
+            <div className="p-4 border-b border-border">
+              <h3 className="text-sm font-bold text-foreground mb-2">{T.saveListTitle}</h3>
               <div className="space-y-2 max-h-96 overflow-auto">
                 {pendingLog.length === 0 ? (
-                  <div className="rounded-xl border border-dashed border-gray-200 p-4 text-xs text-gray-400 text-center">
+                  <div className="rounded-xl border border-dashed border-border p-4 text-xs text-muted-foreground text-center">
                     {T.saveListEmpty}
                   </div>
                 ) : (
                   pendingLog.map((item) => (
-                    <div key={item.id} className="rounded-xl border border-pink-100 bg-pink-50/50 p-3">
+                    <div key={item.id} className="rounded-xl border border-pink-100 bg-pink-50/50 p-3 dark:border-pink-900 dark:bg-pink-950/50">
                       <div className="flex items-center justify-between gap-2 mb-1">
                         <span className="text-xs font-semibold" style={{ color: PINK }}>{item.title}</span>
-                        <span className="text-[10px] text-gray-400">{item.createdAt}</span>
+                        <span className="text-xs text-muted-foreground">{item.createdAt}</span>
                       </div>
-                      <div className="text-[11px] text-gray-600">{item.subtitle}</div>
+                      <div className="text-xs text-muted-foreground">{item.subtitle}</div>
                     </div>
                   ))
                 )}
@@ -962,20 +1015,20 @@ export function RealRosterBoard() {
 
           {showPublishList && (
             <div className="p-4">
-              <h3 className="text-sm font-bold text-gray-900 mb-2">{T.publishListTitle}</h3>
+              <h3 className="text-sm font-bold text-foreground mb-2">{T.publishListTitle}</h3>
               <div className="space-y-2 max-h-96 overflow-auto">
                 {publishedLog.length === 0 ? (
-                  <div className="rounded-xl border border-dashed border-gray-200 p-4 text-xs text-gray-400 text-center">
+                  <div className="rounded-xl border border-dashed border-border p-4 text-xs text-muted-foreground text-center">
                     {T.publishListEmpty}
                   </div>
                 ) : (
                   publishedLog.map((item) => (
-                    <div key={item.id} className="rounded-xl border border-emerald-100 bg-emerald-50/60 p-3">
+                    <div key={item.id} className="rounded-xl border border-emerald-100 bg-emerald-50/60 p-3 dark:border-emerald-900 dark:bg-emerald-950/60">
                       <div className="flex items-center justify-between gap-2 mb-1">
                         <span className="text-xs font-semibold text-emerald-700">{item.title}</span>
-                        <span className="text-[10px] text-gray-400">{item.createdAt}</span>
+                        <span className="text-xs text-muted-foreground">{item.createdAt}</span>
                       </div>
-                      <div className="text-[11px] text-gray-600">{item.subtitle}</div>
+                      <div className="text-xs text-muted-foreground">{item.subtitle}</div>
                     </div>
                   ))
                 )}
@@ -990,31 +1043,33 @@ export function RealRosterBoard() {
       {editing && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-6" style={{ background: 'rgba(0,0,0,0.4)' }}
           onClick={() => setEditing(null)}>
-          <div className="bg-white w-full max-w-md rounded-2xl shadow-2xl p-6" onClick={(e) => e.stopPropagation()}>
-            <div className="text-sm font-bold text-gray-900">{T.edit}</div>
+          <div className="bg-card w-full max-w-md rounded-2xl shadow-2xl p-6" onClick={(e) => e.stopPropagation()}>
+            <div className="text-sm font-bold text-foreground">{T.edit}</div>
 
-            <div className="text-xs text-gray-500 mb-4">{editing.staffName} · {editing.date}</div>
+            <div className="text-xs text-muted-foreground mb-4">{editing.staffName} · {editing.date}</div>
 
-            <div className="flex flex-wrap gap-1.5 mb-4">
-              {shiftDefs.map((sd) => {
-                const sel = editing.shiftType === sd.shift_type
-                const style = SHIFT_STYLE[sd.shift_type] ?? DEFAULT_STYLE
-                return (
-                  <button key={sd.id} onClick={() => setEditing({
-                    ...editing, shiftType: sel ? '' : sd.shift_type, tasks: [],
-                  })}
-                    className="px-2.5 py-1 rounded-lg text-xs font-bold border-2 transition-all"
-                    style={{ background: style.bg, color: style.fg, borderColor: sel ? PINK : 'transparent' }}
-                    title={sd.label ?? sd.shift_type}>
-                    {sd.shift_type}
-                  </button>
-                )
-              })}
-            </div>
+            <label className="mb-4 block text-xs font-semibold text-foreground">
+              {T.shiftCode}
+              <select value={editing.shiftType}
+                onChange={event => setEditing({ ...editing, shiftType: event.target.value, tasks: event.target.value === editing.shiftType ? editing.tasks : [] })}
+                disabled={!shiftDefs.length}
+                className="mt-1.5 w-full rounded-lg border border-border bg-card px-3 py-2 text-sm">
+                <option value="">{isZH ? '選擇更期代號' : 'Select a shift code'}</option>
+                {!!editing.shiftType && !shiftDefs.some(sd => sd.shift_type === editing.shiftType) && (
+                  <option value={editing.shiftType}>{editing.shiftType} · {isZH ? '目前更碼未在機構字典' : 'Code missing from organisation dictionary'}</option>
+                )}
+                {shiftDefs.map(sd => (
+                  <option key={sd.id} value={sd.shift_type}>{sd.shift_type}{sd.label ? ` · ${sd.label}` : ''}</option>
+                ))}
+              </select>
+              {!!editing.shiftType && !shiftDefs.some(sd => sd.shift_type === editing.shiftType) && (
+                <span role="alert" className="mt-1 block text-xs text-amber-700">{isZH ? '此更碼不在目前機構字典。請確認機構配置後選擇有效代號，否則不可儲存。' : 'Code is absent from this organisation’s dictionary. Choose a confirmed code before saving.'}</span>
+              )}
+            </label>
 
             {taskDefs.length > 0 && editing.shiftType && (
               <div className="mb-4">
-                <div className="text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-1.5">{T.tasks}</div>
+                <div className="text-xs font-bold uppercase tracking-wider text-muted-foreground mb-1.5">{T.tasks}</div>
                 <div className="flex flex-wrap gap-1.5 max-h-24 overflow-y-auto">
                   {taskDefs.filter((td) => canSeeTask(
                     editing.staffRank, td, editing.shiftType, shiftDefs,
@@ -1027,8 +1082,8 @@ export function RealRosterBoard() {
                           ...editing,
                           tasks: on ? editing.tasks.filter((t) => t !== label) : [...editing.tasks, label],
                         })}
-                        className="px-2 py-0.5 rounded-full text-[10px] border transition-all"
-                        style={{ borderColor: on ? PINK : '#e5e7eb', background: on ? '#fff0f5' : '#fff', color: on ? PINK : '#6b7280' }}>
+                        className="px-2 py-0.5 rounded-full text-xs border transition-all"
+                        style={{ borderColor: on ? PINK : 'var(--border)', background: on ? 'color-mix(in oklab, var(--primary) 12%, var(--card))' : 'var(--card)', color: on ? PINK : 'var(--muted-foreground)' }}>
                         {label}
                       </button>
                     )
@@ -1040,13 +1095,13 @@ export function RealRosterBoard() {
             {cellIssues.length > 0 && (
               <div className="mb-4 rounded-lg border p-2.5"
                    style={{ background: '#fff1f2', borderColor: '#fecdd3' }}>
-                <div className="text-[10px] font-bold uppercase tracking-wider mb-1"
+                <div className="text-xs font-bold uppercase tracking-wider mb-1"
                      style={{ color: '#be123c' }}>
                   {T.rejected}
                 </div>
                 <ul className="space-y-1">
                   {cellIssues.map((issue, i) => (
-                    <li key={i} className="text-[11px]" style={{ color: '#9f1239' }}>
+                    <li key={i} className="text-xs" style={{ color: '#9f1239' }}>
                       {issue.task_label && (
                         <span className="font-semibold">{issue.task_label}: </span>
                       )}
@@ -1061,10 +1116,10 @@ export function RealRosterBoard() {
 
             <div className="flex gap-2 justify-end">
               <button onClick={() => setEditing({ ...editing, shiftType: '', tasks: [] })}
-                className="px-3 py-1.5 text-xs rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-50">{T.clear}</button>
+                className="px-3 py-1.5 text-xs rounded-lg border border-border text-muted-foreground hover:bg-muted">{T.clear}</button>
               <button onClick={() => setEditing(null)}
-                className="px-3 py-1.5 text-xs rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50">{T.cancel}</button>
-              <button onClick={saveCell} disabled={busy === 'cell'}
+                className="px-3 py-1.5 text-xs rounded-lg border border-border text-muted-foreground hover:bg-muted">{T.cancel}</button>
+              <button onClick={saveCell} disabled={busy === 'cell' || (!!editing.shiftType && !shiftDefs.some(sd => sd.shift_type === editing.shiftType))}
                 className="px-4 py-1.5 text-xs rounded-lg text-white font-semibold disabled:opacity-60" style={{ background: PINK }}>
                 {busy === 'cell' ? '…' : T.save}
               </button>
@@ -1153,23 +1208,23 @@ function NewPeriodModal({ isZH, onClose, onCreated }: {
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-6" style={{ background: 'rgba(0,0,0,0.4)' }} onClick={onClose}>
-      <div className="bg-white w-full max-w-sm rounded-2xl shadow-2xl p-6" onClick={(e) => e.stopPropagation()}>
-        <div className="text-sm font-bold text-gray-900 mb-4">{isZH ? '新增更表週期' : 'New roster period'}</div>
+      <div className="bg-card w-full max-w-sm rounded-2xl shadow-2xl p-6" onClick={(e) => e.stopPropagation()}>
+        <div className="text-sm font-bold text-foreground mb-4">{isZH ? '新增更表週期' : 'New roster period'}</div>
         <div className="space-y-3">
           <label className="block">
-            <span className="text-[11px] font-semibold text-gray-500">{isZH ? '開始日期' : 'Start'}</span>
+            <span className="text-xs font-semibold text-muted-foreground">{isZH ? '開始日期' : 'Start'}</span>
             <input type="date" value={start} onChange={(e) => setStart(e.target.value)}
-              className="w-full mt-1 px-3 py-2 rounded-lg border border-gray-200 text-sm" />
+              className="w-full mt-1 px-3 py-2 rounded-lg border border-border text-sm" />
           </label>
           <label className="block">
-            <span className="text-[11px] font-semibold text-gray-500">{isZH ? '結束日期' : 'End'}</span>
+            <span className="text-xs font-semibold text-muted-foreground">{isZH ? '結束日期' : 'End'}</span>
             <input type="date" value={end} onChange={(e) => setEnd(e.target.value)}
-              className="w-full mt-1 px-3 py-2 rounded-lg border border-gray-200 text-sm" />
+              className="w-full mt-1 px-3 py-2 rounded-lg border border-border text-sm" />
           </label>
           <label className="block">
-            <span className="text-[11px] font-semibold text-gray-500">{isZH ? '週期類型' : 'Cycle'}</span>
+            <span className="text-xs font-semibold text-muted-foreground">{isZH ? '週期類型' : 'Cycle'}</span>
             <select value={cycle} onChange={(e) => setCycle(e.target.value)}
-              className="w-full mt-1 px-3 py-2 rounded-lg border border-gray-200 text-sm bg-white">
+              className="w-full mt-1 px-3 py-2 rounded-lg border border-border text-sm bg-card">
               <option value="28day">28day</option>
               <option value="natural_month">natural_month</option>
             </select>
@@ -1177,7 +1232,7 @@ function NewPeriodModal({ isZH, onClose, onCreated }: {
           {err && <div className="text-xs text-rose-600">{err}</div>}
         </div>
         <div className="flex gap-2 justify-end mt-5">
-          <button onClick={onClose} className="px-3 py-1.5 text-xs rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50">
+          <button onClick={onClose} className="px-3 py-1.5 text-xs rounded-lg border border-border text-muted-foreground hover:bg-muted">
             {isZH ? '取消' : 'Cancel'}
           </button>
           <button onClick={create} disabled={busy}

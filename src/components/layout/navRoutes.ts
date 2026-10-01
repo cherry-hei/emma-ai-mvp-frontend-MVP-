@@ -52,7 +52,7 @@ export const ROUTE_FEATURE: Record<string, Feature> = {
   [ROUTES.roi]:        'roi',
   [ROUTES.reports]:    'reports',
   [ROUTES.alert]:      'alerts',
-  [ROUTES.settings]:   'settings',
+  [ROUTES.settings]:   'facility.settings',
   // The Emma AI workspace is management-only and reuses the existing `kpi` read
   // permission until the backend RBAC matrix defines a dedicated AI capability.
   [ROUTES.insights]:   'kpi',
