@@ -1,0 +1,438 @@
+{
+  "schema_version": 1,
+  "template_id": "naac-m3-17",
+  "template_version": "draft-1",
+  "data_classification": "synthetic_only",
+  "source": {
+    "authority": "founder_confirmed_structure",
+    "evidence": "approved_structural_documentation",
+    "operational_content_loaded": false
+  },
+  "cycle": {
+    "days": 42,
+    "weeks": 6,
+    "timezone": "Asia/Hong_Kong",
+    "first_weekday": {
+      "status": "unresolved",
+      "value": null
+    }
+  },
+  "sheet_count": 17,
+  "safety": {
+    "macros": "forbidden",
+    "external_links": "forbidden",
+    "external_connections": "forbidden",
+    "copied_formulas": "forbidden",
+    "untrusted_text": "literal_string"
+  },
+  "sheets": [
+    {
+      "id": "annotations",
+      "name": "更期代號註解",
+      "order": 1,
+      "purpose": "Structural inventory entry; operational semantics unresolved",
+      "renderer": "reference_table",
+      "layout_id": "naac_reference",
+      "week_index": null,
+      "visibility": {
+        "status": "unresolved",
+        "value": null
+      },
+      "print": {
+        "included_by_default": {
+          "status": "unresolved",
+          "value": null
+        },
+        "profile_status": "unresolved"
+      },
+      "layout_status": "unresolved",
+      "calculation_status": "unresolved",
+      "formula_specs": [],
+      "conditional_rules": []
+    },
+    {
+      "id": "legacy_codes",
+      "name": "代號及時數(old)",
+      "order": 2,
+      "purpose": "Structural inventory entry; operational semantics unresolved",
+      "renderer": "reference_table",
+      "layout_id": "naac_reference",
+      "week_index": null,
+      "visibility": {
+        "status": "unresolved",
+        "value": null
+      },
+      "print": {
+        "included_by_default": {
+          "status": "unresolved",
+          "value": null
+        },
+        "profile_status": "unresolved"
+      },
+      "layout_status": "unresolved",
+      "calculation_status": "unresolved",
+      "formula_specs": [],
+      "conditional_rules": []
+    },
+    {
+      "id": "current_codes",
+      "name": "代號及時數",
+      "order": 3,
+      "purpose": "Structural inventory entry; operational semantics unresolved",
+      "renderer": "reference_table",
+      "layout_id": "naac_reference",
+      "week_index": null,
+      "visibility": {
+        "status": "unresolved",
+        "value": null
+      },
+      "print": {
+        "included_by_default": {
+          "status": "unresolved",
+          "value": null
+        },
+        "profile_status": "unresolved"
+      },
+      "layout_status": "unresolved",
+      "calculation_status": "unresolved",
+      "formula_specs": [],
+      "conditional_rules": []
+    },
+    {
+      "id": "escort_locations",
+      "name": "覆診地點代號",
+      "order": 4,
+      "purpose": "Structural inventory entry; operational semantics unresolved",
+      "renderer": "reference_table",
+      "layout_id": "naac_reference",
+      "week_index": null,
+      "visibility": {
+        "status": "unresolved",
+        "value": null
+      },
+      "print": {
+        "included_by_default": {
+          "status": "unresolved",
+          "value": null
+        },
+        "profile_status": "unresolved"
+      },
+      "layout_status": "unresolved",
+      "calculation_status": "unresolved",
+      "formula_specs": [],
+      "conditional_rules": []
+    },
+    {
+      "id": "week_1",
+      "name": "TAHDuty(week1)",
+      "order": 5,
+      "purpose": "Structural inventory entry; operational semantics unresolved",
+      "renderer": "weekly_roster",
+      "layout_id": "naac_weekly",
+      "week_index": 1,
+      "visibility": {
+        "status": "unresolved",
+        "value": null
+      },
+      "print": {
+        "included_by_default": {
+          "status": "unresolved",
+          "value": null
+        },
+        "profile_status": "unresolved"
+      },
+      "layout_status": "unresolved",
+      "calculation_status": "unresolved",
+      "formula_specs": [],
+      "conditional_rules": []
+    },
+    {
+      "id": "week_2",
+      "name": "TAHDuty(week2)",
+      "order": 6,
+      "purpose": "Structural inventory entry; operational semantics unresolved",
+      "renderer": "weekly_roster",
+      "layout_id": "naac_weekly",
+      "week_index": 2,
+      "visibility": {
+        "status": "unresolved",
+        "value": null
+      },
+      "print": {
+        "included_by_default": {
+          "status": "unresolved",
+          "value": null
+        },
+        "profile_status": "unresolved"
+      },
+      "layout_status": "unresolved",
+      "calculation_status": "unresolved",
+      "formula_specs": [],
+      "conditional_rules": []
+    },
+    {
+      "id": "week_3",
+      "name": "TAHDuty(week3)",
+      "order": 7,
+      "purpose": "Structural inventory entry; operational semantics unresolved",
+      "renderer": "weekly_roster",
+      "layout_id": "naac_weekly",
+      "week_index": 3,
+      "visibility": {
+        "status": "unresolved",
+        "value": null
+      },
+      "print": {
+        "included_by_default": {
+          "status": "unresolved",
+          "value": null
+        },
+        "profile_status": "unresolved"
+      },
+      "layout_status": "unresolved",
+      "calculation_status": "unresolved",
+      "formula_specs": [],
+      "conditional_rules": []
+    },
+    {
+      "id": "week_4",
+      "name": "TAHDuty(week4)",
+      "order": 8,
+      "purpose": "Structural inventory entry; operational semantics unresolved",
+      "renderer": "weekly_roster",
+      "layout_id": "naac_weekly",
+      "week_index": 4,
+      "visibility": {
+        "status": "unresolved",
+        "value": null
+      },
+      "print": {
+        "included_by_default": {
+          "status": "unresolved",
+          "value": null
+        },
+        "profile_status": "unresolved"
+      },
+      "layout_status": "unresolved",
+      "calculation_status": "unresolved",
+      "formula_specs": [],
+      "conditional_rules": []
+    },
+    {
+      "id": "week_5",
+      "name": "TAHDuty(week5)",
+      "order": 9,
+      "purpose": "Structural inventory entry; operational semantics unresolved",
+      "renderer": "weekly_roster",
+      "layout_id": "naac_weekly",
+      "week_index": 5,
+      "visibility": {
+        "status": "unresolved",
+        "value": null
+      },
+      "print": {
+        "included_by_default": {
+          "status": "unresolved",
+          "value": null
+        },
+        "profile_status": "unresolved"
+      },
+      "layout_status": "unresolved",
+      "calculation_status": "unresolved",
+      "formula_specs": [],
+      "conditional_rules": []
+    },
+    {
+      "id": "week_6",
+      "name": "TAHDuty(week6)",
+      "order": 10,
+      "purpose": "Structural inventory entry; operational semantics unresolved",
+      "renderer": "weekly_roster",
+      "layout_id": "naac_weekly",
+      "week_index": 6,
+      "visibility": {
+        "status": "unresolved",
+        "value": null
+      },
+      "print": {
+        "included_by_default": {
+          "status": "unresolved",
+          "value": null
+        },
+        "profile_status": "unresolved"
+      },
+      "layout_status": "unresolved",
+      "calculation_status": "unresolved",
+      "formula_specs": [],
+      "conditional_rules": []
+    },
+    {
+      "id": "hours",
+      "name": "TAHDuty(hours)",
+      "order": 11,
+      "purpose": "Structural inventory entry; operational semantics unresolved",
+      "renderer": "staff_summary",
+      "layout_id": "naac_summary",
+      "week_index": null,
+      "visibility": {
+        "status": "unresolved",
+        "value": null
+      },
+      "print": {
+        "included_by_default": {
+          "status": "unresolved",
+          "value": null
+        },
+        "profile_status": "unresolved"
+      },
+      "layout_status": "unresolved",
+      "calculation_status": "unresolved",
+      "formula_specs": [],
+      "conditional_rules": []
+    },
+    {
+      "id": "ph_dayoff",
+      "name": "TAHDuty(PH&dayoff)",
+      "order": 12,
+      "purpose": "Structural inventory entry; operational semantics unresolved",
+      "renderer": "staff_summary",
+      "layout_id": "naac_summary",
+      "week_index": null,
+      "visibility": {
+        "status": "unresolved",
+        "value": null
+      },
+      "print": {
+        "included_by_default": {
+          "status": "unresolved",
+          "value": null
+        },
+        "profile_status": "unresolved"
+      },
+      "layout_status": "unresolved",
+      "calculation_status": "unresolved",
+      "formula_specs": [],
+      "conditional_rules": []
+    },
+    {
+      "id": "supervisor",
+      "name": "TAHDuty(DO更次數)",
+      "order": 13,
+      "purpose": "Structural inventory entry; operational semantics unresolved",
+      "renderer": "staff_summary",
+      "layout_id": "naac_summary",
+      "week_index": null,
+      "visibility": {
+        "status": "unresolved",
+        "value": null
+      },
+      "print": {
+        "included_by_default": {
+          "status": "unresolved",
+          "value": null
+        },
+        "profile_status": "unresolved"
+      },
+      "layout_status": "unresolved",
+      "calculation_status": "unresolved",
+      "formula_specs": [],
+      "conditional_rules": []
+    },
+    {
+      "id": "ap_distribution",
+      "name": "TAHDuty(AP更)",
+      "order": 14,
+      "purpose": "Structural inventory entry; operational semantics unresolved",
+      "renderer": "staff_summary",
+      "layout_id": "naac_summary",
+      "week_index": null,
+      "visibility": {
+        "status": "unresolved",
+        "value": null
+      },
+      "print": {
+        "included_by_default": {
+          "status": "unresolved",
+          "value": null
+        },
+        "profile_status": "unresolved"
+      },
+      "layout_status": "unresolved",
+      "calculation_status": "unresolved",
+      "formula_specs": [],
+      "conditional_rules": []
+    },
+    {
+      "id": "sleepover_gender",
+      "name": "TAHDuty(C更男女)",
+      "order": 15,
+      "purpose": "Structural inventory entry; operational semantics unresolved",
+      "renderer": "staff_summary",
+      "layout_id": "naac_summary",
+      "week_index": null,
+      "visibility": {
+        "status": "unresolved",
+        "value": null
+      },
+      "print": {
+        "included_by_default": {
+          "status": "unresolved",
+          "value": null
+        },
+        "profile_status": "unresolved"
+      },
+      "layout_status": "unresolved",
+      "calculation_status": "unresolved",
+      "formula_specs": [],
+      "conditional_rules": []
+    },
+    {
+      "id": "night_gender",
+      "name": "TAHDuty(N更男女)",
+      "order": 16,
+      "purpose": "Structural inventory entry; operational semantics unresolved",
+      "renderer": "staff_summary",
+      "layout_id": "naac_summary",
+      "week_index": null,
+      "visibility": {
+        "status": "unresolved",
+        "value": null
+      },
+      "print": {
+        "included_by_default": {
+          "status": "unresolved",
+          "value": null
+        },
+        "profile_status": "unresolved"
+      },
+      "layout_status": "unresolved",
+      "calculation_status": "unresolved",
+      "formula_specs": [],
+      "conditional_rules": []
+    },
+    {
+      "id": "meal_codes",
+      "name": "TAHDuty(用膳代號)",
+      "order": 17,
+      "purpose": "Structural inventory entry; operational semantics unresolved",
+      "renderer": "reference_table",
+      "layout_id": "naac_reference",
+      "week_index": null,
+      "visibility": {
+        "status": "unresolved",
+        "value": null
+      },
+      "print": {
+        "included_by_default": {
+          "status": "unresolved",
+          "value": null
+        },
+        "profile_status": "unresolved"
+      },
+      "layout_status": "unresolved",
+      "calculation_status": "unresolved",
+      "formula_specs": [],
+      "conditional_rules": []
+    }
+  ]
+}
