@@ -28,12 +28,23 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 # The home names are Chinese and a Windows console is not UTF-8 by default.
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
-from emma_core.db import get_service_client  # noqa: E402
 from emma_core.services import organisations, roster as roster_svc  # noqa: E402
 
 PASSWORD = "EmmaDev123!"
 
-sb = get_service_client()
+sb = None
+
+
+def connect():
+    """Only initialise the service client for an explicitly non-dry-run action.
+
+    Reading a candidate config must work without keys and must never touch an
+    existing environment. Tests needing a database call this function explicitly.
+    """
+    global sb
+    from emma_core.db import get_service_client
+    sb = get_service_client()
+    return sb
 
 
 # ── charity, home, units ─────────────────────────────────────────────────────
@@ -278,6 +289,7 @@ def main() -> None:
         print("  config reads cleanly. Nothing written.")
         return
 
+    connect()
     org = organisation(spec["organisation"])
     home = facility(org["id"], spec["facility"])
     unit_ids = units(home["id"], spec.get("units", []))
@@ -286,7 +298,7 @@ def main() -> None:
     accounts(home["id"], org["id"], spec.get("accounts", []), staff_ids)
     if spec.get("roster"):
         roster(home, spec["roster"], spec["staff"], staff_ids, unit_ids)
-    print(f"\nPassword for every login above: {PASSWORD}")
+    print("\nSynthetic login credentials are managed separately; do not share them in logs.")
     print("Synthetic data. Not for real staff records.")
 
 

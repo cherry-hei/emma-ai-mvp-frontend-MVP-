@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import importlib.util
 import pathlib
+from urllib.parse import urlparse
 
 import pytest
 
@@ -26,16 +27,22 @@ def _load_script():
     spec = importlib.util.spec_from_file_location(
         "provision_tenant", ROOT / "scripts" / "provision_tenant.py")
     module = importlib.util.module_from_spec(spec)
-    try:
-        spec.loader.exec_module(module)
-    except Exception as exc:  # noqa: BLE001
-        pytest.skip(f"Supabase not reachable: {exc}")
+    spec.loader.exec_module(module)
     return module
 
 
 @pytest.fixture(scope="module")
 def script():
-    return _load_script()
+    module = _load_script()
+    from emma_core.config import settings
+    if urlparse(settings.supabase_url).hostname not in {"localhost", "127.0.0.1"}:
+        pytest.skip("write-path provisioning test is restricted to local synthetic DB")
+    try:
+        module.connect()
+        module.sb.table("facilities").select("id").limit(1).execute()
+    except Exception as exc:  # noqa: BLE001
+        pytest.skip(f"synthetic test database not reachable: {exc}")
+    return module
 
 
 @pytest.fixture(scope="module")

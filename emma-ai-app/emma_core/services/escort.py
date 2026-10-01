@@ -29,13 +29,15 @@ from .organisations import org_id_for
 
 
 def list_locations(client, facility_id: str, *, include_inactive: bool = False) -> list[dict]:
-    """Facility codes plus the shared template rows (facility_id null)."""
+    """Organisation codes plus genuinely global templates (both ids null)."""
     # SQL: select * from escort_locations
-    #      where (org_id = :org_id or facility_id is null)
+    #      where (org_id = :org_id or (org_id is null and facility_id is null))
     #        [and active]
     #      order by code
+    # Explicit scope matters for service-role callers, which bypass RLS.
     query = (client.table("escort_locations").select("*")
-             .or_(f"org_id.eq.{org_id_for(client, facility_id)},facility_id.is.null"))
+             .or_(f"org_id.eq.{org_id_for(client, facility_id)},"
+                  "and(org_id.is.null,facility_id.is.null)"))
     if not include_inactive:
         query = query.eq("active", True)
     return query.order("code").execute().data

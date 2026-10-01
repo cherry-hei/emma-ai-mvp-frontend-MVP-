@@ -1,6 +1,8 @@
 """Service-layer tests against the seeded local DB (service-role client)."""
 from datetime import date, timedelta
 
+import pytest
+
 from emma_core.db import get_service_client
 from emma_core.services.auth import get_profile, sign_in
 from emma_core.services.compliance import compute_ratios
@@ -9,22 +11,29 @@ from emma_core.services.roster import (
     clear_cell, get_roster_grid, get_shift_defs, set_cell,
 )
 
-sb = get_service_client()
+@pytest.fixture(scope="module")
+def sb():
+    try:
+        client = get_service_client()
+        client.table("facilities").select("id").limit(1).execute()
+    except Exception as exc:  # noqa: BLE001
+        pytest.skip(f"seeded local test DB unavailable: {type(exc).__name__}")
+    return client
 
 
-def _facility(code: str) -> str:
+def _facility(sb, code: str) -> str:
     # SQL: select id from facilities where code = :code
     return sb.table("facilities").select("id").eq("code", code).execute().data[0]["id"]
 
 
-def test_roster_grid_shape():
+def test_roster_grid_shape(sb):
     """The grid is a rectangle of staff x the period's days, with real cells in it.
 
     Asserted as invariants rather than fixture counts: Home A's cycle is 28 days
     under either fixture, but the number of staff and who works day 0 belong to
     the data, not to the contract.
     """
-    grid = get_roster_grid(sb, _facility("A"))
+    grid = get_roster_grid(sb, _facility(sb, "A"))
     assert grid.version_id and grid.status == "draft"
     assert grid.rows, "the grid should carry the facility's staff"
     assert len(grid.dates) == 28                  # Home A rosters a 28-day cycle
@@ -38,14 +47,14 @@ def test_roster_grid_shape():
         "the roster should carry task labels on at least one cell")
 
 
-def test_shift_defs_present():
-    defs = get_shift_defs(sb, _facility("A"))
+def test_shift_defs_present(sb):
+    defs = get_shift_defs(sb, _facility(sb, "A"))
     codes = {d.shift_type for d in defs}
     assert {"A", "P", "N", "AN", "OFF", "AL", "SLEEP"} <= codes
 
 
-def test_ratio_computation():
-    res = compute_ratios(sb, _facility("A"), date(2026, 7, 1))
+def test_ratio_computation(sb):
+    res = compute_ratios(sb, _facility(sb, "A"), date(2026, 7, 1))
     assert res
     rn = next(r for r in res if r.rank == "RN")
     assert rn.residents == 18          # 10 East + 8 West
@@ -56,15 +65,15 @@ def test_ratio_computation():
     assert rn.actual >= 0
 
 
-def test_auth_sign_in_and_profile():
+def test_auth_sign_in_and_profile(sb):
     client, session = sign_in("super_a@emma.local", "EmmaDev123!")
     prof = get_profile(client, session.user.id)
     assert prof and prof.role == "superintendent"
     assert prof.facility.code == "A"
 
 
-def test_set_and_clear_cell_write_path():
-    fid = _facility("A")
+def test_set_and_clear_cell_write_path(sb):
+    fid = _facility(sb, "A")
     grid = get_roster_grid(sb, fid)
     ver, staff_id = grid.version_id, grid.rows[0].staff.id
     defs = {d.shift_type: d for d in get_shift_defs(sb, fid)}
@@ -92,8 +101,8 @@ def test_set_and_clear_cell_write_path():
     assert all(c.date.isoformat() != day for c in row3.cells)
 
 
-def test_resident_count_feeds_ratio():
-    fid = _facility("A")
+def test_resident_count_feeds_ratio(sb):
+    fid = _facility(sb, "A")
     units = {u.name: u.id for u in get_units(sb, fid)}
     east = units["East Wing"]
     set_resident_count(sb, facility_id=fid, date="2026-07-02", unit_id=east,
