@@ -10,7 +10,6 @@ const PINK_HOVER = '#c9156a'
 const NAV = [
   { key: 'nav_dashboard',   icon: '🏠',  path: ROUTES.dashboard  },
   { key: 'nav_roster',      icon: '📅',  path: ROUTES.roster     },
-  { key: 'nav_scheduling',  icon: '🧩',  path: ROUTES.scheduling },
   { key: 'nav_compliance',  icon: '✅',  path: ROUTES.compliance },
   { key: 'nav_approval',    icon: '👥✓', path: ROUTES.approval   },
   { key: 'nav_personnel',   icon: '👤',  path: ROUTES.staff      },
@@ -19,8 +18,6 @@ const NAV = [
   { key: 'nav_reports',     icon: '📊',  path: ROUTES.reports    },
   { key: 'nav_alert',       icon: '🔔',  path: ROUTES.alert, badge: '3' },
   { key: 'nav_messages',   icon: '💬',  path: ROUTES.messages   },
-  { key: 'nav_shiftcodes', icon: '📖',  path: '/shift-codes'    },
-  { key: 'nav_settings',    icon: '⚙️',  path: ROUTES.settings   },
 ]
 
 export function Sidebar({ onNavigate }: { onNavigate?: () => void } = {}) {
@@ -32,7 +29,15 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void } = {}) {
   // Menu filtered by the RBAC matrix (spec 1.1). Before this every role was shown
   // all eight items, so a care worker saw the superintendent's sidebar including
   // ROI and could open /roi with the home's financials.
-  const nav = NAV.filter(({ path }) => canOpenRoute(user?.role, ROUTE_FEATURE[path]))
+  const canSeeSettings = canOpenRoute(user?.role, ROUTE_FEATURE[ROUTES.settings])
+  const nav = [
+    ...NAV,
+    // Preserve existing route access for roles with task-code read but no settings grant.
+    ...(!canSeeSettings ? [
+      { key: 'nav_scheduling', icon: '🧩', path: ROUTES.scheduling },
+      { key: 'nav_shiftcodes', icon: '📖', path: '/shift-codes' },
+    ] : []),
+  ].filter(({ path }) => canOpenRoute(user?.role, ROUTE_FEATURE[path]))
 
   const FALLBACK: Record<string, { zh: string; en: string }> = {
     nav_dashboard:  { zh: '主頁',       en: 'Dashboard'     },
@@ -87,7 +92,7 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void } = {}) {
       </div>
 
       {/* Nav */}
-      <nav className="flex-1 px-2 py-2 space-y-0.5">
+      <nav className="flex-1 min-h-0 overflow-y-auto px-2 py-2 space-y-0.5">
         {nav.map(({ key, icon, path, badge }) => {
           const active = isActiveRoute(pathname, path)
           return (
@@ -118,6 +123,17 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void } = {}) {
           )
         })}
       </nav>
+
+      {canSeeSettings && (
+        <div className="border-t border-gray-100 px-2 py-2">
+          <button onClick={() => { router.push(ROUTES.settings); onNavigate?.() }}
+            aria-current={isActiveRoute(pathname, ROUTES.settings) ? 'page' : undefined}
+            className="w-full flex items-center gap-2 px-2.5 py-2 rounded-lg text-xs border-l-2 text-left"
+            style={{ color: isActiveRoute(pathname, ROUTES.settings) ? PINK : '#374151', borderLeftColor: isActiveRoute(pathname, ROUTES.settings) ? PINK : 'transparent', background: isActiveRoute(pathname, ROUTES.settings) ? '#fff0f5' : 'transparent' }}>
+            <span aria-hidden="true" className="text-sm">⚙️</span>{label('nav_settings')}
+          </button>
+        </div>
+      )}
 
       {/* Alert banner */}
       <div

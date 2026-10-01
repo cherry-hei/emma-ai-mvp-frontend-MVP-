@@ -103,17 +103,6 @@ export function TopNav({ onMenuToggle }: { onMenuToggle?: () => void } = {}) {
         />
       </div>
 
-      {/* Lang toggle */}
-      <button
-        onClick={() => setLang(lang === 'zh' ? 'en' : 'zh')}
-        className="px-2.5 py-1 rounded text-xs font-medium border transition-all"
-        style={{ borderColor: PINK, color: PINK, background: '#fff5f7' }}
-        onMouseEnter={e => (e.currentTarget.style.background = '#fce7eb')}
-        onMouseLeave={e => (e.currentTarget.style.background = '#fff5f7')}
-      >
-        {lang === 'zh' ? 'EN' : '中'}
-      </button>
-
       {/* Notifications */}
       <div className="relative cursor-pointer">
         <span className="text-gray-400">🔔</span>
@@ -127,6 +116,8 @@ export function TopNav({ onMenuToggle }: { onMenuToggle?: () => void } = {}) {
       <div className="relative">
         <button
           onClick={() => setMenuOpen(o => !o)}
+          aria-expanded={menuOpen}
+          aria-label={isZH ? '開啟帳戶及顯示設定' : 'Open account and display settings'}
           className="flex items-center gap-2 pl-1 pr-2 py-1 rounded-full hover:bg-gray-50 transition-colors"
         >
           <div
@@ -160,6 +151,17 @@ export function TopNav({ onMenuToggle }: { onMenuToggle?: () => void } = {}) {
                 <div className="text-[10px] text-gray-500 mt-0.5 truncate">
                   {user?.facilityName}{user?.role ? ` · ${roleLabel(user.role, isZH)}` : ''}
                 </div>
+              </div>
+              <div className="h-px bg-gray-100 my-1" />
+              <div className="px-3 py-2 text-[10px] font-semibold text-gray-500">{isZH ? '語言' : 'Language'}</div>
+              <div className="flex gap-1 px-2 pb-2" role="group" aria-label={isZH ? '語言' : 'Language'}>
+                {(['zh', 'en'] as const).map(code => (
+                  <button key={code} type="button" aria-pressed={lang === code}
+                    onClick={() => { setLang(code); setMenuOpen(false) }}
+                    className={`flex-1 rounded-lg px-2 py-1.5 text-xs font-medium ${lang === code ? 'bg-pink-100 text-pink-700' : 'text-gray-700 hover:bg-gray-50'}`}>
+                    {code === 'zh' ? '繁體中文' : 'English'}
+                  </button>
+                ))}
               </div>
               <div className="h-px bg-gray-100 my-1" />
               <button
