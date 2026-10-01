@@ -11,10 +11,10 @@ import {
 
 function Splash() {
   return (
-    <div className="flex h-screen items-center justify-center bg-gray-50">
+    <div className="flex h-screen items-center justify-center bg-background">
       <div className="flex flex-col items-center gap-3">
         <div
-          className="h-8 w-8 animate-spin rounded-full border-2 border-gray-200"
+          className="h-8 w-8 animate-spin rounded-full border-2 border-border"
           style={{ borderTopColor: '#E8187A' }}
         />
         <div className="text-sm font-semibold" style={{ color: '#E8187A' }}>Emma AI</div>

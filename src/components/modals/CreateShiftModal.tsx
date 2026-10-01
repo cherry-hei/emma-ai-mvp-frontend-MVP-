@@ -215,7 +215,7 @@ export function CreateShiftModal({
     <Dialog open={open} onOpenChange={onClose}>
       <DialogContent className="w-[min(96vw,860px)] max-w-none rounded-2xl max-h-[90vh] overflow-hidden p-0">
         <div className="flex min-w-0 flex-col max-h-[90vh]">
-          <DialogHeader className="px-6 pt-6 pb-3 border-b border-gray-100">
+          <DialogHeader className="px-6 pt-6 pb-3 border-b border-border">
             <div className="flex min-w-0 items-center gap-3">
               <div className="w-11 h-11 rounded-xl flex items-center justify-center text-xl shrink-0" style={{ background: '#fce8f3' }}>✨</div>
               <div className="min-w-0">
@@ -231,9 +231,9 @@ export function CreateShiftModal({
             <div className="space-y-4 min-w-0">
               {/* Date - constrained to the period being edited */}
               <div>
-                <label className="text-[9px] font-bold text-gray-500 uppercase tracking-wider">{L.date}</label>
+                <label className="text-xs font-bold text-muted-foreground uppercase tracking-wider">{L.date}</label>
                 <Select value={date} onValueChange={setDate}>
-                  <SelectTrigger className="mt-1.5 rounded-xl bg-gray-50 border-gray-200 w-full">
+                  <SelectTrigger className="mt-1.5 rounded-xl bg-muted border-border w-full">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
@@ -245,9 +245,9 @@ export function CreateShiftModal({
               {/* Rank filter + staff */}
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 min-w-0">
                 <div className="min-w-0">
-                  <label className="text-[9px] font-bold text-gray-500 uppercase tracking-wider">{L.position}</label>
+                  <label className="text-xs font-bold text-muted-foreground uppercase tracking-wider">{L.position}</label>
                   <Select value={rank} onValueChange={setRank}>
-                    <SelectTrigger className="mt-1.5 rounded-xl bg-gray-50 border-gray-200 w-full">
+                    <SelectTrigger className="mt-1.5 rounded-xl bg-muted border-border w-full">
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
@@ -258,9 +258,9 @@ export function CreateShiftModal({
                   </Select>
                 </div>
                 <div className="min-w-0">
-                  <label className="text-[9px] font-bold text-gray-500 uppercase tracking-wider">{L.employee}</label>
+                  <label className="text-xs font-bold text-muted-foreground uppercase tracking-wider">{L.employee}</label>
                   <Select value={staffId} onValueChange={setStaffId}>
-                    <SelectTrigger className="mt-1.5 rounded-xl bg-gray-50 border-gray-200 w-full">
+                    <SelectTrigger className="mt-1.5 rounded-xl bg-muted border-border w-full">
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
@@ -279,9 +279,9 @@ export function CreateShiftModal({
               {/* Shift type + its hours */}
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 min-w-0">
                 <div className="min-w-0">
-                  <label className="text-[9px] font-bold text-gray-500 uppercase tracking-wider">{L.shift_type}</label>
+                  <label className="text-xs font-bold text-muted-foreground uppercase tracking-wider">{L.shift_type}</label>
                   <Select value={shiftType} onValueChange={setShiftType}>
-                    <SelectTrigger className="mt-1.5 rounded-xl bg-gray-50 border-gray-200 w-full">
+                    <SelectTrigger className="mt-1.5 rounded-xl bg-muted border-border w-full">
                       <SelectValue placeholder={L.pick_shift} />
                     </SelectTrigger>
                     <SelectContent>
@@ -294,13 +294,13 @@ export function CreateShiftModal({
                   </Select>
                 </div>
                 <div className="min-w-0">
-                  <label className="text-[9px] font-bold text-gray-500 uppercase tracking-wider">{L.time_range}</label>
-                  <div className="mt-1.5 px-3.5 py-2.5 border border-gray-200 rounded-xl text-sm bg-gray-50 text-gray-700">
+                  <label className="text-xs font-bold text-muted-foreground uppercase tracking-wider">{L.time_range}</label>
+                  <div className="mt-1.5 px-3.5 py-2.5 border border-border rounded-xl text-sm bg-muted text-foreground">
                     {def
                       ? `${hhmm(def.start_time)} ${L.to} ${hhmm(def.end_time)}${def.cross_midnight ? ' ⏭' : ''}`
                       : '—'}
                   </div>
-                  <div className="text-[10px] text-gray-400 mt-1">{L.time_note}</div>
+                  <div className="text-xs text-muted-foreground mt-1">{L.time_note}</div>
                 </div>
               </div>
 
@@ -308,18 +308,18 @@ export function CreateShiftModal({
              {def?.is_working && (
                <div className="min-w-0">
                  <div className="flex flex-col gap-2 mb-2 sm:flex-row sm:items-center sm:justify-between">
-                   <label className="text-[9px] font-bold text-gray-500 uppercase tracking-wider">{L.task_schedule}</label>
-                   <span className="text-[9px] font-bold px-2 py-0.5 rounded w-fit" style={{ background: '#fce8f3', color: PINK }}>
+                   <label className="text-xs font-bold text-muted-foreground uppercase tracking-wider">{L.task_schedule}</label>
+                   <span className="text-xs font-bold px-2 py-0.5 rounded w-fit" style={{ background: '#fce8f3', color: PINK }}>
                      {L.adjustable}
                    </span>
                  </div>
 
                   {availableTasks.length === 0 && !manualMode ? (
-                    <div className="text-[11px] text-gray-400 border border-dashed border-gray-200 rounded-xl p-3 text-center space-y-2">
+                    <div className="text-xs text-muted-foreground border border-dashed border-border rounded-xl p-3 text-center space-y-2">
                       {L.no_tasks}
                       {allTasks.length > 0 && (
                         <button type="button" onClick={() => setManualMode(true)}
-                          className="block mx-auto mt-2 text-xs font-semibold px-3 py-1.5 rounded-lg border border-pink-200 hover:bg-pink-50 transition-colors"
+                          className="block mx-auto mt-2 text-xs font-semibold px-3 py-1.5 rounded-lg border border-pink-200 hover:bg-pink-50 transition-colors dark:border-pink-800 dark:hover:bg-pink-950"
                           style={{ color: PINK }}>
                           {L.add_task_manual}
                         </button>
@@ -328,19 +328,19 @@ export function CreateShiftModal({
                   ) : (
                     <>
                       {manualMode && (
-                        <div className="text-[10px] px-3 py-2 rounded-lg mb-2 border border-amber-200" style={{ background: '#fffbeb', color: '#92400e' }}>
+                        <div className="text-xs px-3 py-2 rounded-lg mb-2 border border-amber-200" style={{ background: '#fffbeb', color: '#92400e' }}>
                           {L.manual_warning}
                         </div>
                       )}
                       <div className="space-y-2 min-w-0">
                         {rows.map((row, index) => (
-                          <div key={row.id} className="border border-gray-200 rounded-xl p-3 bg-gray-50 min-w-0">
+                          <div key={row.id} className="border border-border rounded-xl p-3 bg-muted min-w-0">
                             <div className="grid grid-cols-1 gap-2 sm:grid-cols-[1fr_auto_1fr_auto] sm:items-center min-w-0">
                               <input type="time" value={row.start} onChange={(e) => updateRow(row.id, { start: e.target.value })}
-                                className="min-w-0 w-full px-3 py-2 border border-gray-200 rounded-xl text-sm bg-white" />
-                              <span className="text-xs text-gray-400 shrink-0">{L.to}</span>
+                                className="min-w-0 w-full px-3 py-2 border border-border rounded-xl text-sm bg-card" />
+                              <span className="text-xs text-muted-foreground shrink-0">{L.to}</span>
                               <input type="time" value={row.end} onChange={(e) => updateRow(row.id, { end: e.target.value })}
-                                className="min-w-0 w-full px-3 py-2 border border-gray-200 rounded-xl text-sm bg-white" />
+                                className="min-w-0 w-full px-3 py-2 border border-border rounded-xl text-sm bg-card" />
                               <button type="button" onClick={() => removeRow(row.id)}
                                 className="text-xs font-semibold text-red-500">
                                 {L.delete_task}
@@ -348,7 +348,7 @@ export function CreateShiftModal({
                             </div>
                             <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2 min-w-0">
                               <Select value={row.taskId} onValueChange={(value: string) => updateRow(row.id, { taskId: value })}>
-                                <SelectTrigger className="rounded-xl bg-white border-gray-200 w-full min-w-0">
+                                <SelectTrigger className="rounded-xl bg-card border-border w-full min-w-0">
                                   <SelectValue placeholder={L.task_ph} />
                                 </SelectTrigger>
                                 <SelectContent>
@@ -360,9 +360,9 @@ export function CreateShiftModal({
                               <input type="text" value={row.note}
                                 onChange={(e) => updateRow(row.id, { note: e.target.value })}
                                 placeholder={L.note_ph}
-                                className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm bg-white min-w-0" />
+                                className="w-full px-3 py-2 border border-border rounded-xl text-sm bg-card min-w-0" />
                             </div>
-                            <div className="mt-2 text-[11px] text-gray-500 break-words">
+                            <div className="mt-2 text-xs text-muted-foreground break-words">
                               {L.item} {index + 1}：{row.start || '--:--'} - {row.end || '--:--'} ／
                               {taskDefs.find((t) => t.id === row.taskId)
                                 ? taskLabel(taskDefs.find((t) => t.id === row.taskId)!)
@@ -382,12 +382,12 @@ export function CreateShiftModal({
 
               {issues.length > 0 && (
                 <div className="rounded-xl border p-3" style={{ background: '#fff1f2', borderColor: '#fecdd3' }}>
-                  <div className="text-[10px] font-bold uppercase tracking-wider mb-1" style={{ color: '#be123c' }}>
+                  <div className="text-xs font-bold uppercase tracking-wider mb-1" style={{ color: '#be123c' }}>
                     {L.rejected}
                   </div>
                   <ul className="space-y-1">
                     {issues.map((line, i) => (
-                      <li key={i} className="text-[11px]" style={{ color: '#9f1239' }}>{line}</li>
+                      <li key={i} className="text-xs" style={{ color: '#9f1239' }}>{line}</li>
                     ))}
                   </ul>
                 </div>
@@ -397,11 +397,11 @@ export function CreateShiftModal({
           </div>
 
           {/* Footer */}
-          <div className="px-6 py-4 border-t border-gray-100 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+          <div className="px-6 py-4 border-t border-border flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
             <div className="w-full sm:w-auto">
               {isEditMode && onDeleted ? (
                 <Button variant="outline" onClick={handleDelete} disabled={busy}
-                  className="w-full sm:w-auto rounded-xl text-xs text-red-500 border-red-200 hover:bg-red-50">
+                  className="w-full sm:w-auto rounded-xl text-xs text-red-500 border-red-200 hover:bg-red-50 dark:border-red-900 dark:hover:bg-red-950">
                   {L.delete_shift}
                 </Button>
               ) : (

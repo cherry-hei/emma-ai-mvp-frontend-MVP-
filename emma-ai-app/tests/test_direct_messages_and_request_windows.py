@@ -260,6 +260,64 @@ def test_window_post_is_owner_only_and_uses_authenticated_facility(monkeypatch):
     assert called[0][2]["created_by"] == "owner"
 
 
+def test_window_publishes_only_through_atomic_rpc_with_authenticated_facility():
+    calls = []
+
+    class AtomicClient:
+        def rpc(self, name, params):
+            calls.append((name, params))
+            return SimpleNamespace(execute=lambda: SimpleNamespace(data={
+                "config_json": params["p_config_json"], "active": True, "version": 2,
+            }))
+
+        def table(self, *_args):
+            pytest.fail("window publishing must never use non-atomic table writes")
+
+    client = AtomicClient()
+    row = duty_request_window.put(
+        client, "f1", enabled=True,
+        opens_at=datetime(2026, 10, 1, 9, tzinfo=timezone.utc),
+        closes_at=datetime(2026, 10, 2, 9, tzinfo=timezone.utc),
+        target_start=date(2026, 10, 3), target_end=date(2026, 10, 5),
+        created_by="ignored-by-rpc",
+    )
+    assert row["version"] == 2
+    assert len(calls) == 1
+    assert calls[0][0] == "publish_duty_request_window"
+    assert calls[0][1]["p_facility_id"] == "f1"
+    assert "created_by" not in calls[0][1]  # DB derives it from auth.uid()
+
+
+def test_window_missing_atomic_rpc_fails_closed_without_retiring_old_version():
+    rows = {"facility_json_configs": [{"facility_id": "f1", "config_key": "duty_request_window",
+                                      "active": True, "version": 1}]}
+    client = Client(rows)
+    body = windows_router.DutyRequestWindowInput(enabled=False)
+    with pytest.raises(HTTPException) as exc:
+        windows_router.put_duty_window(body, _ctx(client, profile_id="p-owner", role="OWNER"))
+    assert exc.value.status_code == 503
+    assert client.rows["facility_json_configs"][0]["active"] is True
+
+
+def test_window_atomic_rpc_error_keeps_old_config_and_never_falls_back_to_two_writes():
+    rows = [{"facility_id": "f1", "config_key": "duty_request_window", "active": True, "version": 1}]
+
+    class FailingClient:
+        def rpc(self, *_args, **_kwargs):
+            return SimpleNamespace(execute=lambda: (_ for _ in ()).throw(RuntimeError("synthetic DB error")))
+
+        def table(self, *_args):
+            pytest.fail("window publishing must not fall back to two-step writes")
+
+    client = FailingClient()
+    with pytest.raises(RuntimeError, match="synthetic DB error"):
+        duty_request_window.put(
+            client, "f1", enabled=False, opens_at=None, closes_at=None,
+            target_start=None, target_end=None, created_by="p-owner",
+        )
+    assert rows[0]["active"] is True
+
+
 def test_window_enforces_timezone_and_inclusive_time_and_target_boundaries(monkeypatch):
     config = {"config_json": {
         "enabled": True,

@@ -19,6 +19,10 @@ class DutyRequestWindowError(ValueError):
     """A duty/day-off request is outside the currently published window."""
 
 
+class DutyRequestWindowUnavailable(RuntimeError):
+    """The atomic publication procedure has not yet been installed."""
+
+
 def _as_aware(value: object, field: str) -> datetime:
     if isinstance(value, datetime):
         parsed = value
@@ -115,7 +119,11 @@ def get(client, facility_id: str, *, now: datetime | None = None) -> dict:
 def put(client, facility_id: str, *, enabled: bool, opens_at: datetime | None,
         closes_at: datetime | None, target_start: Date | None, target_end: Date | None,
         created_by: str) -> dict:
-    """Publish a new version. The prior record remains as inactive audit history."""
+    """Atomically publish a new version, retaining inactive history.
+
+    A missing RPC fails closed: the old two-query helper can retire the only
+    active window before an insert fails, and must never be used here.
+    """
     payload = {
         "enabled": enabled,
         "opens_at": opens_at.isoformat() if opens_at else None,
@@ -123,14 +131,20 @@ def put(client, facility_id: str, *, enabled: bool, opens_at: datetime | None,
         "target_start": target_start.isoformat() if target_start else None,
         "target_end": target_end.isoformat() if target_end else None,
     }
-    # Validate before retiring the old version. A malformed owner request must
-    # leave the currently active window untouched.
+    # Validate before the transaction. The database repeats validation because
+    # a caller can bypass this Python route and invoke the authenticated RPC.
     _normalised_payload({"config_json": payload})
-    return facility_config.put_config(
-        client, facility_id, config_key=CONFIG_KEY, config_json=payload,
-        description="Owner-controlled frontline duty/day-off request window",
-        created_by=created_by,
-    )
+    rpc = getattr(client, "rpc", None)
+    if not callable(rpc):
+        raise DutyRequestWindowUnavailable("atomic duty request window RPC is unavailable")
+    rows = rpc("publish_duty_request_window", {
+        "p_facility_id": facility_id,
+        "p_config_json": payload,
+    }).execute().data
+    row = rows[0] if isinstance(rows, list) and rows else rows
+    if not isinstance(row, dict):
+        raise DutyRequestWindowUnavailable("atomic duty request window RPC returned no row")
+    return row
 
 
 def assert_request_allowed(client, facility_id: str, *, leave_type: str,

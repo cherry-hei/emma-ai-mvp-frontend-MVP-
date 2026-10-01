@@ -10,7 +10,7 @@ type DisplayCtx = DisplayPrefs & {
   setTextSize: (size: TextSize) => void
   setTheme: (theme: DisplayTheme) => void
 }
-const DEFAULT: DisplayPrefs = { textSize: 'standard', theme: 'light' }
+const DEFAULT: DisplayPrefs = { textSize: 'comfortable', theme: 'light' }
 const Context = createContext<DisplayCtx>({ ...DEFAULT, setTextSize: () => {}, setTheme: () => {} })
 const keyFor = (id: string) => `emma_display_v1:${id}`
 
@@ -18,7 +18,7 @@ function read(id: string): DisplayPrefs {
   try {
     const raw = JSON.parse(window.localStorage.getItem(keyFor(id)) || '{}') as Partial<DisplayPrefs>
     return {
-      textSize: ['standard', 'comfortable', 'large'].includes(raw.textSize || '') ? raw.textSize! : 'standard',
+      textSize: ['standard', 'comfortable', 'large'].includes(raw.textSize || '') ? raw.textSize! : 'comfortable',
       theme: raw.theme === 'dark' ? 'dark' : 'light',
     }
   } catch { return DEFAULT }
@@ -35,11 +35,18 @@ export function DisplayPreferencesProvider({ children }: { children: ReactNode }
     setLoadedFor(id || null)
   }, [id])
   useEffect(() => {
-    if (typeof document === 'undefined' || !id || loadedFor !== id) return
+    if (typeof document === 'undefined') return
     const root = document.documentElement
+    if (!id) {
+      root.classList.remove('dark')
+      root.style.fontSize = ''
+      delete root.dataset.emmaTextSize
+      return
+    }
+    if (loadedFor !== id) return
     root.dataset.emmaTextSize = prefs.textSize
     root.classList.toggle('dark', prefs.theme === 'dark')
-    root.style.fontSize = ({ standard: '16px', comfortable: '18px', large: '20px' })[prefs.textSize]
+    root.style.fontSize = ({ standard: '16px', comfortable: '18px', large: '22px' })[prefs.textSize]
     window.localStorage.setItem(keyFor(id), JSON.stringify(prefs))
   }, [id, loadedFor, prefs])
 

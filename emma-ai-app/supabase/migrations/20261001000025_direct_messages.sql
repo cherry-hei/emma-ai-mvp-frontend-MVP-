@@ -218,3 +218,79 @@ create policy duty_request_window_owner_write on facility_json_configs
         and config_key = 'duty_request_window'
         and lower(public.current_role_name()) in ('owner', 'superintendent')
     );
+
+-- A pair of PostgREST UPDATE/INSERT calls is not atomic: a failed second call
+-- would retire the only active window. One SECURITY INVOKER RPC performs both
+-- writes in its own transaction, under the caller's RLS and privilege grants.
+-- Locking the parent facility row serializes two simultaneous owner publishes.
+create or replace function public.publish_duty_request_window(
+    p_facility_id uuid,
+    p_config_json jsonb
+)
+returns public.facility_json_configs
+language plpgsql
+security invoker
+set search_path = public, pg_temp
+as $$
+declare
+    v_version integer;
+    v_row public.facility_json_configs%rowtype;
+    v_opens timestamptz;
+    v_closes timestamptz;
+    v_target_start date;
+    v_target_end date;
+begin
+    if auth.uid() is null
+       or p_facility_id is distinct from public.current_facility_id()
+       or coalesce(lower(public.current_role_name()) in ('owner', 'superintendent'), false) is false then
+        raise exception using errcode = '42501', message = 'not authorized to publish request window';
+    end if;
+    if p_config_json is null
+       or jsonb_typeof(p_config_json) <> 'object'
+       or jsonb_typeof(p_config_json -> 'enabled') is distinct from 'boolean' then
+        raise exception using errcode = '22023', message = 'enabled must be a boolean';
+    end if;
+    if (p_config_json ->> 'opens_at') is not null
+       or (p_config_json ->> 'closes_at') is not null
+       or (p_config_json ->> 'target_start') is not null
+       or (p_config_json ->> 'target_end') is not null
+       or (p_config_json ->> 'enabled')::boolean then
+        if (p_config_json ->> 'opens_at') is null
+           or (p_config_json ->> 'closes_at') is null
+           or (p_config_json ->> 'target_start') is null
+           or (p_config_json ->> 'target_end') is null
+           or (p_config_json ->> 'opens_at') !~ '(Z|[+-][0-9]{2}:[0-9]{2})$'
+           or (p_config_json ->> 'closes_at') !~ '(Z|[+-][0-9]{2}:[0-9]{2})$' then
+            raise exception using errcode = '22023', message = 'window requires timezones and all target fields';
+        end if;
+        v_opens := (p_config_json ->> 'opens_at')::timestamptz;
+        v_closes := (p_config_json ->> 'closes_at')::timestamptz;
+        v_target_start := (p_config_json ->> 'target_start')::date;
+        v_target_end := (p_config_json ->> 'target_end')::date;
+        if v_closes <= v_opens or v_target_end < v_target_start then
+            raise exception using errcode = '22023', message = 'invalid request window range';
+        end if;
+    end if;
+
+    perform 1 from public.facilities where id = p_facility_id for update;
+    if not found then
+        raise exception using errcode = '42501', message = 'facility not available';
+    end if;
+    select coalesce(max(version), 0) + 1 into v_version
+      from public.facility_json_configs
+     where facility_id = p_facility_id and config_key = 'duty_request_window';
+    update public.facility_json_configs set active = false
+     where facility_id = p_facility_id and config_key = 'duty_request_window' and active;
+    insert into public.facility_json_configs (
+        facility_id, config_key, config_json, version, description, active, created_by
+    ) values (
+        p_facility_id, 'duty_request_window', p_config_json, v_version,
+        'Owner-controlled frontline duty/day-off request window', true,
+        public.current_profile_id()
+    ) returning * into v_row;
+    return v_row;
+end;
+$$;
+
+revoke all on function public.publish_duty_request_window(uuid, jsonb) from public, anon;
+grant execute on function public.publish_duty_request_window(uuid, jsonb) to authenticated;

@@ -99,7 +99,7 @@ export function BatchCreateShiftModal({
     <Dialog open={open} onOpenChange={onClose}>
       <DialogContent className="w-[min(96vw,700px)] max-w-none rounded-2xl max-h-[90vh] overflow-hidden p-0">
         <div className="flex flex-col max-h-[90vh]">
-          <DialogHeader className="px-6 pt-6 pb-3 border-b border-gray-100">
+          <DialogHeader className="px-6 pt-6 pb-3 border-b border-border">
             <div className="flex items-center gap-3">
               <div className="w-11 h-11 rounded-xl flex items-center justify-center text-xl shrink-0" style={{ background: '#fce8f3' }}>📋</div>
               <div>
@@ -112,9 +112,9 @@ export function BatchCreateShiftModal({
           <div className="px-6 py-4 overflow-y-auto space-y-4">
             {/* Shift type selection */}
             <div>
-              <label className="text-[9px] font-bold text-gray-500 uppercase tracking-wider">{L.selectShift}</label>
+              <label className="text-xs font-bold text-muted-foreground uppercase tracking-wider">{L.selectShift}</label>
               <Select value={shiftType} onValueChange={setShiftType}>
-                <SelectTrigger className="mt-1.5 rounded-xl bg-gray-50 border-gray-200">
+                <SelectTrigger className="mt-1.5 rounded-xl bg-muted border-border">
                   <SelectValue placeholder={L.selectShift} />
                 </SelectTrigger>
                 <SelectContent>
@@ -129,15 +129,15 @@ export function BatchCreateShiftModal({
 
             {/* Day selection */}
             <div>
-              <label className="text-[9px] font-bold text-gray-500 uppercase tracking-wider">{L.selectDays}</label>
+              <label className="text-xs font-bold text-muted-foreground uppercase tracking-wider">{L.selectDays}</label>
               <div className="flex gap-2 mt-1.5">
                 {weekdays.map((day, i) => (
                   <button key={i} type="button" onClick={() => toggleDay(i)}
                     className="w-9 h-9 rounded-lg text-xs font-bold border transition-all"
                     style={{
-                      background: selectedDays.includes(i) ? PINK : '#fff',
-                      color: selectedDays.includes(i) ? '#fff' : '#6b7280',
-                      borderColor: selectedDays.includes(i) ? PINK : '#e5e7eb',
+                      background: selectedDays.includes(i) ? PINK : 'var(--card)',
+                      color: selectedDays.includes(i) ? '#fff' : 'var(--muted-foreground)',
+                      borderColor: selectedDays.includes(i) ? PINK : 'var(--border)',
                     }}>
                     {day}
                   </button>
@@ -148,25 +148,25 @@ export function BatchCreateShiftModal({
             {/* Staff selection */}
             <div>
               <div className="flex items-center justify-between mb-1.5">
-                <label className="text-[9px] font-bold text-gray-500 uppercase tracking-wider">{L.selectStaff}</label>
+                <label className="text-xs font-bold text-muted-foreground uppercase tracking-wider">{L.selectStaff}</label>
                 <div className="flex items-center gap-2">
                   <select value={rankFilter} onChange={e => setRankFilter(e.target.value)}
-                    className="text-[10px] px-2 py-1 border border-gray-200 rounded-lg bg-white">
+                    className="text-xs px-2 py-1 border border-border rounded-lg bg-card">
                     {ranks.map(r => <option key={r} value={r}>{r === 'ALL' ? L.allRanks : r}</option>)}
                   </select>
                   <button type="button" onClick={selectAllFiltered}
-                    className="text-[10px] font-semibold" style={{ color: PINK }}>
+                    className="text-xs font-semibold" style={{ color: PINK }}>
                     {isZH ? '全選/取消' : 'Toggle All'}
                   </button>
                 </div>
               </div>
-              <div className="max-h-48 overflow-y-auto border border-gray-200 rounded-xl p-2 space-y-1">
+              <div className="max-h-48 overflow-y-auto border border-border rounded-xl p-2 space-y-1">
                 {filteredStaff.map(s => (
-                  <label key={s.id} className="flex items-center gap-2 px-2 py-1.5 rounded-lg hover:bg-gray-50 cursor-pointer">
+                  <label key={s.id} className="flex items-center gap-2 px-2 py-1.5 rounded-lg hover:bg-muted cursor-pointer">
                     <input type="checkbox" checked={selectedStaffIds.includes(s.id)}
-                      onChange={() => toggleStaff(s.id)} className="rounded border-gray-300" />
+                      onChange={() => toggleStaff(s.id)} className="rounded border-border" />
                     <span className="text-xs font-medium">{s.name_en || s.name}</span>
-                    <span className="text-[10px] text-gray-400">({s.rank})</span>
+                    <span className="text-xs text-muted-foreground">({s.rank})</span>
                   </label>
                 ))}
               </div>
@@ -178,7 +178,7 @@ export function BatchCreateShiftModal({
                 <div className="text-sm font-bold" style={{ color: PINK }}>
                   {L.preview}: {totalAssignments}{L.assignments}
                 </div>
-                <div className="text-[10px] text-gray-500 mt-1">
+                <div className="text-xs text-muted-foreground mt-1">
                   {selectedStaffIds.length} {isZH ? '名員工' : 'staff'} × {matchingDates.length} {isZH ? '日' : 'days'}
                 </div>
               </div>
@@ -186,7 +186,7 @@ export function BatchCreateShiftModal({
           </div>
 
           {/* Footer */}
-          <div className="px-6 py-4 border-t border-gray-100 flex items-center justify-between">
+          <div className="px-6 py-4 border-t border-border flex items-center justify-between">
             <Button variant="outline" onClick={onClose} className="rounded-xl text-xs">{L.cancel}</Button>
             <Button onClick={handleCreate} disabled={busy || !shiftType || totalAssignments === 0}
               className="rounded-xl text-xs text-white" style={{ background: PINK }}>

@@ -79,14 +79,9 @@ export function TopNav({ onMenuToggle }: { onMenuToggle?: () => void } = {}) {
         <button
           onClick={() => router.push(ROUTES.insights)}
           aria-label="Open Emma AI"
-          className="flex min-h-8 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg border px-2.5 py-1.5 text-[10px] font-bold transition-all hover:-translate-y-px"
-          style={{
-            borderColor: pathname?.startsWith(ROUTES.insights) ? '#E8187A' : '#f6c6db',
-            color: pathname?.startsWith(ROUTES.insights) ? '#ffffff' : '#E8187A',
-            background: pathname?.startsWith(ROUTES.insights) ? 'linear-gradient(135deg,#E8187A,#f28f9e)' : '#fff5f9',
-          }}
+          className={`flex min-h-8 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg border px-2.5 py-1.5 text-[10px] font-bold transition-all hover:-translate-y-px ${pathname?.startsWith(ROUTES.insights) ? 'border-pink-600 bg-pink-600 text-white' : 'border-pink-200 bg-pink-50 text-pink-700 dark:border-pink-700 dark:bg-pink-950/40 dark:text-pink-200'}`}
         >
-          <span aria-hidden>✦</span>
+          <img src="/icons/emma-badge.png" alt="" width={18} height={18} className="rounded-sm" />
           <span>Emma AI</span>
         </button>
       )}
@@ -167,7 +162,7 @@ export function TopNav({ onMenuToggle }: { onMenuToggle?: () => void } = {}) {
               <div className="h-px bg-border my-1" />
               <div className="px-3 py-2 text-xs font-semibold">{isZH ? '文字大小' : 'Text size'}</div>
               <div className="flex gap-1 px-2 pb-2" role="group" aria-label={isZH ? '文字大小' : 'Text size'}>
-                {([['standard', 'A', '16px'], ['comfortable', 'AA', '18px'], ['large', 'AAA', '20px']] as [TextSize, string, string][]).map(([size, label, px]) => (
+                {([['standard', 'A', '16px'], ['comfortable', 'AA', '18px'], ['large', 'AAA', '22px']] as [TextSize, string, string][]).map(([size, label, px]) => (
                   <button key={size} type="button" onClick={() => setTextSize(size)} aria-pressed={textSize === size}
                     className={`min-h-10 flex-1 rounded-lg border text-xs font-bold ${textSize === size ? 'border-pink-500 bg-pink-100 text-pink-800' : 'border-border bg-background text-foreground'}`}
                     title={`${label} · ${px}`}>

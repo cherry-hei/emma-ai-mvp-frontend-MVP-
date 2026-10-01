@@ -70,3 +70,5 @@ def put_duty_window(body: DutyRequestWindowInput, ctx: AuthCtx = Depends(get_ctx
         return svc.public_window(row)
     except ValueError as exc:
         raise api_error(422, "invalid_request_window", str(exc)) from exc
+    except svc.DutyRequestWindowUnavailable as exc:
+        raise api_error(503, "request_window_unavailable", str(exc)) from exc

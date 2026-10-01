@@ -53,16 +53,16 @@ function ReasonModal({ title, placeholder, onConfirm, onCancel }: {
   const [reason, setReason] = useState('')
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-      <div className="bg-white rounded-2xl shadow-xl w-full max-w-md p-5 space-y-4">
-        <h3 className="text-sm font-bold text-gray-900">{title}</h3>
+      <div className="bg-card rounded-2xl shadow-xl w-full max-w-md p-5 space-y-4">
+        <h3 className="text-sm font-bold text-foreground">{title}</h3>
         <textarea
-          className="w-full border border-gray-200 rounded-xl p-3 text-xs text-gray-700 outline-none focus:border-pink-300 resize-none"
+          className="w-full border border-border rounded-xl p-3 text-xs text-foreground outline-none focus:border-pink-300 resize-none"
           rows={3} placeholder={placeholder} value={reason}
           onChange={(e) => setReason(e.target.value)} autoFocus
         />
         <div className="flex justify-end gap-2">
           <button onClick={onCancel}
-            className="px-4 py-2 text-xs rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50">
+            className="px-4 py-2 text-xs rounded-lg border border-border text-muted-foreground hover:bg-muted">
             取消 / Cancel
           </button>
           <button onClick={() => onConfirm(reason)} disabled={!reason.trim()}
@@ -80,13 +80,13 @@ function ReasonModal({ title, placeholder, onConfirm, onCancel }: {
 function RecommendationBadge({ rec }: { rec: Recommendation }) {
   const isApprove = rec.decision === 'approve'
   return (
-    <div className={`flex items-center gap-1.5 px-2 py-1 rounded-lg text-[10px] ${
+    <div className={`flex items-center gap-1.5 px-2 py-1 rounded-lg text-xs ${
       isApprove ? 'bg-emerald-50 text-emerald-700' : 'bg-rose-50 text-rose-700'
     }`}>
       <span>{isApprove ? '✅' : '❌'}</span>
       <span className="font-medium">{rec.recommender_name}</span>
-      <span className="text-gray-400">({rec.recommender_role})</span>
-      {rec.reason && <span className="text-gray-500 ml-1">— {rec.reason}</span>}
+      <span className="text-muted-foreground">({rec.recommender_role})</span>
+      {rec.reason && <span className="text-muted-foreground ml-1">— {rec.reason}</span>}
     </div>
   )
 }
@@ -120,8 +120,8 @@ function ApprovalCard({ request, role, isZH, onAction, busy }: {
 
   return (
     <>
-      <div className={`bg-white border rounded-xl p-4 space-y-3 transition-all hover:shadow-sm ${
-        hasDisagreement ? 'border-amber-300 ring-1 ring-amber-100' : 'border-gray-200'
+      <div className={`bg-card border rounded-xl p-4 space-y-3 transition-all hover:shadow-sm ${
+        hasDisagreement ? 'border-amber-300 ring-1 ring-amber-100' : 'border-border'
       }`}>
         {/* Header: Staff info + Status */}
         <div className="flex items-start justify-between">
@@ -131,19 +131,19 @@ function ApprovalCard({ request, role, isZH, onAction, busy }: {
               {(request.name_en || request.name || '?')[0]}
             </div>
             <div>
-              <div className="text-sm font-semibold text-gray-900">{request.name_en || request.name}</div>
-              <div className="text-[10px] text-gray-400">
+              <div className="text-sm font-semibold text-foreground">{request.name_en || request.name}</div>
+              <div className="text-xs text-muted-foreground">
                 {[request.rank, request.unit_name].filter(Boolean).join(' · ')}
               </div>
             </div>
           </div>
           <div className="flex items-center gap-2">
             {hasDisagreement && (
-              <span className="text-[9px] px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 font-medium">
+              <span className="text-xs px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 font-medium">
                 {isZH ? '⚠️ 意見分歧' : '⚠️ Disagreement'}
               </span>
             )}
-            <span className="text-[9px] px-2 py-0.5 rounded-full font-medium"
+            <span className="text-xs px-2 py-0.5 rounded-full font-medium"
               style={{ background: statusStyle.bg, color: statusStyle.text }}>
               {statusLabel}
             </span>
@@ -153,47 +153,47 @@ function ApprovalCard({ request, role, isZH, onAction, busy }: {
         {/* Request details */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
           <div>
-            <div className="text-[9px] text-gray-400 uppercase tracking-wider mb-0.5">
+            <div className="text-xs text-muted-foreground uppercase tracking-wider mb-0.5">
               {isZH ? '類型' : 'Type'}
             </div>
-            <div className="font-medium text-gray-800">{request.leave_type}</div>
+            <div className="font-medium text-foreground">{request.leave_type}</div>
           </div>
           <div>
-            <div className="text-[9px] text-gray-400 uppercase tracking-wider mb-0.5">
+            <div className="text-xs text-muted-foreground uppercase tracking-wider mb-0.5">
               {isZH ? '日期' : 'Dates'}
             </div>
-            <div className="font-medium text-gray-800">{fmtRange(request.date_start, request.date_end)}</div>
+            <div className="font-medium text-foreground">{fmtRange(request.date_start, request.date_end)}</div>
           </div>
           {request.requested_shift_type && (
             <div>
-              <div className="text-[9px] text-gray-400 uppercase tracking-wider mb-0.5">
+              <div className="text-xs text-muted-foreground uppercase tracking-wider mb-0.5">
                 {isZH ? '申請更期' : 'Shift'}
               </div>
-              <div className="font-medium text-gray-800">{request.requested_shift_type}</div>
+              <div className="font-medium text-foreground">{request.requested_shift_type}</div>
             </div>
           )}
           <div>
-            <div className="text-[9px] text-gray-400 uppercase tracking-wider mb-0.5">
+            <div className="text-xs text-muted-foreground uppercase tracking-wider mb-0.5">
               {isZH ? '申請日期' : 'Applied'}
             </div>
-            <div className="text-gray-600">{fmtDate(request.created_at)}</div>
+            <div className="text-muted-foreground">{fmtDate(request.created_at)}</div>
           </div>
         </div>
 
         {/* Reason */}
         {request.reason && (
-          <div className="text-xs text-gray-600 bg-gray-50 rounded-lg px-3 py-2">
-            <span className="text-[9px] text-gray-400 font-medium uppercase mr-2">
+          <div className="text-xs text-muted-foreground bg-muted rounded-lg px-3 py-2">
+            <span className="text-xs text-muted-foreground font-medium uppercase mr-2">
               {isZH ? '原因' : 'Reason'}:
             </span>
             {request.reason}
-            {request.remark && <span className="text-gray-400 ml-2">({request.remark})</span>}
+            {request.remark && <span className="text-muted-foreground ml-2">({request.remark})</span>}
           </div>
         )}
 
         {/* Document */}
         {request.document_url && (
-          <div className="flex items-center gap-1 text-[10px] text-blue-600">
+          <div className="flex items-center gap-1 text-xs text-blue-600">
             📄 <a href={request.document_url} target="_blank" rel="noopener noreferrer" className="hover:underline">
               {isZH ? '查看附件' : 'View attachment'}
             </a>
@@ -203,7 +203,7 @@ function ApprovalCard({ request, role, isZH, onAction, busy }: {
         {/* Recommendations section */}
         {recs.length > 0 && (
           <div className="space-y-1.5">
-            <div className="text-[9px] text-gray-400 uppercase tracking-wider font-medium">
+            <div className="text-xs text-muted-foreground uppercase tracking-wider font-medium">
               {isZH ? '建議意見' : 'Recommendations'}
             </div>
             <div className="flex flex-wrap gap-1.5">
@@ -214,8 +214,8 @@ function ApprovalCard({ request, role, isZH, onAction, busy }: {
 
         {/* Decision note (for already-decided items) */}
         {request.decision_note && (
-          <div className="text-xs text-gray-500 bg-gray-50 rounded-lg px-3 py-2 italic">
-            <span className="text-[9px] text-gray-400 font-medium uppercase mr-2 not-italic">
+          <div className="text-xs text-muted-foreground bg-muted rounded-lg px-3 py-2 italic">
+            <span className="text-xs text-muted-foreground font-medium uppercase mr-2 not-italic">
               {isZH ? '決定備註' : 'Decision note'}:
             </span>
             {request.decision_note}
@@ -223,28 +223,28 @@ function ApprovalCard({ request, role, isZH, onAction, busy }: {
         )}
 
         {isApproved && (
-          <div className="flex flex-col gap-2 rounded-lg border border-sky-100 bg-sky-50 px-3 py-2 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex flex-col gap-2 rounded-lg border border-sky-100 bg-sky-50 px-3 py-2 dark:border-sky-900 dark:bg-sky-950 sm:flex-row sm:items-center sm:justify-between">
             <div>
-              <div className="text-[10px] font-semibold text-sky-800">
+              <div className="text-xs font-semibold text-sky-800">
                 {isZH ? '批准後更表／排班鎖核對' : 'Approval / roster-lock verification'}
               </div>
-              <div className="mt-0.5 text-[9px] leading-relaxed text-sky-700">
+              <div className="mt-0.5 text-xs leading-relaxed text-sky-700">
                 {['DO', 'duty_request'].includes(request.leave_type)
                   ? (isZH ? '批准後會記錄未來排更限制／鎖，唔代表已立即改動當前更表；請核對後端lock和下一次排更結果。' : 'Approval creates a future roster constraint/lock, not an immediate current-roster edit. Verify the saved lock and the next roster run.')
                   : (isZH ? '批准已保存；請核對假期限制。若需要即時更表顯示，仍須確認後端更表及審核紀錄。' : 'Approval is saved; verify the leave constraint. Immediate roster visibility still needs backend and audit verification.')}
               </div>
             </div>
-            <a href="/roster" className="shrink-0 rounded-lg border border-sky-200 bg-white px-3 py-1.5 text-[10px] font-semibold text-sky-700 hover:bg-sky-50">
+            <a href="/roster" className="shrink-0 rounded-lg border border-sky-200 bg-card px-3 py-1.5 text-xs font-semibold text-sky-700 hover:bg-sky-50">
               {isZH ? '開啟更表核對' : 'Open roster'}
             </a>
           </div>
         )}
 
         {/* Action buttons */}
-        <div className="flex items-center justify-between pt-2 border-t border-gray-100">
-          <div className="text-[9px] text-gray-400">
+        <div className="flex items-center justify-between pt-2 border-t border-border">
+          <div className="text-xs text-muted-foreground">
             {request.priority && request.priority !== 'normal' && (
-              <span className={`px-1.5 py-0.5 rounded text-[8px] font-medium uppercase ${
+              <span className={`px-1.5 py-0.5 rounded text-xs font-medium uppercase ${
                 request.priority === 'urgent' ? 'bg-red-100 text-red-700' :
                 request.priority === 'high' ? 'bg-orange-100 text-orange-700' :
                 'bg-blue-100 text-blue-700'
@@ -259,12 +259,12 @@ function ApprovalCard({ request, role, isZH, onAction, busy }: {
             {isOwner && isPending && (
               <>
                 <button disabled={busy} onClick={() => onAction(request.id, 'approve')}
-                  className="px-3 py-1.5 text-[10px] rounded-lg text-white font-medium disabled:opacity-50 hover:opacity-90 transition-opacity"
+                  className="px-3 py-1.5 text-xs rounded-lg text-white font-medium disabled:opacity-50 hover:opacity-90 transition-opacity"
                   style={{ background: '#10B981' }}>
                   {isZH ? '✅ 批准' : '✅ Approve'}
                 </button>
                 <button disabled={busy} onClick={() => setShowRejectModal(true)}
-                  className="px-3 py-1.5 text-[10px] rounded-lg border border-rose-200 text-rose-600 font-medium disabled:opacity-50 hover:bg-rose-50 transition-colors">
+                  className="px-3 py-1.5 text-xs rounded-lg border border-rose-200 text-rose-600 font-medium disabled:opacity-50 hover:bg-rose-50 transition-colors">
                   {isZH ? '❌ 拒絕' : '❌ Reject'}
                 </button>
               </>
@@ -272,7 +272,7 @@ function ApprovalCard({ request, role, isZH, onAction, busy }: {
 
             {isOwner && isApproved && (
               <button disabled={busy} onClick={() => setShowWithdrawModal(true)}
-                className="px-3 py-1.5 text-[10px] rounded-lg border border-gray-300 text-gray-600 font-medium disabled:opacity-50 hover:bg-gray-50 transition-colors">
+                className="px-3 py-1.5 text-xs rounded-lg border border-border text-muted-foreground font-medium disabled:opacity-50 hover:bg-muted transition-colors">
                 {isZH ? '↩️ 撤回' : '↩️ Withdraw'}
               </button>
             )}
@@ -281,11 +281,11 @@ function ApprovalCard({ request, role, isZH, onAction, busy }: {
             {isRecommender && isPending && (
               <>
                 <button disabled={busy} onClick={() => setShowRecommendModal(true)}
-                  className="px-3 py-1.5 text-[10px] rounded-lg border border-emerald-200 text-emerald-700 font-medium disabled:opacity-50 hover:bg-emerald-50 transition-colors">
+                  className="px-3 py-1.5 text-xs rounded-lg border border-emerald-200 text-emerald-700 font-medium disabled:opacity-50 hover:bg-emerald-50 transition-colors">
                   {isZH ? '👍 建議批准' : '👍 Recommend Approve'}
                 </button>
                 <button disabled={busy} onClick={() => setShowRejectModal(true)}
-                  className="px-3 py-1.5 text-[10px] rounded-lg border border-rose-200 text-rose-600 font-medium disabled:opacity-50 hover:bg-rose-50 transition-colors">
+                  className="px-3 py-1.5 text-xs rounded-lg border border-rose-200 text-rose-600 font-medium disabled:opacity-50 hover:bg-rose-50 transition-colors">
                   {isZH ? '👎 建議拒絕' : '👎 Recommend Reject'}
                 </button>
               </>
@@ -294,7 +294,7 @@ function ApprovalCard({ request, role, isZH, onAction, busy }: {
             {/* Mark as reviewed (any recommender or owner) */}
             {(isOwner || isRecommender) && isPending && !request.reviewed && (
               <button disabled={busy} onClick={() => onAction(request.id, 'review')}
-                className="px-3 py-1.5 text-[10px] rounded-lg border border-gray-200 text-gray-500 disabled:opacity-50 hover:bg-gray-50 transition-colors">
+                className="px-3 py-1.5 text-xs rounded-lg border border-border text-muted-foreground disabled:opacity-50 hover:bg-muted transition-colors">
                 {isZH ? '👁️ 標為已閱' : '👁️ Mark reviewed'}
               </button>
             )}
@@ -455,8 +455,8 @@ export default function ApprovalPage() {
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
         <div>
-          <h1 className="text-lg font-bold text-gray-900">{L.title}</h1>
-          <p className="text-xs text-gray-500 mt-0.5">{L.subtitle}</p>
+          <h1 className="text-lg font-bold text-foreground">{L.title}</h1>
+          <p className="text-xs text-muted-foreground mt-0.5">{L.subtitle}</p>
         </div>
         <button
           onClick={() => downloadReportCsv('staff_register').catch(
@@ -470,7 +470,7 @@ export default function ApprovalPage() {
       </div>
 
       {error && (
-        <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-xs text-rose-700">
+        <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-xs text-rose-700 dark:border-rose-900 dark:bg-rose-950 dark:text-rose-200">
           {error}
         </div>
       )}
@@ -479,28 +479,28 @@ export default function ApprovalPage() {
 
       {/* KPI boxes */}
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-        <div className="bg-white border border-gray-200 rounded-xl p-4">
-          <div className="text-[9px] text-gray-400 uppercase tracking-wider mb-1">{L.total_title}</div>
-          <div className="text-3xl font-bold text-gray-900 tabular-nums">{stats?.total_actions ?? '-'}</div>
-          <div className="text-[10px] text-gray-400 mt-1">{L.total_label}</div>
+        <div className="bg-card border border-border rounded-xl p-4">
+          <div className="text-xs text-muted-foreground uppercase tracking-wider mb-1">{L.total_title}</div>
+          <div className="text-3xl font-bold text-foreground tabular-nums">{stats?.total_actions ?? '-'}</div>
+          <div className="text-xs text-muted-foreground mt-1">{L.total_label}</div>
         </div>
-        <div className="bg-white border border-gray-200 rounded-xl p-4">
-          <div className="text-[9px] text-gray-400 uppercase tracking-wider mb-1">{L.rate_title}</div>
+        <div className="bg-card border border-border rounded-xl p-4">
+          <div className="text-xs text-muted-foreground uppercase tracking-wider mb-1">{L.rate_title}</div>
           <div className="text-3xl font-bold tabular-nums" style={{ color: '#10B981' }}>
             {stats ? `${stats.approval_rate}%` : '-'}
           </div>
-          <div className="w-full h-1.5 bg-gray-100 rounded-full mt-2 overflow-hidden">
+          <div className="w-full h-1.5 bg-muted rounded-full mt-2 overflow-hidden">
             <div className="h-full rounded-full bg-emerald-400"
               style={{ width: `${stats?.approval_rate ?? 0}%` }} />
           </div>
-          <div className="text-[10px] text-gray-400 mt-1">
+          <div className="text-xs text-muted-foreground mt-1">
             {stats ? `${stats.approved_count}/${stats.decided_count} ${L.rate_sub}` : ''}
           </div>
         </div>
       </div>
 
       {syncNotice && (
-        <div className="flex items-start justify-between gap-3 rounded-xl border border-sky-200 bg-sky-50 px-4 py-3 text-[11px] text-sky-800">
+        <div className="flex items-start justify-between gap-3 rounded-xl border border-sky-200 bg-sky-50 px-4 py-3 text-xs text-sky-800 dark:border-sky-900 dark:bg-sky-950 dark:text-sky-200">
           <span>{syncNotice}</span>
           <button onClick={() => setSyncNotice('')} aria-label="Dismiss" className="font-bold text-sky-500">×</button>
         </div>
@@ -509,32 +509,32 @@ export default function ApprovalPage() {
       {/* Summary cards */}
       <div className="flex items-center gap-2 flex-wrap">
         <input
-          className="border border-gray-200 rounded-lg px-3 py-2 text-xs text-gray-700 outline-none focus:border-pink-300 w-full sm:w-40"
+          className="border border-border rounded-lg px-3 py-2 text-xs text-foreground outline-none focus:border-pink-300 w-full sm:w-40"
           placeholder={L.search_ph}
           value={search}
           onChange={(e) => setSearch(e.target.value)}
         />
-        <select className="border border-gray-200 rounded-lg px-2 py-2 text-xs text-gray-700 outline-none"
+        <select className="border border-border rounded-lg px-2 py-2 text-xs text-foreground outline-none"
           value={unitId} onChange={(e) => setUnitId(e.target.value)}>
           <option value="all">{L.all_units}</option>
           {units.map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}
         </select>
         <input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)}
-          className="border border-gray-200 rounded-lg px-2 py-2 text-xs text-gray-600 outline-none" />
-        <span className="text-gray-300 text-xs">–</span>
+          className="border border-border rounded-lg px-2 py-2 text-xs text-muted-foreground outline-none" />
+        <span className="text-muted-foreground text-xs">–</span>
         <input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)}
-          className="border border-gray-200 rounded-lg px-2 py-2 text-xs text-gray-600 outline-none" />
+          className="border border-border rounded-lg px-2 py-2 text-xs text-muted-foreground outline-none" />
       </div>
 
       {/* Tabs */}
-      <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
-        <div className="flex border-b border-gray-100">
+      <div className="bg-card border border-border rounded-xl overflow-hidden">
+        <div className="flex border-b border-border">
           {(['pending', 'approved'] as LeaveGroup[]).map((t) => (
             <button key={t} onClick={() => setGroup(t)}
               className="flex-1 py-3 text-xs font-semibold transition-colors"
               style={{
-                color:        group === t ? PINK : '#6B7280',
-                background:   group === t ? '#fff5f7' : 'transparent',
+                color:        group === t ? PINK : 'var(--muted-foreground)',
+                background:   group === t ? 'color-mix(in oklab, var(--primary) 12%, transparent)' : 'transparent',
                 borderBottom: group === t ? `2px solid ${PINK}` : '2px solid transparent',
               }}>
               {t === 'pending' ? L.tab_pending : L.tab_approved}
@@ -543,13 +543,13 @@ export default function ApprovalPage() {
           ))}
         </div>
 
-        <div className="flex border-b border-gray-50 bg-gray-50 px-3 gap-1 pt-2 overflow-x-auto">
+        <div className="flex border-b border-border bg-muted px-3 gap-1 pt-2 overflow-x-auto">
           {SUB_TABS.map((s) => (
             <button key={s.key} onClick={() => setCategory(s.key)}
-              className="px-3 py-2 text-[10px] rounded-t-lg font-medium transition-colors whitespace-nowrap"
+              className="px-3 py-2 text-xs rounded-t-lg font-medium transition-colors whitespace-nowrap"
               style={{
-                background:   category === s.key ? '#ffffff' : 'transparent',
-                color:        category === s.key ? PINK : '#9CA3AF',
+                background:   category === s.key ? 'var(--card)' : 'transparent',
+                color:        category === s.key ? PINK : 'var(--muted-foreground)',
                 borderBottom: category === s.key ? `2px solid ${PINK}` : '2px solid transparent',
               }}>
               {s.label}
@@ -560,10 +560,10 @@ export default function ApprovalPage() {
         {/* Stacked card list */}
         <div className="p-3 md:p-4 space-y-3">
           {loading && (
-            <div className="py-8 text-center text-gray-400 text-xs">{L.loading}</div>
+            <div className="py-8 text-center text-muted-foreground text-xs">{L.loading}</div>
           )}
           {!loading && rows.length === 0 && (
-            <div className="py-8 text-center text-gray-400 text-xs">{L.empty}</div>
+            <div className="py-8 text-center text-muted-foreground text-xs">{L.empty}</div>
           )}
           {!loading && rows.map((r) => (
             <ApprovalCard

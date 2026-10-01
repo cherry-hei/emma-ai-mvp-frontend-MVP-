@@ -31,21 +31,21 @@ export default function SettingsPage() {
   return (
     <main className="mx-auto max-w-4xl space-y-5 p-5 md:p-8">
       <header>
-        <h1 className="text-xl font-bold text-slate-900">{zh ? '設定' : 'Settings'}</h1>
-        <p className="mt-1 text-sm text-slate-600">{zh ? '使用有後端資料來源的機構設定；未啟用的選項不會當成已套用。' : 'Organisation-scoped settings with a backend source; unavailable controls are not presented as active.'}</p>
+        <h1 className="text-xl font-bold text-foreground">{zh ? '設定' : 'Settings'}</h1>
+        <p className="mt-1 text-sm text-muted-foreground">{zh ? '使用有後端資料來源的機構設定；未啟用的選項不會當成已套用。' : 'Organisation-scoped settings with a backend source; unavailable controls are not presented as active.'}</p>
       </header>
 
       <div className="grid gap-3 md:grid-cols-2">
         {links.filter(item => canOpenRoute(user?.role, item.feature)).map(item => (
           <Link key={item.path} href={item.path}
-            className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm transition-colors hover:border-pink-300 hover:bg-pink-50/30 focus-visible:outline-2 focus-visible:outline-pink-500">
-            <h2 className="font-bold text-slate-900">{item.title} <span aria-hidden="true" className="text-pink-600">→</span></h2>
-            <p className="mt-2 text-sm leading-relaxed text-slate-600">{item.details}</p>
+            className="rounded-xl border border-border bg-card p-5 shadow-sm transition-colors hover:border-pink-300 hover:bg-pink-50/30 dark:hover:bg-pink-950/30 focus-visible:outline-2 focus-visible:outline-pink-500">
+            <h2 className="font-bold text-foreground">{item.title} <span aria-hidden="true" className="text-pink-600">→</span></h2>
+            <p className="mt-2 text-sm leading-relaxed text-muted-foreground">{item.details}</p>
           </Link>
         ))}
       </div>
 
-      <aside className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm leading-relaxed text-amber-950">
+      <aside className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm leading-relaxed text-amber-950 dark:border-amber-700 dark:bg-amber-950/40 dark:text-amber-100">
         <strong>{zh ? '尚未接入規則引擎：' : 'Not yet connected to the rules engine: '}</strong>
         {zh ? '通用「強制執行／盡量滿足」切換、個別員工硬性限制、外勞設定及個人偏好，原有示範表單並無持久化。待機構確認規則、權限及後端儲存／驗證後，才可啟用。' : 'Universal Enforce/Try-best toggles, individual staff restrictions, imported-worker settings and preferences were previously demo-only and not persisted. Enable only after the organisation confirms rules, permissions and backend validation.'}
       </aside>
