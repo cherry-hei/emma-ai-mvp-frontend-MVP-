@@ -1,0 +1,438 @@
+{
+  "schema_version": 1,
+  "template_id": "naac-m3-17",
+  "template_version": "draft-1",
+  "data_classification": "synthetic_only",
+  "source": {
+    "authority": "founder_confirmed_structure",
+    "evidence": "approved_structural_documentation",
+    "operational_content_loaded": false
+  },
+  "cycle": {
+    "days": 42,
+    "weeks": 6,
+    "timezone": "Asia/Hong_Kong",
+    "first_weekday": {
+      "status": "unresolved",
+      "value": null
+    }
+  },
+  "sheet_count": 17,
+  "safety": {
+    "macros": "forbidden",
+    "external_links": "forbidden",
+    "external_connections": "forbidden",
+    "copied_formulas": "forbidden",
+    "untrusted_text": "literal_string"
+  },
+  "sheets": [
+    {
+      "id": "annotations",
+      "name": "更期代號註解",
+      "order": 1,
+      "purpose": "Shift-code explanations",
+      "renderer": "reference_table",
+      "layout_id": "naac_reference",
+      "week_index": null,
+      "visibility": {
+        "status": "unresolved",
+        "value": null
+      },
+      "print": {
+        "included_by_default": {
+          "status": "unresolved",
+          "value": null
+        },
+        "profile_status": "unresolved"
+      },
+      "layout_status": "unresolved",
+      "calculation_status": "unresolved",
+      "formula_specs": [],
+      "conditional_rules": []
+    },
+    {
+      "id": "legacy_codes",
+      "name": "代號及時數(old)",
+      "order": 2,
+      "purpose": "Historical dictionary structure; never used for current calculations",
+      "renderer": "reference_table",
+      "layout_id": "naac_reference",
+      "week_index": null,
+      "visibility": {
+        "status": "unresolved",
+        "value": null
+      },
+      "print": {
+        "included_by_default": {
+          "status": "unresolved",
+          "value": null
+        },
+        "profile_status": "unresolved"
+      },
+      "layout_status": "unresolved",
+      "calculation_status": "unresolved",
+      "formula_specs": [],
+      "conditional_rules": []
+    },
+    {
+      "id": "current_codes",
+      "name": "代號及時數",
+      "order": 3,
+      "purpose": "Current code dictionary and category weights",
+      "renderer": "reference_table",
+      "layout_id": "naac_reference",
+      "week_index": null,
+      "visibility": {
+        "status": "unresolved",
+        "value": null
+      },
+      "print": {
+        "included_by_default": {
+          "status": "unresolved",
+          "value": null
+        },
+        "profile_status": "unresolved"
+      },
+      "layout_status": "unresolved",
+      "calculation_status": "unresolved",
+      "formula_specs": [],
+      "conditional_rules": []
+    },
+    {
+      "id": "escort_locations",
+      "name": "覆診地點代號",
+      "order": 4,
+      "purpose": "Escort destination code reference",
+      "renderer": "reference_table",
+      "layout_id": "naac_reference",
+      "week_index": null,
+      "visibility": {
+        "status": "unresolved",
+        "value": null
+      },
+      "print": {
+        "included_by_default": {
+          "status": "unresolved",
+          "value": null
+        },
+        "profile_status": "unresolved"
+      },
+      "layout_status": "unresolved",
+      "calculation_status": "unresolved",
+      "formula_specs": [],
+      "conditional_rules": []
+    },
+    {
+      "id": "week_1",
+      "name": "TAHDuty(week1)",
+      "order": 5,
+      "purpose": "Synthetic roster for cycle days 1 to 7",
+      "renderer": "weekly_roster",
+      "layout_id": "naac_weekly",
+      "week_index": 1,
+      "visibility": {
+        "status": "unresolved",
+        "value": null
+      },
+      "print": {
+        "included_by_default": {
+          "status": "unresolved",
+          "value": null
+        },
+        "profile_status": "unresolved"
+      },
+      "layout_status": "unresolved",
+      "calculation_status": "unresolved",
+      "formula_specs": [],
+      "conditional_rules": []
+    },
+    {
+      "id": "week_2",
+      "name": "TAHDuty(week2)",
+      "order": 6,
+      "purpose": "Synthetic roster for cycle days 8 to 14",
+      "renderer": "weekly_roster",
+      "layout_id": "naac_weekly",
+      "week_index": 2,
+      "visibility": {
+        "status": "unresolved",
+        "value": null
+      },
+      "print": {
+        "included_by_default": {
+          "status": "unresolved",
+          "value": null
+        },
+        "profile_status": "unresolved"
+      },
+      "layout_status": "unresolved",
+      "calculation_status": "unresolved",
+      "formula_specs": [],
+      "conditional_rules": []
+    },
+    {
+      "id": "week_3",
+      "name": "TAHDuty(week3)",
+      "order": 7,
+      "purpose": "Synthetic roster for cycle days 15 to 21",
+      "renderer": "weekly_roster",
+      "layout_id": "naac_weekly",
+      "week_index": 3,
+      "visibility": {
+        "status": "unresolved",
+        "value": null
+      },
+      "print": {
+        "included_by_default": {
+          "status": "unresolved",
+          "value": null
+        },
+        "profile_status": "unresolved"
+      },
+      "layout_status": "unresolved",
+      "calculation_status": "unresolved",
+      "formula_specs": [],
+      "conditional_rules": []
+    },
+    {
+      "id": "week_4",
+      "name": "TAHDuty(week4)",
+      "order": 8,
+      "purpose": "Synthetic roster for cycle days 22 to 28",
+      "renderer": "weekly_roster",
+      "layout_id": "naac_weekly",
+      "week_index": 4,
+      "visibility": {
+        "status": "unresolved",
+        "value": null
+      },
+      "print": {
+        "included_by_default": {
+          "status": "unresolved",
+          "value": null
+        },
+        "profile_status": "unresolved"
+      },
+      "layout_status": "unresolved",
+      "calculation_status": "unresolved",
+      "formula_specs": [],
+      "conditional_rules": []
+    },
+    {
+      "id": "week_5",
+      "name": "TAHDuty(week5)",
+      "order": 9,
+      "purpose": "Synthetic roster for cycle days 29 to 35",
+      "renderer": "weekly_roster",
+      "layout_id": "naac_weekly",
+      "week_index": 5,
+      "visibility": {
+        "status": "unresolved",
+        "value": null
+      },
+      "print": {
+        "included_by_default": {
+          "status": "unresolved",
+          "value": null
+        },
+        "profile_status": "unresolved"
+      },
+      "layout_status": "unresolved",
+      "calculation_status": "unresolved",
+      "formula_specs": [],
+      "conditional_rules": []
+    },
+    {
+      "id": "week_6",
+      "name": "TAHDuty(week6)",
+      "order": 10,
+      "purpose": "Synthetic roster for cycle days 36 to 42",
+      "renderer": "weekly_roster",
+      "layout_id": "naac_weekly",
+      "week_index": 6,
+      "visibility": {
+        "status": "unresolved",
+        "value": null
+      },
+      "print": {
+        "included_by_default": {
+          "status": "unresolved",
+          "value": null
+        },
+        "profile_status": "unresolved"
+      },
+      "layout_status": "unresolved",
+      "calculation_status": "unresolved",
+      "formula_specs": [],
+      "conditional_rules": []
+    },
+    {
+      "id": "hours",
+      "name": "TAHDuty(hours)",
+      "order": 11,
+      "purpose": "Six-week staff hours summary",
+      "renderer": "staff_summary",
+      "layout_id": "naac_summary",
+      "week_index": null,
+      "visibility": {
+        "status": "unresolved",
+        "value": null
+      },
+      "print": {
+        "included_by_default": {
+          "status": "unresolved",
+          "value": null
+        },
+        "profile_status": "unresolved"
+      },
+      "layout_status": "unresolved",
+      "calculation_status": "unresolved",
+      "formula_specs": [],
+      "conditional_rules": []
+    },
+    {
+      "id": "ph_dayoff",
+      "name": "TAHDuty(PH&dayoff)",
+      "order": 12,
+      "purpose": "Public holiday and day-off accounting",
+      "renderer": "staff_summary",
+      "layout_id": "naac_summary",
+      "week_index": null,
+      "visibility": {
+        "status": "unresolved",
+        "value": null
+      },
+      "print": {
+        "included_by_default": {
+          "status": "unresolved",
+          "value": null
+        },
+        "profile_status": "unresolved"
+      },
+      "layout_status": "unresolved",
+      "calculation_status": "unresolved",
+      "formula_specs": [],
+      "conditional_rules": []
+    },
+    {
+      "id": "supervisor",
+      "name": "TAHDuty(DO更次數)",
+      "order": 13,
+      "purpose": "Duty-supervisor marker counts, distinct from days off",
+      "renderer": "staff_summary",
+      "layout_id": "naac_summary",
+      "week_index": null,
+      "visibility": {
+        "status": "unresolved",
+        "value": null
+      },
+      "print": {
+        "included_by_default": {
+          "status": "unresolved",
+          "value": null
+        },
+        "profile_status": "unresolved"
+      },
+      "layout_status": "unresolved",
+      "calculation_status": "unresolved",
+      "formula_specs": [],
+      "conditional_rules": []
+    },
+    {
+      "id": "ap_distribution",
+      "name": "TAHDuty(AP更)",
+      "order": 14,
+      "purpose": "Morning and afternoon distribution",
+      "renderer": "staff_summary",
+      "layout_id": "naac_summary",
+      "week_index": null,
+      "visibility": {
+        "status": "unresolved",
+        "value": null
+      },
+      "print": {
+        "included_by_default": {
+          "status": "unresolved",
+          "value": null
+        },
+        "profile_status": "unresolved"
+      },
+      "layout_status": "unresolved",
+      "calculation_status": "unresolved",
+      "formula_specs": [],
+      "conditional_rules": []
+    },
+    {
+      "id": "sleepover_gender",
+      "name": "TAHDuty(C更男女)",
+      "order": 15,
+      "purpose": "Sleepover distribution by explicit synthetic gender",
+      "renderer": "staff_summary",
+      "layout_id": "naac_summary",
+      "week_index": null,
+      "visibility": {
+        "status": "unresolved",
+        "value": null
+      },
+      "print": {
+        "included_by_default": {
+          "status": "unresolved",
+          "value": null
+        },
+        "profile_status": "unresolved"
+      },
+      "layout_status": "unresolved",
+      "calculation_status": "unresolved",
+      "formula_specs": [],
+      "conditional_rules": []
+    },
+    {
+      "id": "night_gender",
+      "name": "TAHDuty(N更男女)",
+      "order": 16,
+      "purpose": "Night distribution by explicit synthetic gender",
+      "renderer": "staff_summary",
+      "layout_id": "naac_summary",
+      "week_index": null,
+      "visibility": {
+        "status": "unresolved",
+        "value": null
+      },
+      "print": {
+        "included_by_default": {
+          "status": "unresolved",
+          "value": null
+        },
+        "profile_status": "unresolved"
+      },
+      "layout_status": "unresolved",
+      "calculation_status": "unresolved",
+      "formula_specs": [],
+      "conditional_rules": []
+    },
+    {
+      "id": "meal_codes",
+      "name": "TAHDuty(用膳代號)",
+      "order": 17,
+      "purpose": "Meal timing code reference",
+      "renderer": "reference_table",
+      "layout_id": "naac_reference",
+      "week_index": null,
+      "visibility": {
+        "status": "unresolved",
+        "value": null
+      },
+      "print": {
+        "included_by_default": {
+          "status": "unresolved",
+          "value": null
+        },
+        "profile_status": "unresolved"
+      },
+      "layout_status": "unresolved",
+      "calculation_status": "unresolved",
+      "formula_specs": [],
+      "conditional_rules": []
+    }
+  ]
+}
