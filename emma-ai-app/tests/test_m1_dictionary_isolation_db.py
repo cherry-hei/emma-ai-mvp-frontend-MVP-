@@ -1,113 +1,106 @@
-"""Optional RLS proof against a LOCAL synthetic Supabase only.
+"""B1 authenticated RLS specification: NOT TESTED.
 
-Run only after the migration has been inspected and applied to a disposable local DB:
-    EMMA_RUN_LOCAL_RLS_TESTS=1 APP_ENV=development \
-      python -m pytest -q tests/test_m1_dictionary_isolation_db.py
-Never point this test at a customer's or deployed database: it writes test rows.
+Do not execute until Founder separately authorises disposable local Auth/DB
+setup, migrations and synthetic writes. This module loads no settings, keys,
+environment files or client factories. It neither provisions nor seeds anything.
+
+A separately reviewed local-only harness must provide b1_local_clients:
+  admin: local synthetic fixture writer (never isolation proof);
+  x1, x2, y1: authenticated users bound to X1, X2, Y1 respectively.
+Org X / X1 / X2 and Org Y / Y1 must already exist with the UUIDs below.
+Their auth user IDs must differ from profile IDs. The harness must refuse
+non-loopback destinations and fail on unavailable fixtures, not skip.
 """
 from __future__ import annotations
 
-import os
-import uuid
-from urllib.parse import urlparse
+from uuid import uuid4
 
 import pytest
 
+ORG_X = "00000000-0000-4000-8000-000000000001"
+ORG_Y = "00000000-0000-4000-8000-000000000002"
+X1 = "00000000-0000-4000-8000-000000000101"
+X2 = "00000000-0000-4000-8000-000000000102"
+Y1 = "00000000-0000-4000-8000-000000000201"
+
+TABLES = [("task_definitions", "task_code"), ("escort_locations", "code")]
+
 
 @pytest.fixture(scope="module")
-def clients():
-    if os.getenv("EMMA_RUN_LOCAL_RLS_TESTS") != "1":
-        pytest.skip("write test requires explicit EMMA_RUN_LOCAL_RLS_TESTS=1")
-
-    from emma_core.config import settings
-    from emma_core.db import get_service_client
-    from supabase import create_client
-
-    hostname = urlparse(settings.supabase_url).hostname
-    if hostname not in {"127.0.0.1", "localhost"}:
-        pytest.fail("refusing to write test rows outside local synthetic Supabase")
-    if not settings.supabase_anon_key or not settings.supabase_service_role_key:
-        pytest.skip("local synthetic Supabase keys not configured")
-    password = os.getenv("EMMA_SYNTHETIC_TEST_PASSWORD")
-    if not password:
-        pytest.skip("synthetic test credential must be supplied out of band")
-
-    def as_demo(email):
-        client = create_client(settings.supabase_url, settings.supabase_anon_key)
-        result = client.auth.sign_in_with_password({
-            "email": email, "password": password
-        })
-        client.postgrest.auth(result.session.access_token)
-        return client
-
-    try:
-        return get_service_client(), as_demo("super.naac@emma.local"), as_demo("super_a@emma.local")
-    except Exception as exc:  # noqa: BLE001
-        pytest.skip(f"local synthetic tenants unavailable: {type(exc).__name__}")
+def clients(b1_local_clients):
+    # No fallback to deployed/demo accounts. Missing harness is a setup error.
+    assert set(b1_local_clients) == {"admin", "x1", "x2", "y1"}
+    for key, facility, org in (("x1", X1, ORG_X), ("x2", X2, ORG_X), ("y1", Y1, ORG_Y)):
+        actual = (b1_local_clients[key].table("facilities").select("id,org_id")
+                  .eq("id", facility).execute().data)
+        assert actual == [{"id": facility, "org_id": org}]
+    return b1_local_clients
 
 
-@pytest.mark.parametrize("table,code_field", [
-    ("task_definitions", "task_code"),
-    ("escort_locations", "code"),
-])
-def test_org_owned_null_facility_is_never_global(clients, table, code_field):
-    admin, naac, sa_style = clients
-    naac_org = naac.table("organisations").select("id").execute().data[0]["id"]
-    sa_org = sa_style.table("organisations").select("id").execute().data[0]["id"]
-    assert naac_org != sa_org
-
+@pytest.mark.parametrize("table,code_field", TABLES)
+def test_same_org_shared_rows_visible_and_foreign_org_denied(clients, table, code_field):
     created = []
-    suffix = uuid.uuid4().hex[:10]
+    admin = clients["admin"]
     try:
-        for org_id, marker in ((naac_org, "NAAC"), (sa_org, "SA")):
+        for org, facility in ((ORG_X, None), (ORG_X, X2), (ORG_Y, None), (ORG_Y, Y1)):
             row = admin.table(table).insert({
-                "facility_id": None, "org_id": org_id,
-                code_field: f"ZZ{marker}_{suffix}",
+                "org_id": org, "facility_id": facility,
+                code_field: "B1_" + uuid4().hex[:10],
             }).execute().data[0]
             created.append(row["id"])
-        assert len(naac.table(table).select("id").eq("id", created[0]).execute().data) == 1
-        assert len(sa_style.table(table).select("id").eq("id", created[1]).execute().data) == 1
-        assert naac.table(table).select("id").eq("id", created[1]).execute().data == []
-        assert sa_style.table(table).select("id").eq("id", created[0]).execute().data == []
+        for key, permitted in (("x1", created[:2]), ("x2", created[:2]), ("y1", created[2:])):
+            rows = clients[key].table(table).select("id").in_("id", created).execute().data
+            assert {r["id"] for r in rows} == set(permitted)
     finally:
         for row_id in created:
             admin.table(table).delete().eq("id", row_id).execute()
 
 
-def test_truly_global_template_stays_readable_to_both_tenants(clients):
-    admin, naac, sa_style = clients
-    marker = f"ZZGLOBAL_{uuid.uuid4().hex[:10]}"
-    created = admin.table("task_definitions").insert({
-        "facility_id": None, "org_id": None,
-        "task_code": marker, "task_name": "synthetic global template",
+@pytest.mark.parametrize("table,code_field", TABLES)
+def test_unapproved_global_row_denied_to_every_tenant(clients, table, code_field):
+    admin = clients["admin"]
+    row = admin.table(table).insert({
+        "org_id": None, "facility_id": None, code_field: "B1_" + uuid4().hex[:10],
     }).execute().data[0]
     try:
-        for tenant in (naac, sa_style):
-            assert len(tenant.table("task_definitions").select("id")
-                       .eq("id", created["id"]).execute().data) == 1
+        for key in ("x1", "x2", "y1"):
+            assert clients[key].table(table).select("id").eq("id", row["id"]).execute().data == []
     finally:
-        admin.table("task_definitions").delete().eq("id", created["id"]).execute()
+        admin.table(table).delete().eq("id", row["id"]).execute()
 
 
-def test_cannot_write_other_org_code_even_if_client_supplies_own_org_id(clients):
-    admin, naac, sa_style = clients
-    # Server-side trigger must reconcile org_id with facility owner; RLS alone
-    # does not catch inconsistent rows if the caller supplies its own org_id.
-    naac_org = naac.table("organisations").select("id").execute().data[0]["id"]
-    sa_org = sa_style.table("organisations").select("id").execute().data[0]["id"]
-    sa_facility = sa_style.table("facilities").select("id").limit(1).execute().data[0]["id"]
-    naac_facility = naac.table("facilities").select("id").limit(1).execute().data[0]["id"]
+@pytest.mark.parametrize("table,code_field", TABLES)
+def test_cross_org_mismatched_insert_denied(clients, table, code_field):
     from postgrest.exceptions import APIError
-    for attacker, own_org, foreign_facility in (
-        (naac, naac_org, sa_facility),
-        (sa_style, sa_org, naac_facility),
-    ):
-        marker = f"ZZBOUNDARY_{uuid.uuid4().hex[:10]}"
-        with pytest.raises(APIError):
-            attacker.table("task_definitions").insert({
-                "facility_id": foreign_facility, "org_id": own_org,
-                "task_code": marker, "task_name": "must fail",
+
+    for key, own_org, foreign_facility in (("x1", ORG_X, Y1), ("y1", ORG_Y, X1)):
+        marker = "B1_" + uuid4().hex[:10]
+        with pytest.raises(APIError) as denied:
+            clients[key].table(table).insert({
+                "org_id": own_org, "facility_id": foreign_facility, code_field: marker,
             }).execute()
-        # If an error class changes, first verify no row landed before updating
-        # this assertion; never weaken the tenant boundary to satisfy a test.
-        assert admin.table("task_definitions").select("id").eq("task_code", marker).execute().data == []
+        assert denied.value.code == "P0001"
+        assert "org_id must match facility owner" in denied.value.message
+        assert clients["admin"].table(table).select("id").eq(code_field, marker).execute().data == []
+
+
+@pytest.mark.parametrize("table,code_field", TABLES)
+def test_nulling_scope_cannot_promote_row_to_global(clients, table, code_field):
+    from postgrest.exceptions import APIError
+
+    admin = clients["admin"]
+    row = admin.table(table).insert({
+        "org_id": ORG_X, "facility_id": None, code_field: "B1_" + uuid4().hex[:10],
+    }).execute().data[0]
+    try:
+        with pytest.raises(APIError) as denied:
+            clients["x1"].table(table).update({
+                "org_id": None, "facility_id": None,
+            }).eq("id", row["id"]).execute()
+        assert denied.value.code == "42501"
+        assert "row-level security" in denied.value.message.lower()
+        actual = admin.table(table).select("org_id,facility_id").eq("id", row["id"]).execute().data
+        assert actual == [{"org_id": ORG_X, "facility_id": None}]
+        assert clients["y1"].table(table).select("id").eq("id", row["id"]).execute().data == []
+    finally:
+        admin.table(table).delete().eq("id", row["id"]).execute()

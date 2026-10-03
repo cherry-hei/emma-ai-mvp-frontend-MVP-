@@ -9,6 +9,7 @@ and completion state survives.
 from __future__ import annotations
 
 from datetime import date as Date
+from uuid import UUID
 
 from ._common import assignments_for_shifts, now_iso, to_min
 from .organisations import org_id_for
@@ -124,15 +125,19 @@ def sync_assignment_tasks(client, facility_id: str, assignment: dict,
 
 
 def task_definitions_by_label(client, facility_id: str) -> dict[str, dict]:
+    # Validate before resolving/querying scope; never fall back to global rows.
+    try:
+        facility_id = str(UUID(facility_id))
+        org_id = str(UUID(org_id_for(client, facility_id)))
+    except (ValueError, TypeError, AttributeError) as exc:
+        raise ValueError("a valid facility and organisation scope is required") from exc
     # SQL: select * from task_definitions
     #      where org_id = :org_id
-    #         or (org_id is null and facility_id is null)  -- truly global only
     #        and active = true
-    # This explicit filter is required even for service-role callers that bypass
-    # RLS. Another charity's org-owned row with no facility is not a template.
+    # No global entries are approved. Both-NULL rows are denied, including for
+    # service-role callers that bypass RLS. Same-organisation sharing is retained.
     rows = (client.table("task_definitions").select("*")
-            .or_(f"org_id.eq.{org_id_for(client, facility_id)},"
-                 "and(org_id.is.null,facility_id.is.null)")
+            .eq("org_id", org_id)
             .eq("active", True).execute().data)
     out: dict[str, dict] = {}
     for r in rows:

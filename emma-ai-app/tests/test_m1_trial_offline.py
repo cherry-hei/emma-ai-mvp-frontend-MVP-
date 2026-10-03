@@ -54,29 +54,32 @@ def test_dry_run_rejects_an_unknown_duty_without_connecting(tmp_path):
 
 
 class RecordingQuery:
-    def __init__(self):
+    """Record and apply equality predicates; never return a canned answer."""
+    def __init__(self, rows):
+        self.rows = rows
         self.filters = []
 
     def select(self, *_args):
         return self
 
-    def or_(self, expression):
-        self.filters.append(expression)
-        return self
-
-    def eq(self, *_args):
+    def eq(self, field, value):
+        self.filters.append((field, value))
         return self
 
     def order(self, *_args):
         return self
 
     def execute(self):
-        return SimpleNamespace(data=[])
+        return SimpleNamespace(data=[
+            row for row in self.rows
+            if all(value is not None and row.get(field) == value
+                   for field, value in self.filters)
+        ])
 
 
 class RecordingClient:
-    def __init__(self):
-        self.query = RecordingQuery()
+    def __init__(self, rows):
+        self.query = RecordingQuery(rows)
 
     def table(self, _name):
         return self.query
@@ -86,26 +89,54 @@ class RecordingClient:
     ("tasks", "task_definitions_by_label"),
     ("escort", "list_locations"),
 ])
-def test_service_role_dictionary_queries_only_include_true_global_templates(
+def test_service_role_dictionary_queries_deny_unapproved_global_rows(
     monkeypatch, module_name, function_name
 ):
     from emma_core.services import escort, tasks
 
+    org_x = "00000000-0000-4000-8000-000000000001"
+    org_y = "00000000-0000-4000-8000-000000000002"
+    facility_x1 = "00000000-0000-4000-8000-000000000101"
     module = {"tasks": tasks, "escort": escort}[module_name]
-    monkeypatch.setattr(module, "org_id_for", lambda _client, _facility: "synthetic-org-a")
-    client = RecordingClient()
-    getattr(module, function_name)(client, "synthetic-home-a")
-    assert client.query.filters == [
-        "org_id.eq.synthetic-org-a,and(org_id.is.null,facility_id.is.null)"
+    monkeypatch.setattr(module, "org_id_for", lambda _client, _facility: org_x)
+    rows = [
+        {"id": "own", "org_id": org_x, "facility_id": None,
+         "active": True, "task_code": "X", "code": "X"},
+        {"id": "foreign", "org_id": org_y, "facility_id": None,
+         "active": True, "task_code": "Y", "code": "Y"},
+        {"id": "global", "org_id": None, "facility_id": None,
+         "active": True, "task_code": "G", "code": "G"},
     ]
+    client = RecordingClient(rows)
+    result = getattr(module, function_name)(client, facility_x1)
+    values = result.values() if isinstance(result, dict) else result
+    assert {row["id"] for row in values} == {"own"}
+    assert client.query.filters == [("org_id", org_x), ("active", True)]
 
 
 def test_rls_policy_does_not_treat_every_facility_null_row_as_global():
-    sql = MIGRATION.read_text(encoding="utf-8").lower()
+    # Inspect the final definition across the migration chain, not migration 24
+    # in isolation. The standalone B1 suite also checks the FOR ALL policies.
+    import re
+
+    policies = {}
+    for path in sorted((ROOT / "supabase" / "migrations").glob("*.sql")):
+        sql = re.sub(r"--[^\n]*", "", path.read_text(encoding="utf-8").lower())
+        for statement in sql.split(";"):
+            statement = " ".join(statement.split())
+            for table in ("task_definitions", "escort_locations"):
+                name = table + "_read"
+                if re.match(r"drop policy if exists " + name +
+                            r" on (?:public\.)?" + table + r"$", statement):
+                    policies.pop(name, None)
+                if re.match(r"create policy " + name +
+                            r" on (?:public\.)?" + table + r" ", statement):
+                    policies[name] = statement
     for table in ("task_definitions", "escort_locations"):
-        block = sql.split(f"create policy {table}_read on {table}", 1)[1].split(";", 1)[0]
-        assert "org_id = public.current_org_id()" in block
-        assert "org_id is null and facility_id is null" in block
-        assert "facility_id is null or" not in block
-    assert "org_id must match facility owner" in sql
-    assert "org_id/facility_id mismatch" in sql
+        block = policies[table + "_read"]
+        assert "using (org_id is not null and org_id = public.current_org_id())" in block
+        assert "facility_id is null" not in block
+        assert " or " not in block
+    historical = MIGRATION.read_text(encoding="utf-8").lower()
+    assert "org_id must match facility owner" in historical
+    assert "org_id/facility_id mismatch" in historical

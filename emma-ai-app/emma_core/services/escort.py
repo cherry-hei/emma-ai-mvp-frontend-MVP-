@@ -24,20 +24,26 @@ the edit, would trade real roster data for tidy reference data.
 """
 from __future__ import annotations
 
+from uuid import UUID
+
 from ..importers import naac
 from .organisations import org_id_for
 
 
 def list_locations(client, facility_id: str, *, include_inactive: bool = False) -> list[dict]:
-    """Organisation codes plus genuinely global templates (both ids null)."""
+    """Only confirmed organisation codes; no global entries are approved."""
+    try:
+        facility_id = str(UUID(facility_id))
+        org_id = str(UUID(org_id_for(client, facility_id)))
+    except (ValueError, TypeError, AttributeError) as exc:
+        raise ValueError("a valid facility and organisation scope is required") from exc
     # SQL: select * from escort_locations
-    #      where (org_id = :org_id or (org_id is null and facility_id is null))
+    #      where org_id = :org_id
     #        [and active]
     #      order by code
     # Explicit scope matters for service-role callers, which bypass RLS.
     query = (client.table("escort_locations").select("*")
-             .or_(f"org_id.eq.{org_id_for(client, facility_id)},"
-                  "and(org_id.is.null,facility_id.is.null)"))
+             .eq("org_id", org_id))
     if not include_inactive:
         query = query.eq("active", True)
     return query.order("code").execute().data
