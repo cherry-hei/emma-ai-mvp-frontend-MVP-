@@ -1,53 +1,65 @@
 # MVP — Demo介面對齊與發佈閘門 Review
 
-更新：2026-10-11。工作分支 `agent/mvp-publish-soft-omit-oct11`，PR [#6](https://github.com/cherry-hei/emma-ai-mvp-frontend-MVP-/pull/6)。**保持Draft，沒有合併main、部署MVP或執行DB migration。** Haven的合併／部署授權不適用於MVP。
+更新：2026-10-11深夜。工作分支 `agent/mvp-publish-soft-omit-oct11`，[Draft PR #6](https://github.com/cherry-hei/emma-ai-mvp-frontend-MVP-/pull/6)。程式更新至`66d9e7c`。**沒有合併main、部署MVP或執行DB migration。** Haven的合併／部署授權不適用於MVP。
 
 ## 已完成的介面與資料路徑
 
 | 項目 | 本輪結果 |
 |---|---|
-| 品牌、字體與布局 | 保留原Emma logo、Inter字體，採Demo的粉紅／slate卡片、圓角、單語導航與手機布局；未套用Haven的機構字典。 |
-| 院舍設定 | 側欄最底、Emma AI下面。更期代號字典及任務排程成為設定分項，沿用原機構scoped API及各自RBAC；舊直接URL仍受保護。原設定頁的本地假Save已移除，院舍資料沒有寫入合約的部分保持唯讀。 |
-| 新增更次 | Demo式職級／員工／日期／更碼下拉和任務時間列。保存真正更格與task assignment；半途失敗顯示確切進度及未確認任務，不能假稱全部已保存。 |
-| 批量排更 | Demo式職級、多選員工／星期、更碼及預覽；沿用真正更格API逐格保存，失敗保留已成功格並報進度。尚不是原子批量交易。 |
-| 特別事項 | Demo式活動、日期、鐘面、備註及職級需求；保存真facility-event記錄。指定員工尚缺後端持久化合約，沒有做假選項／假Save。 |
-| 任務時間 | 無效日期／HH:mm拒絕；跨午夜end落翌日；needs_location task要填目的地；讀取失敗阻止覆寫；陪診要求透過既有TaskDef欄位傳至界面。 |
-| 檢查、草稿與發布 | 保留固定Publish按鈕、server deterministic check、drawer批准、hard不可Omit、soft逐條確認。重新检查／修改／切版本清除舊soft選項。 |
-| 儲存／發佈清單 | 改讀同院舍、所選period/version的真history API，不用本機假記錄。詳細Audit仍沿用原audit_log權限。 |
-| 下載更表／Audit | 更表頁取消原直接匯出，跳報告頁並帶period/version。backend校驗所選版本確屬同period、同facility；報告及Audit CSV由真server生成。period-only報告不偽裝支援特定version。 |
-| 警報／Emma AI | 警報頁加入Demo式Emma AI入口，使用原有incident／deterministic evidence介面；沒有新增供應商／voice或自動批准。 |
-| 兩機構 | 後端字典按登入org读取；同一D碼在兩個離線fixture可有不同paid minutes。沒有把Haven更碼、56人、職位或規則寫入Care Home A/B。 |
+| 品牌、字體與布局 | 保留原Emma logo、Inter字體，採Demo粉紅／slate卡片、圓角、單語導航與手機布局；未套用Haven機構字典。 |
+| 院舍設定 | 側欄下方。更期字典及任務排程為設定分項，沿用org-scoped API及各自RBAC；無持久化契約的院舍資訊不提供假Save。 |
+| 新增更次 | Demo式職級／員工／日期／更碼下拉與任務時間列。保存真更格及task assignment；失敗報確切partial-save進度。 |
+| 批量排更 | 完整period日期範圍、星期選擇、Mon–Fri捷徑、多選員工／職级／更碼及預覽。既有更格及任務保留。真API逐格保存，尚非原子交易。 |
+| 特別事項 | 真facility-event日期、鐘面、備註及職級需求；event指定員工尚缺reviewed backend持久化契約，沒有假Save。 |
+| 任務時間 | 拒絕無效日期／HH:mm；跨午夜落翌日；needs_location task需目的地；讀取失敗阻止覆寫。 |
+| 規則／草稿／發佈 | 固定Publish、server deterministic review、hard不可Omit、soft逐條確認；修改／切版本清除舊選項。 |
+| History／Audit | 同facility及所選period/version真API；Audit保留原權限。報告及Audit下載由server生成，不冒充支持所選version的舊aggregate報告。 |
+| 警報／Emma AI | 警報保留原功能；Emma AI是其下方獨立導航，已移除錯誤的警報頁CTA。沒有新增供應商、voice或自動批准。 |
+| 工時顯示 | 已保存`paid_minutes`以小時及分鐘顯示，例如435→7 h 15 m；unknown仍為—。內部整分鐘與API欄名不改，未宣稱所有報告格式已改。 |
+| 訊息中心 | 沿用同facility provisioned profiles／真正staff姓名與`/messages`；管理端和Staff PWA共用契約，移除假員工／自動回覆。新增router、service與未執行SQL草稿；recipient-only read receipt可重試而不覆寫第一次read-at。 |
+| 兩機構 | 同碼可以有不同paid minutes，字典／角色／單位仍由登入機構來源提供；未把Haven更碼、56人或分鐘政策寫入Care Home A/B。 |
 
-## 已補的backend安全與精確計算
+## Backend安全與整分鐘
 
-更表格、報告工時都共用後端現有 `shift_minutes`，不以界面鐘面猜paid minutes。所有更格保存要求同院舍的draft版本及該period內日期。Task create/update/delete/sync及escort-location也由assignment→shift→version取得真正draft狀態；published版本及foreign/missing關係拒絕，不能由獨立task API繞過發布後鎖。
+更表及報告共用後端既有`shift_minutes`，不從鐘面猜paid minutes。更格保存要求同facility的draft及period內日期。Task create/update/delete/sync／escort-location沿assignment→shift→真version拒絕published、foreign／missing關係，不能直接task API繞過發佈後鎖。
 
-報告、grid、history請求加入scope檢查，舊period或舊登入請求不能覆寫新登入界面。登入refresh以credential generation及token snapshot分組；tenant切換／logout後晚到refresh不能還原舊session，也不能把舊請求以新身份replay。
+Grid／report／history有scope及舊請求保護。管理端與Staff App訊息頁的身份切換／送出結果均有guard；草稿依收件人分隔，避免換人後送錯內容。Staff App補了credential generation、token／refresh snapshot與原請求身份保護，舊refresh不還原舊登入或把舊body以新身份replay；這不是宣稱全部cross-tab auth已驗收。
 
-## 發佈原子RPC：保留未執行Review稿
+訊息與notification／replacement offer是不同資料。員工願意接更或chat文字不自行批准／發布；替更完整manager approval、rules、roster/task/Audit流程仍須獨立端到端驗收。
 
-`20261011000024_publish_soft_omissions.sql` 仍是**未執行migration**。它取代舊三參數旁路，核對OWNER、tenant、最新run/digest、solver hard、每條soft row ID及timestamp，鎖定當前version／validation；狀態、publish event及Audit需同一交易。新API只發server映射的fresh row IDs。沒有新RPC就停止發布，不能降級為無Audit的多次write。Excel匯入也不能代替OWNER批准。
+## 發佈原子RPC與訊息SQL：均未執行
 
-實際DB owner須核對schema/enum、RLS、grant與依賴，於隔離合成DB執行並測試concurrent edit／double publisher、stale policy/census、cross-tenant拒絕、event或Audit失敗rollback及published不可改。這些尚未驗收，不可把SQL語法解析或mock當成RLS／交易已完成。
+`20261011000024_publish_soft_omissions.sql`取代舊三參數旁路，核對OWNER、tenant、run/digest、solver hard、每條soft row ID及timestamp；鎖version／validation，狀態、event與Audit需同一交易。沒有RPC即fail closed。尚未執行migration或在DB驗收。
 
-## 本輪驗證
+`supabase/migrations/drafts/20261001000025_direct_messages.sql.draft`是從先前review稿選擇性帶入的訊息schema／RLS／trigger／grant，未合併其他PR3內容、未執行。23個SQL statements解析通過不等於RLS／trigger可運作。
+
+DB reviewer須於獲授權隔離合成DB核對schema/enum、RLS/grants、跨org拒絕、雙發佈／concurrent edit、stale policy/census、Audit失敗rollback、published不可改、訊息participant權限與已讀重試。沒有在本輪執行真DB測試。
+
+## 驗證紀錄：集合不同，勿把數字相加
 
 | 驗證 | 結果／界線 |
 |---|---|
-| 受控backend安全集合 | **223 passed、6 skipped**。6項skip為既有外部workbook fixture缺失。包含發布、Audit、匯入、UI資料契約、task draft guard、handover及Phase4；不是所有backend測試或真DB UAT。 |
-| 真API.ts refresh-race模擬 | concurrent dedupe、tenant switch、token rotation及logout全通過。 |
-| frontend時間helper | 3項通過；包含跨午夜及無效時間。 |
-| TypeScript／Next build | 最終source通過。 |
-| 純mock瀏覽器 | 中文／英文 ×1440桌面／390手機：hard／soft發布門檻、新增task payload／跨午夜、批量預覽格數及event職級需求保存均通過，無page errors。 |
-| SQL | 上輪pglast解析成功；未執行PL/pgSQL／schema／RLS／交易。 |
-| 真org／RLS integration tests | 本輪沒有可用隔離DB；以test.invalid dummy設定試跑的10項因無服務失敗，未當作通過。重新選定純離線集合後取得223 passed。沒有實際客戶或正式資料庫操作。 |
+| 先前完整受控集合快照 | 223 passed、6 skipped；是上一轮selected set，不是全部backend或真DB UAT。 |
+| 本輪最新擴展集合 | 194 passed、6 skipped；發佈、Audit、匯入、UI契約、task draft guard、handover與messages。 |
+| 本輪focused子集 | 77 passed，與194集合重疊。 |
+| 六skip | 舊外部workbook fixtures缺失；不是六個已確認bug、也不表示對NAAC M1的新增收費scope。 |
+| 工時小時分鐘helper | 2項通過，unknown不代零。 |
+| TypeScript／Next及PWA build | 最終source通過；MVP保持Draft。 |
+| 共用mock聊天 | 管理端送→Staff App讀／已讀→回复→管理端讀／已讀通過；不是真DB互通。 |
+| 全月批量mock | 十月31日／22平日；一格既有D／task保留、21格空白寫入，含30日；不是atomic。 |
+| Staff PWA refresh競態 | 8／8 fake-fetch／storage離線測試通過。 |
+| 真org／RLS integration | 沒有可用獲授權隔離DB；之前dummy端點的10項未通過不能算UAT成功。 |
 
-## 尚未達到完全功能相同：不能隱瞞的接受缺口
+## 仍未達到完整Demo feature parity
 
-MVP的meal／free-text task detail／shift note尚沒有已review的持久化合約；界面明示不可保存並停用。Event指定員工也是未完成M2合約。批量及更次＋多task仍為多步保存而非單一交易，已提供partial-save實況但不等於atomic parity。原期內aggregate報告、NAAC 18-sheet六週Excel和manager/staff leave autofill仍須各自原里程碑的實際backend／DB驗收，不能用同款按鈕代替功能完成。
+Meal／free-text task detail／shift note尚未有已review持久化合約；界面保持不可保存。Event指定員工、leave autofill與revocation是M2相關驗收；NAAC 18-sheet六週Excel是M3相關驗收，manifest不等於exporter。Batch及更次＋多task仍是多步，非原子交易。Cherry現在Codex寫的backend若未push，無法由GitHub核對是否已補齊；需要最新PR／branch，不猜較早Codex分支。
 
-上述缺口代表**UI與可用API已對齊，但不能稱全部Demo feature已完整移植或M1/M2/M3已接受**。要在保留Draft的下一次工程review補齊持久化schema、API、audit、rollback及兩org UAT後，才可接受完整功能對齊。
+六skip分別為`test_real_workbooks_parse_without_unresolved_cells`的4個case、`test_real_home_a_before_and_after_differ`、`test_real_workbook_opens_read_only_without_mutating_it`。合成replacement tests可先補，但不能冒稱real-source parity，不能刪原六項作假通過。
 
-## 兩份指定文件的核對
+**UI及可用API已對齊，不代表M1／M2／M3已被接受。** 基本M1合成試用不必以全部M3完成為前提；實際帳戶／兩機構DB隔離及包含的訊息／替更功能仍須驗收。真員工資料／正式服務仍受M4/M5香港環境及證據閘門限制。
 
-已讀[2026-09-18 Addendum／WBS比較](https://docs.google.com/document/d/1VUSm-9im783yB4YsyYDZ7CpV70ZvzSa7/edit)及[2026-10-07 Fixed Price WBS M1–M5](https://docs.google.com/document/d/1iZ0D-tDGvv5WEUKXZGmqq5_Bu-JkVpQC/edit)。最新fixed-price用於範圍對照，舊比較稿不取代新授權。文件要求org-scoped retrieval、M2指定staff／leave autofill、M3 NAAC18sheet、M4/M5香港環境及隔離／還原證據；文件不是Care Home A/B已確認active codes、職位或帳戶清單，不能從WBS猜機構資料。本輪不改合同或付款定義。
+## 文件及工程分工
+
+已讀Cherry指定的兩份Google文件，最新fixed-price WBS用於M1–M5範圍，文件不是已確認機構代號／帳戶清單。原兩份資料不構成新增付款或scope批准。本輪不改合同。
+
+Codex應先review最新PR6及Cherry自己的backend Draft，補synthetic fixtures、持久化／atomic契約與離線測試；不要同時改同檔或直接merge/deploy。真正隔離DB執行、RLS、restore／cutover及production IAM需要既有授權、受控環境與可追溯review，不把AI產出的SQL稿當成已運作證據。
