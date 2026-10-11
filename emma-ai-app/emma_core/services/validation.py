@@ -2121,6 +2121,11 @@ def _persist_run(
     *,
     validated_by: str | None,
 ) -> tuple[str, str]:
+    # Import here to keep the pure validation/evaluator module independent at
+    # import time while using exactly the same stable UI fingerprint that the
+    # publication service later maps back to persisted evidence rows.
+    from .publication import annotate_violations
+
     digest = _snapshot_digest(snapshot)
     run = (
         client.table("roster_validation_runs")
@@ -2151,6 +2156,7 @@ def _persist_run(
             .eq("resolved", False)
             .execute()
         )
+        persisted_findings = annotate_violations(violations)
         rows = [{
             "facility_id": snapshot.facility_id,
             "roster_version_id": snapshot.roster_version_id,
@@ -2166,8 +2172,9 @@ def _persist_run(
             "severity": row.get("severity", "hard"),
             "message": row.get("message"),
             "details_json": row.get("details") or {},
+            "omission_id": row.get("omission_id"),
             "resolved": False,
-        } for row in violations]
+        } for row in persisted_findings]
         if rows:
             client.table("violation_log").insert(rows).execute()
         hard_count = sum(
@@ -2258,6 +2265,7 @@ def validate_roster(
             validated_by=validated_by,
         )
     hard_count = sum(row.get("severity", "hard") == "hard" for row in violations)
+    soft_count = sum(row.get("severity", "hard") == "soft" for row in violations)
     ratio_checks = [{
         "label": row["label"],
         "rank": row.get("rank"),
@@ -2273,6 +2281,7 @@ def validate_roster(
         "method": "deterministic-phase5",
         "passes": hard_count == 0,
         "hard_violation_count": hard_count,
+        "soft_violation_count": soft_count,
         "violations": violations,
         "ratio_checks": ratio_checks,
         "validation_run_id": run_id,

@@ -5,11 +5,14 @@ from datetime import date
 from fastapi import HTTPException
 import pytest
 
-from api.deps import AuthCtx
+from api.deps import AuthCtx, require_decide
 from api.routers import leave as leave_router
 from api.routers import optimize as optimize_router
 from api.routers import roster as roster_router
-from emma_core.models import LeaveDecisionRequest, LeaveRequestCreate, Profile
+from emma_core.permissions import Feature, can_decide
+from emma_core.models import (
+    LeaveDecisionRequest, LeaveRequestCreate, Profile, PublishRosterRequest,
+)
 
 from tests.test_optimize_service import build_store
 
@@ -38,8 +41,11 @@ def _validation_result(version_id: str) -> dict:
         "method": "deterministic_phase5",
         "passes": True,
         "hard_violation_count": 0,
+        "soft_violation_count": 0,
         "violations": [],
         "ratio_checks": [],
+        "validation_run_id": "run-1",
+        "input_digest": "a" * 64,
     }
 
 
@@ -135,11 +141,97 @@ def test_publish_uses_one_service_client_after_rls_authorization(monkeypatch):
         lambda client, **_kwargs: publication_clients.append(client),
     )
 
-    result = roster_router.publish("mv1", _ctx(user_client))
+    monkeypatch.setattr(roster_router.publication_svc, "resolve_persisted_soft_omission_row_ids",
+                        lambda client, **kwargs: [] if client is service_client else None)
+    result = roster_router.publish(
+        "mv1", PublishRosterRequest(validation_input_digest="a" * 64),
+        _ctx(user_client, role="OWNER"),
+    )
 
     assert result["status"] == "published"
     assert validation_clients == [service_client]
     assert publication_clients == [service_client]
+
+
+def test_publish_role_is_owner_only_for_canonical_and_legacy_profiles():
+    assert can_decide("OWNER", Feature.ROSTER_PUBLISH)
+    assert can_decide("superintendent", Feature.ROSTER_PUBLISH)
+    assert not can_decide("scheduler", Feature.ROSTER_PUBLISH)
+
+    with pytest.raises(HTTPException) as exc:
+        require_decide(Feature.ROSTER_PUBLISH)(_ctx(build_store(), role="scheduler"))
+
+    assert exc.value.status_code == 403
+
+
+def test_publish_does_not_promote_a_soft_only_low_solver_score_to_hard_block(
+    monkeypatch,
+):
+    user_client = build_store()
+    service_client = object()
+    publication_clients: list[object] = []
+
+    monkeypatch.setattr(roster_router, "get_service_client", lambda: service_client)
+    monkeypatch.setattr(
+        roster_router.validation_svc, "validate_roster",
+        lambda _client, _facility_id, version_id, **_kwargs: _validation_result(version_id),
+    )
+    monkeypatch.setattr(
+        roster_router.opt, "get_option_scores",
+        lambda _client, _version_id: {
+            "constraint_score": 0,
+            "hard_violation_count": 0,
+            "soft_penalty_total": 999,
+        },
+    )
+    monkeypatch.setattr(
+        roster_router.svc, "publish_version",
+        lambda client, **_kwargs: publication_clients.append(client),
+    )
+
+    monkeypatch.setattr(roster_router.publication_svc, "resolve_persisted_soft_omission_row_ids",
+                        lambda client, **kwargs: [] if client is service_client else None)
+    roster_router.publish(
+        "mv1", PublishRosterRequest(validation_input_digest="a" * 64),
+        _ctx(user_client, role="OWNER"),
+    )
+
+    assert publication_clients == [service_client]
+
+
+def test_publish_blocks_a_generated_option_with_a_real_hard_solver_violation(
+    monkeypatch,
+):
+    user_client = build_store()
+    service_client = object()
+    calls: list[object] = []
+
+    monkeypatch.setattr(roster_router, "get_service_client", lambda: service_client)
+    monkeypatch.setattr(
+        roster_router.validation_svc, "validate_roster",
+        lambda _client, _facility_id, version_id, **_kwargs: _validation_result(version_id),
+    )
+    monkeypatch.setattr(
+        roster_router.opt, "get_option_scores",
+        lambda _client, _version_id: {
+            "constraint_score": 100,
+            "hard_violation_count": 1,
+        },
+    )
+    monkeypatch.setattr(
+        roster_router.svc, "publish_version",
+        lambda client, **_kwargs: calls.append(client),
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        roster_router.publish(
+            "mv1", PublishRosterRequest(validation_input_digest="a" * 64),
+            _ctx(user_client, role="OWNER"),
+        )
+
+    assert exc.value.status_code == 409
+    assert exc.value.detail["code"] == "not_publishable"
+    assert calls == []
 
 
 def test_leave_decision_authorizes_with_rls_then_uses_service_client(

@@ -195,6 +195,10 @@ def test_part_time_policy_maps_to_solver_work_pattern():
 
 def test_saturday_part_time_writeback_uses_earliest_unoccupied_weekday():
     store = FakeSupabase()
+    # The production dictionary is charity-owned. Keep this isolated fixture
+    # self-contained rather than relying on a prior test to warm org_id_for's
+    # process cache.
+    store.data["facilities"] = [{"id": "f1", "org_id": "org-1"}]
     store.data["shift_definitions"] = [{
         "id": "cl-definition",
         "facility_id": "f1",
@@ -266,6 +270,7 @@ def test_saturday_part_time_writeback_uses_earliest_unoccupied_weekday():
 
 def test_saturday_part_time_writeback_defers_boundary_cl_without_definition():
     store = FakeSupabase()
+    store.data["facilities"] = [{"id": "f1", "org_id": "org-1"}]
     staff = StaffInput(
         id="pt1",
         rank="CW",
@@ -306,48 +311,15 @@ def test_saturday_part_time_writeback_defers_boundary_cl_without_definition():
     assert debt["details_json"]["source_saturday"] == "2026-07-04"
 
 
-def test_publish_fallback_archives_prior_operative_before_target():
+def test_publish_without_atomic_rpc_refuses_before_any_write():
     store = FakeSupabase()
-    store.data["roster_versions"] = [
-        {
-            "id": "old",
-            "facility_id": "f1",
-            "period_id": "p1",
-            "status": "published",
-        },
-        {
-            "id": "target",
-            "facility_id": "f1",
-            "period_id": "p1",
-            "status": "draft",
-        },
-        {
-            "id": "other-period",
-            "facility_id": "f1",
-            "period_id": "p2",
-            "status": "published",
-        },
-    ]
-
-    published = roster.publish_version(
-        store,
-        facility_id="f1",
-        roster_version_id="target",
-        created_by="profile-1",
-    )
-
-    assert published["status"] == "published"
-    assert next(
-        row for row in store.data["roster_versions"] if row["id"] == "old"
-    )["status"] == "archived"
-    assert next(
-        row
-        for row in store.data["roster_versions"]
-        if row["id"] == "other-period"
-    )["status"] == "published"
-    assert len(store.data["roster_publish_events"]) == 1
-    assert store.data["roster_publish_events"][0]["roster_version_id"] == "target"
-    assert store.data["roster_publish_events"][0]["created_by"] == "profile-1"
+    store.data["roster_versions"] = [{"id": "target", "status": "draft"}]
+    with pytest.raises(ValueError, match="atomic publication RPC"):
+        roster.publish_version(store, facility_id="f1", roster_version_id="target",
+                               created_by="profile-1", validation_run_id="run-1",
+                               input_digest="a" * 64, omitted_soft_violation_row_ids=[])
+    assert store.data["roster_versions"][0]["status"] == "draft"
+    assert not store.data.get("roster_publish_events")
 
 
 def test_publish_uses_atomic_database_function_when_available():
@@ -368,7 +340,10 @@ def test_publish_uses_atomic_database_function_when_available():
         RpcClient(),
         facility_id="f1",
         roster_version_id="target",
-        created_by="ignored-by-secure-rpc",
+        created_by="profile-1",
+        validation_run_id="run-1",
+        input_digest="a" * 64,
+        omitted_soft_violation_row_ids=["row-1"],
     )
 
     assert result["status"] == "published"
@@ -377,7 +352,10 @@ def test_publish_uses_atomic_database_function_when_available():
         {
             "p_facility_id": "f1",
             "p_roster_version_id": "target",
-            "p_created_by": "ignored-by-secure-rpc",
+            "p_created_by": "profile-1",
+            "p_validation_run_id": "run-1",
+            "p_input_digest": "a" * 64,
+            "p_omitted_soft_violation_row_ids": ["row-1"],
         },
     )]
 

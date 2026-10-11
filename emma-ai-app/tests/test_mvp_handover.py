@@ -196,8 +196,14 @@ def audit_rows(monkeypatch):
 
 @pytest.fixture
 def ctx():
+    from tests.test_optimize_service import FakeSupabase
+    client = FakeSupabase()
+    client.data.update({
+        'roster_versions': [{'id': 'v1', 'facility_id': 'fac1', 'period_id': 'per1', 'status': 'draft'}],
+        'roster_periods': [{'id': 'per1', 'facility_id': 'fac1', 'period_start': '2026-09-01', 'period_end': '2026-09-30'}],
+    })
     return SimpleNamespace(
-        client=_NullClient(),
+        client=client,
         facility_id="fac1",
         profile_id="p1",
         profile=Profile(id="p1", facility_id="fac1", email="boss@naac.example",

@@ -4,14 +4,17 @@
 // generate → edit → deterministic rule check → manager publish.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { ApiRuleError, api, optimizeAndPoll } from '@/lib/api'
+import { ApiRuleError, api, downloadRosterAudit, optimizeAndPoll } from '@/lib/api'
 import type {
   OptionScoreOut, PeriodOut, RosterCell, RosterGrid, RosterOption, RuleIssue,
   ShiftDef, TaskDefOut, ValidationOut, VersionOut,
 } from '@/lib/apiTypes'
 import { useLang } from '@/components/layout/LanguageContext'
+import { useAuth } from '@/components/layout/AuthContext'
+import { canDecide } from '@/lib/permissions'
 import { CreateShiftModal } from '@/components/modals/CreateShiftModal'
-import { canSeeTask, reasonText } from '@/lib/shiftRules'
+import { addUtcDays, datesForRosterView, type RosterViewMode } from '@/lib/roster-ui'
+import { formatHoursMinutes } from '@/lib/format-hours'
 import { AiOptionsModal } from './AiOptionsModal'
 import { CreateEventModal } from './CreateEventModal'
 import { BatchCreateShiftModal } from '@/components/modals/BatchCreateShiftModal'
@@ -23,8 +26,7 @@ const PINK = '#E8187A'
 // that has planned a future cycle lands on that empty cycle every time and the
 // current period's saved draft reads as "my edits are gone". The draft was never
 // lost; the board was simply pointed at a different period.
-const PERIOD_KEY = 'emma.roster.periodId'
-const LOG_KEY = 'emma.roster.saveLog'
+const PERIOD_KEY_PREFIX = 'emma.roster.periodId'
 
 function today(): string {
   const d = new Date()
@@ -39,10 +41,8 @@ function today(): string {
  * deleted): "the cycle we are living in" is the one a scheduler means by
  * "the roster", not the furthest-out one that happens to sort first.
  */
-function pickPeriod(ps: PeriodOut[]): string {
+function pickPeriod(ps: PeriodOut[], remembered: string | null): string {
   if (!ps.length) return ''
-  let remembered: string | null = null
-  try { remembered = window.localStorage.getItem(PERIOD_KEY) } catch { /* private mode */ }
   if (remembered && ps.some((p) => p.id === remembered)) return remembered
   const now = today()
   const current = ps.find((p) => p.period_start <= now && now <= p.period_end)
@@ -87,22 +87,12 @@ function dayLabel(iso: string, isZH: boolean) {
   return { wd, dm: `${d.getUTCDate()}/${d.getUTCMonth() + 1}`, weekend: dow === 0 || dow === 6 }
 }
 
-type EditState = {
-  staffId: string
-  staffName: string
-  staffRank: string
-  date: string
-  shiftType: string
-  tasks: string[]
-  wasWorking?: boolean
-}
-
-type SaveItem = {
-  id: string
-  type: 'create' | 'edit' | 'delete' | 'event'
-  title: string
-  subtitle: string
-  createdAt: string
+type EditorInitial = {
+  staffId?: string
+  date?: string
+  shiftType?: string
+  tasks?: string[]
+  assignmentId?: string | null
 }
 
 type FocusedCell = { staffId: string; date: string } | null
@@ -144,7 +134,13 @@ function groupRatios(items: NonNullable<ValidationOut['ratio_checks']>): RatioGr
 
 export function RealRosterBoard() {
   const { lang } = useLang()
+  const { user } = useAuth()
   const isZH = lang === 'zh'
+  // The API derives tenancy from the bearer token. This key is only for client
+  // state isolation: a cached Home A grid must never briefly survive a switch to
+  // Home B (nor should two users share a remembered period in one browser).
+  const scopeKey = `${user?.userId ?? 'anonymous'}:${user?.facilityId ?? 'no-facility'}`
+  const periodStorageKey = `${PERIOD_KEY_PREFIX}:${encodeURIComponent(user?.userId ?? 'anonymous')}:${encodeURIComponent(user?.facilityId ?? 'no-facility')}`
 
   const [periods, setPeriods] = useState<PeriodOut[]>([])
   const [periodId, setPeriodId] = useState('')
@@ -159,11 +155,15 @@ export function RealRosterBoard() {
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
   const [busy, setBusy] = useState('')
-  const [editing, setEditing] = useState<EditState | null>(null)
+  const [editorInitial, setEditorInitial] = useState<EditorInitial | null>(null)
   const [cellIssues, setCellIssues] = useState<RuleIssue[]>([])
   const [newPeriodOpen, setNewPeriodOpen] = useState(false)
   const [validation, setValidation] = useState<ValidationOut | null>(null)
+  // These IDs are issued by the server for individual current soft findings.
+  // The server re-validates and verifies them again before the atomic publish.
+  const [softOmissionIds, setSoftOmissionIds] = useState<Set<string>>(new Set())
   const [ruleReviewOpen, setRuleReviewOpen] = useState(false)
+  const [ruleReviewMode, setRuleReviewMode] = useState<'all' | 'soft'>('all')
   const [focusedCell, setFocusedCell] = useState<FocusedCell>(null)
   const [expandedRuleGroups, setExpandedRuleGroups] = useState<Set<string>>(new Set())
 
@@ -172,31 +172,44 @@ export function RealRosterBoard() {
   const [aiOptions, setAiOptions] = useState<RosterOption[] | null>(null)
   const [aiStatus, setAiStatus] = useState('')
   const [aiError, setAiError] = useState('')
-  const [publishingId, setPublishingId] = useState('')
-  const [publishedIds, setPublishedIds] = useState<Set<string>>(new Set())
-  const [publishError, setPublishError] = useState('')
   const [createEventOpen, setCreateEventOpen] = useState(false)
   const [createShiftOpen, setCreateShiftOpen] = useState(false)
   const [batchShiftOpen, setBatchShiftOpen] = useState(false)
-  const [pendingLog, setPendingLog] = useState<SaveItem[]>([])
-  const [publishedLog, setPublishedLog] = useState<SaveItem[]>([])
+  const [history, setHistory] = useState<Awaited<ReturnType<typeof api.rosterHistory>> | null>(null)
+  const [historyError, setHistoryError] = useState('')
+  const [historyLoading, setHistoryLoading] = useState(false)
   const [showSaveList, setShowSaveList] = useState(false)
   const [showPublishList, setShowPublishList] = useState(false)
+  const [viewMode, setViewMode] = useState<RosterViewMode>('week')
+  const [focusDate, setFocusDate] = useState('')
+  const [selectedStaffId, setSelectedStaffId] = useState('')
   const [filterRank, setFilterRank] = useState('ALL')
   const [filterFloor, setFilterFloor] = useState('ALL')
   const [filterSearch, setFilterSearch] = useState('')
   const gridRequestRef = useRef(0)
   const validationRequestRef = useRef(0)
-  // Which period's logs are currently in state, so the writer below never saves
-  // an empty initial state over a stored list before the reader has run.
-  const logsHydrated = useRef('')
+  const versionsRequestRef = useRef(0)
+  const historyRequestRef = useRef(0)
+  const scopeRequestRef = useRef(0)
+  const activeScopeRef = useRef(scopeKey)
+  const activePeriodRef = useRef(periodId)
+  // Ref updates during render are intentional: an old promise may settle before
+  // the cleanup effect below runs, so the current scope and period must be
+  // observable now.
+  activeScopeRef.current = scopeKey
+  activePeriodRef.current = periodId
+  const mayPublish = canDecide(user?.role, 'roster.publish')
 
   const T = {
     period: isZH ? '週期' : 'Period', newPeriod: isZH ? '＋ 新週期' : '＋ New period',
     version: isZH ? '版本' : 'Version', manual: isZH ? '手動' : 'Manual',
     ai: isZH ? '生成更表方案' : 'Generate roster options', aiBusy: isZH ? '生成中…' : 'Generating…',
     validate: isZH ? '執行規則檢查' : 'Run rule checks', saveDraft: isZH ? '儲存草稿' : 'Save draft',
-    publish: isZH ? '批准並發佈' : 'Approve & publish', staff: isZH ? '員工' : 'Staff',
+    prePublishReview: isZH ? '發佈前檢視' : 'Pre-publish review',
+    softReport: isZH ? 'Soft報告模式' : 'Soft report mode',
+    reload: isZH ? '重新載入更表' : 'Reload roster',
+    downloadAudit: isZH ? '下載Audit' : 'Download audit',
+    publish: isZH ? '發佈' : 'Publish', staff: isZH ? '員工' : 'Staff',
     filterRank: isZH ? '職級' : 'Rank',
     filterFloor: isZH ? '樓層/單位' : 'Floor/Unit',
     filterSearch: isZH ? '搜尋員工…' : 'Search staff…',
@@ -217,10 +230,10 @@ export function RealRosterBoard() {
     createEvent: isZH ? '📅 新增特別事項' : '📅 Create Special Event',
     batchCreate: isZH ? '📋 批量排更' : '📋 Batch Create',
     saveList: isZH ? '儲存清單' : 'Save List',
-    publishList: isZH ? '發佈記錄' : 'Publish List',
+    publishList: isZH ? '發佈記錄' : 'Publish history',
     saveListTitle: isZH ? '儲存清單' : 'Save List',
     saveListEmpty: isZH ? '暫無未發佈的更改' : 'No unpublished changes',
-    publishListTitle: isZH ? '發佈記錄' : 'Publish List',
+    publishListTitle: isZH ? '發佈記錄' : 'Publish history',
     publishListEmpty: isZH ? '暫無發佈記錄' : 'No published records yet',
     actionEdit: isZH ? '編輯更次' : 'Edit shift',
     actionCreate: isZH ? '新增更次' : 'New shift',
@@ -230,115 +243,184 @@ export function RealRosterBoard() {
 
   const flash = (m: string) => { setNotice(m); setError(''); window.setTimeout(() => setNotice(''), 2500) }
 
-  const formatNow = () => new Date().toLocaleTimeString(isZH ? 'zh-HK' : 'en-HK', { hour: '2-digit', minute: '2-digit' })
-  const logChange = (type: SaveItem['type'], title: string, subtitle: string) => {
-    setPendingLog((prev) => [{ id: `${prev.length}-${Date.now()}`, type, title, subtitle, createdAt: formatNow() }, ...prev])
-  }
 
   // ── loaders ──────────────────────────────────────────────────────────────
   useEffect(() => () => {
     gridRequestRef.current += 1
     validationRequestRef.current += 1
+    versionsRequestRef.current += 1
+    historyRequestRef.current += 1
+    scopeRequestRef.current += 1
   }, [])
 
   useEffect(() => {
-    api.shiftDefinitions().then(setShiftDefs).catch(() => {})
-    api.taskDefinitions().then(setTaskDefs).catch(() => {})
-  }, [])
+    const requestId = ++scopeRequestRef.current
+    // Invalidate every in-flight result before clearing. The API already scopes
+    // to the token; no facility id is ever added to client requests.
+    gridRequestRef.current += 1
+    validationRequestRef.current += 1
+    versionsRequestRef.current += 1
+    historyRequestRef.current += 1
+    activePeriodRef.current = ''
+    setPeriods([])
+    setPeriodId('')
+    setVersions([])
+    setVersionId('')
+    setGrid(null)
+    setShiftDefs([])
+    setTaskDefs([])
+    setScores({})
+    setLoading(false)
+    setError('')
+    setNotice('')
+    setBusy('')
+    setEditorInitial(null)
+    setCellIssues([])
+    setNewPeriodOpen(false)
+    setValidation(null)
+    setSoftOmissionIds(new Set())
+    setRuleReviewOpen(false)
+    setRuleReviewMode('all')
+    setFocusedCell(null)
+    setExpandedRuleGroups(new Set())
+    setAiOpen(false)
+    setAiLoading(false)
+    setAiOptions(null)
+    setAiStatus('')
+    setAiError('')
+    setCreateEventOpen(false)
+    setCreateShiftOpen(false)
+    setBatchShiftOpen(false)
+    setHistory(null)
+    setHistoryError('')
+    setHistoryLoading(false)
+    setShowSaveList(false)
+    setShowPublishList(false)
+    setViewMode('week')
+    setFocusDate('')
+    setSelectedStaffId('')
+    setFilterRank('ALL')
+    setFilterFloor('ALL')
+    setFilterSearch('')
 
-  useEffect(() => {
-    api.rosterPeriods()
-      .then((ps) => { setPeriods(ps); setPeriodId((prev) => prev || pickPeriod(ps)) })
-      .catch((e) => setError(e instanceof Error ? e.message : 'Failed to load periods'))
-  }, [])
+    if (!user?.userId) return
+
+    void (async () => {
+      const [shifts, tasks, periodResult] = await Promise.allSettled([
+        api.shiftDefinitions(),
+        api.taskDefinitions(),
+        api.rosterPeriods(),
+      ])
+      if (requestId !== scopeRequestRef.current || activeScopeRef.current !== scopeKey) return
+      setShiftDefs(shifts.status === 'fulfilled' ? shifts.value : [])
+      setTaskDefs(tasks.status === 'fulfilled' ? tasks.value : [])
+      if (periodResult.status === 'fulfilled') {
+        let remembered: string | null = null
+        try { remembered = window.localStorage.getItem(periodStorageKey) } catch { /* private mode */ }
+        setPeriods(periodResult.value)
+        setPeriodId(pickPeriod(periodResult.value, remembered))
+      } else {
+        setError(periodResult.reason instanceof Error ? periodResult.reason.message : 'Failed to load periods')
+      }
+    })()
+  }, [periodStorageKey, scopeKey, user?.userId])
 
   // Remember the choice so leaving the page - or signing out and back in -
   // returns to the same period rather than to whichever one sorts first.
   useEffect(() => {
-    if (!periodId) return
-    try { window.localStorage.setItem(PERIOD_KEY, periodId) } catch { /* private mode */ }
-  }, [periodId])
-
-  // The save/publish lists are a per-period record of what this scheduler has
-  // changed since the last publish. They outlive a page navigation for the same
-  // reason the period does: a list that empties itself looks like lost work.
-  useEffect(() => {
-    if (!periodId) return
-    let stored: { pending?: SaveItem[]; published?: SaveItem[] } = {}
-    try { stored = JSON.parse(window.localStorage.getItem(`${LOG_KEY}:${periodId}`) || '{}') } catch { /* ignore */ }
-    setPendingLog(Array.isArray(stored.pending) ? stored.pending : [])
-    setPublishedLog(Array.isArray(stored.published) ? stored.published : [])
-    logsHydrated.current = periodId
-  }, [periodId])
-
-  useEffect(() => {
-    if (!periodId || logsHydrated.current !== periodId) return
-    try {
-      window.localStorage.setItem(`${LOG_KEY}:${periodId}`, JSON.stringify({
-        pending: pendingLog.slice(0, 100), published: publishedLog.slice(0, 100),
-      }))
-    } catch { /* quota or private mode - the lists are a convenience, not a record */ }
-  }, [periodId, pendingLog, publishedLog])
+    if (!periodId || !user?.userId) return
+    try { window.localStorage.setItem(periodStorageKey, periodId) } catch { /* private mode */ }
+  }, [periodId, periodStorageKey, user?.userId])
 
   const loadVersions = useCallback(async (pid: string) => {
-    const vs = await api.rosterVersions(pid)
-    setVersions(vs)
+    const requestId = ++versionsRequestRef.current
     try {
+      const vs = await api.rosterVersions(pid)
+      if (requestId !== versionsRequestRef.current || activeScopeRef.current !== scopeKey || activePeriodRef.current !== pid) return
+      setVersions(vs)
       const cmp = await api.compareOptions(pid)
+      if (requestId !== versionsRequestRef.current || activeScopeRef.current !== scopeKey || activePeriodRef.current !== pid) return
       const map: Record<string, OptionScoreOut> = {}
       cmp.options.forEach((o) => { map[o.roster_version_id] = o })
       setScores(map)
-    } catch { setScores({}) }
-  }, [])
+    } catch (cause) {
+      if (requestId !== versionsRequestRef.current || activeScopeRef.current !== scopeKey || activePeriodRef.current !== pid) return
+      setVersions([])
+      setScores({})
+      throw cause
+    }
+  }, [scopeKey])
 
   useEffect(() => {
-    if (!periodId) return
+    versionsRequestRef.current += 1
+    setVersions([])
+    setScores({})
     setVersionId('')
+    if (!periodId) return
     loadVersions(periodId).catch(() => {})
   }, [periodId, loadVersions])
 
   const validateVersion = useCallback(async (vid: string) => {
     const requestId = ++validationRequestRef.current
+    const requestedPeriodId = activePeriodRef.current
     try {
       const result = await api.validateRoster(vid)
-      if (requestId === validationRequestRef.current) setValidation(result)
+      if (requestId === validationRequestRef.current && activeScopeRef.current === scopeKey && activePeriodRef.current === requestedPeriodId) {
+        setValidation(result)
+        // Every re-check is a new snapshot. Do not silently carry an earlier
+        // checkbox into it, even if the finding fingerprint happens to match:
+        // the OWNER must re-review and explicitly acknowledge each current row.
+        setSoftOmissionIds(new Set())
+      }
       return result
     } catch (e) {
       // A newer version or manual re-check supersedes this request.
-      if (requestId !== validationRequestRef.current) return null
+      if (requestId !== validationRequestRef.current || activeScopeRef.current !== scopeKey || activePeriodRef.current !== requestedPeriodId) return null
       throw e
     }
-  }, [])
+  }, [scopeKey])
 
   const loadGrid = useCallback(async (pid: string, vid: string) => {
     const requestId = ++gridRequestRef.current
     // The next grid owns the validation strip; invalidate any older response.
     validationRequestRef.current += 1
-    setLoading(true); setError(''); setValidation(null)
+    // Do not leave a previous period/version editable while a replacement is
+    // loading or after a failed request.
+    setGrid(null); setLoading(true); setError(''); setValidation(null); setSoftOmissionIds(new Set())
     try {
       const nextGrid = await api.rosterGrid(pid, vid ? { versionId: vid } : undefined)
-      if (requestId !== gridRequestRef.current) return
+      if (requestId !== gridRequestRef.current || activeScopeRef.current !== scopeKey || activePeriodRef.current !== pid) return
       setGrid(nextGrid)
       setLoading(false)
       if (nextGrid.version_id) {
         try {
           await validateVersion(nextGrid.version_id)
         } catch (e) {
-          if (requestId === gridRequestRef.current) {
+          if (requestId === gridRequestRef.current && activeScopeRef.current === scopeKey && activePeriodRef.current === pid) {
             setError(e instanceof Error ? e.message : 'Validation failed')
           }
         }
       }
     } catch (e) {
-      if (requestId === gridRequestRef.current) {
+      if (requestId === gridRequestRef.current && activeScopeRef.current === scopeKey && activePeriodRef.current === pid) {
+        setGrid(null)
         setError(e instanceof Error ? e.message : 'Failed to load roster')
       }
     } finally {
-      if (requestId === gridRequestRef.current) setLoading(false)
+      if (requestId === gridRequestRef.current && activeScopeRef.current === scopeKey && activePeriodRef.current === pid) setLoading(false)
     }
-  }, [validateVersion])
+  }, [scopeKey, validateVersion])
 
   useEffect(() => { if (periodId) loadGrid(periodId, versionId) }, [periodId, versionId, loadGrid])
+
+  // All three view modes are derived from the same authenticated roster grid;
+  // changing the view never reads a demo roster or a cross-facility dictionary.
+  useEffect(() => {
+    if (!grid?.dates.length) return
+    setFocusDate((current) => grid.dates.includes(current) ? current : grid.dates[0])
+    setSelectedStaffId((current) => grid.rows.some((row) => row.staff.id === current) ? current : (grid.rows[0]?.staff.id || ''))
+  }, [grid])
+
 
   // ── derived ──────────────────────────────────────────────────────────────
   const currentVersion = useMemo(
@@ -346,24 +428,63 @@ export function RealRosterBoard() {
     [versions, versionId],
   )
   const activeVersionId = grid?.version_id ?? currentVersion?.id ?? ''
+
+  const loadHistory = useCallback(async () => {
+    if (!periodId) return
+    const requestId = ++historyRequestRef.current
+    const requestedPeriodId = periodId
+    setHistoryLoading(true); setHistoryError('')
+    try {
+      const nextHistory = await api.rosterHistory(requestedPeriodId, activeVersionId || undefined)
+      if (requestId !== historyRequestRef.current || activeScopeRef.current !== scopeKey || activePeriodRef.current !== requestedPeriodId) return
+      setHistory(nextHistory)
+    }
+    catch (cause) {
+      if (requestId !== historyRequestRef.current || activeScopeRef.current !== scopeKey || activePeriodRef.current !== requestedPeriodId) return
+      setHistory(null)
+      setHistoryError(cause instanceof Error ? cause.message : (isZH ? '未能讀取伺服器Audit記錄' : 'Could not read server audit records'))
+    } finally {
+      if (requestId === historyRequestRef.current && activeScopeRef.current === scopeKey && activePeriodRef.current === requestedPeriodId) setHistoryLoading(false)
+    }
+  // The helper is an authenticated scoped read. It replaces the old localStorage convenience list.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [periodId, activeVersionId, isZH, scopeKey])
+
+  useEffect(() => { void loadHistory() }, [loadHistory])
+
   // Only the manual draft is hand-editable; A/B/C solver options are read-only
   // results you publish, and published/archived versions are locked.
   const editable = currentVersion?.version_type === 'manual' && currentVersion?.status === 'draft'
 
   const blockingViolations = useMemo(
-    () => (validation?.violations ?? []).filter((item) => !item.resolved && item.severity.toLowerCase() === 'hard'),
+    // Unknown severity is deliberately a block, never a warning that can be
+    // omitted. The final server gate applies the same fail-closed posture.
+    () => (validation?.violations ?? []).filter((item) => !item.resolved && item.severity.toLowerCase() !== 'soft'),
     [validation],
   )
   const warningViolations = useMemo(
-    () => (validation?.violations ?? []).filter((item) => !item.resolved && item.severity.toLowerCase() !== 'hard'),
+    () => (validation?.violations ?? []).filter((item) => !item.resolved && item.severity.toLowerCase() === 'soft'),
     [validation],
   )
   const failingRatios = useMemo(
     () => (validation?.ratio_checks ?? []).filter((item) => !item.passes),
     [validation],
   )
-  const blockingCount = validation?.hard_violation_count ?? 0
-  const warningCount = warningViolations.length + failingRatios.length
+  const blockingCount = Math.max(validation?.hard_violation_count ?? 0, blockingViolations.length)
+  // Ratio failures also produce deterministic hard violations (`swd_ratio`),
+  // hence they are never counted as soft omissions.
+  const warningCount = warningViolations.length
+  const softOmittableViolations = useMemo(
+    () => warningViolations.filter((item) => !!item.omission_id),
+    [warningViolations],
+  )
+  // `omission_id` is server evidence, not optional UI decoration. A soft row
+  // without it cannot be individually acknowledged, so do not let the browser
+  // present a permissive Publish action while the server will (correctly) deny.
+  const hasUnacknowledgeableSoftViolation = warningViolations.some((item) => !item.omission_id)
+  const allSoftOmissionsSelected = softOmittableViolations.length === softOmissionIds.size
+    && softOmittableViolations.every((item) => softOmissionIds.has(item.omission_id!))
+  const softAcknowledgementsComplete = !hasUnacknowledgeableSoftViolation && allSoftOmissionsSelected
   const passingCheckCount = (validation?.ratio_checks ?? []).filter((item) => item.passes).length
   const blockingGroups = useMemo(() => groupViolations(blockingViolations), [blockingViolations])
   const warningGroups = useMemo(() => groupViolations(warningViolations), [warningViolations])
@@ -380,10 +501,23 @@ export function RealRosterBoard() {
     return counts
   }, [validation])
 
-  const columns = useMemo(() => {
+  const periodColumns = useMemo(() => {
     if (grid?.period_start && grid?.period_end) return eachDate(grid.period_start, grid.period_end)
     return grid?.dates ?? []
   }, [grid])
+  const columns = useMemo(
+    () => datesForRosterView(periodColumns, focusDate || periodColumns[0] || '', viewMode),
+    [focusDate, periodColumns, viewMode],
+  )
+  const shownRows = useMemo(() => {
+    const rows = grid?.rows ?? []
+    return viewMode === 'staff' ? rows.filter((row) => row.staff.id === selectedStaffId) : rows
+  }, [grid?.rows, selectedStaffId, viewMode])
+  const currentDateRange = columns.length ? `${columns[0]} → ${columns[columns.length - 1]}` : ''
+  const moveView = (direction: -1 | 1) => {
+    if (!focusDate) return
+    setFocusDate((value) => addUtcDays(value, direction * (viewMode === 'month' ? 31 : 7)))
+  }
 
   // staffId → (date → cell)
   const cellLookup = useMemo(() => {
@@ -406,39 +540,12 @@ export function RealRosterBoard() {
 
   // ── actions ──────────────────────────────────────────────────────────────
   const refresh = useCallback(async () => {
-    await Promise.all([loadVersions(periodId), loadGrid(periodId, versionId)])
-  }, [periodId, versionId, loadVersions, loadGrid])
-
-  async function saveCell() {
-    if (!editing || !activeVersionId) return
-    setBusy('cell')
-    setCellIssues([])
-    try {
-      if (!editing.shiftType) await api.clearCell(activeVersionId, editing.staffId, editing.date)
-      else await api.upsertCell({
-        roster_version_id: activeVersionId, staff_id: editing.staffId,
-        date: editing.date, shift_type: editing.shiftType, tasks: editing.tasks,
-      })
-      const label = !editing.shiftType
-        ? T.actionDelete
-        : editing.wasWorking ? T.actionEdit : T.actionCreate
-      logChange(
-        !editing.shiftType ? 'delete' : editing.wasWorking ? 'edit' : 'create',
-        label,
-        `${editing.staffName} · ${editing.date}${editing.shiftType ? ` · ${editing.shiftType}` : ''}`,
-      )
-      setEditing(null)
-      await loadGrid(periodId, versionId)
-    } catch (e) {
-      // An eligibility refusal is a list of fixable reasons, so keep the dialog
-      // open and show them against the labels instead of closing on a one-liner.
-      if (e instanceof ApiRuleError) setCellIssues(e.issues)
-      else setError(e instanceof Error ? e.message : 'Save failed')
-    } finally { setBusy('') }
-  }
+    await Promise.all([loadVersions(periodId), loadGrid(periodId, versionId), loadHistory()])
+  }, [periodId, versionId, loadVersions, loadGrid, loadHistory])
 
   async function handleValidate() {
     if (!activeVersionId) return
+    setValidation(null); setSoftOmissionIds(new Set())
     setBusy('validate'); setError('')
     try { await validateVersion(activeVersionId) }
     catch (e) { setError(e instanceof Error ? e.message : 'Validation failed') } finally { setBusy('') }
@@ -455,24 +562,51 @@ export function RealRosterBoard() {
     catch (e) { setError(e instanceof Error ? e.message : 'Save failed') } finally { setBusy('') }
   }
 
+  async function handleDownloadAudit() {
+    if (!periodId) return
+    setBusy('audit'); setError('')
+    try {
+      await downloadRosterAudit(periodId, activeVersionId || undefined)
+      flash(isZH ? 'Audit下載已開始' : 'Audit download started')
+    } catch (e) {
+      setError(e instanceof Error ? e.message : (isZH ? 'Audit下載失敗' : 'Audit download failed'))
+    } finally { setBusy('') }
+  }
+
   async function handlePublish() {
     if (!activeVersionId) return
-    if (!validation || blockingCount > 0) {
+    if (!mayPublish) {
+      setError(isZH ? '只有院長可批准及發佈更表。' : 'Only the superintendent may approve and publish a roster.')
+      return
+    }
+    // This is a usability preflight only. The server always repeats the
+    // deterministic validation immediately before its atomic publication RPC.
+    if (!validation || !validation.validation_run_id || !validation.input_digest || blockingCount > 0) {
       setRuleReviewOpen(true)
       return
     }
-    if (warningCount > 0 && !window.confirm(isZH
-      ? `現時有${warningCount}項警告。規則引擎沒有阻止發佈；是否由院長確認後繼續？`
-      : `There are ${warningCount} warnings. The rules engine does not block publishing; continue with manager confirmation?`)) return
+    if (!softAcknowledgementsComplete) {
+      setError(hasUnacknowledgeableSoftViolation
+        ? (isZH ? '規則檢查缺少soft例外識別碼；請重新執行檢查。' : 'The rule check is missing a soft-exception identifier; run the checks again.')
+        : (isZH ? '請逐項剔選所有soft違規後才可發佈。' : 'Tick every soft violation individually before publishing.'))
+      setRuleReviewOpen(true)
+      return
+    }
     setBusy('publish'); setError('')
     try {
-      await api.publish(activeVersionId)
-      flash(isZH ? '已發佈' : 'Published')
-      setPublishedLog((prev) => [...pendingLog, ...prev])
-      setPendingLog([])
+      const published = await api.publish(
+        activeVersionId,
+        [...softOmissionIds],
+        validation.input_digest,
+      )
+      flash(published.omitted_soft_violation_ids.length
+        ? (isZH ? `已發佈；已審批${published.omitted_soft_violation_ids.length}項soft例外。` : `Published with ${published.omitted_soft_violation_ids.length} approved soft omission(s).`)
+        : (isZH ? '已發佈' : 'Published'))
+      setRuleReviewOpen(false)
       await refresh()
     } catch (e) {
       const message = e instanceof Error ? e.message : 'Publish failed'
+      setValidation(null); setSoftOmissionIds(new Set())
       try { await validateVersion(activeVersionId) } catch { /* preserve the publish error */ }
       setError(message)
     } finally { setBusy('') }
@@ -480,7 +614,7 @@ export function RealRosterBoard() {
 
   async function handleAI() {
     if (aiLoading || !periodId) return
-    setAiOpen(true); setAiError(''); setPublishError(''); setAiOptions(null)
+    setAiOpen(true); setAiError(''); setAiOptions(null)
     setAiLoading(true); setAiStatus('pending')
     try {
       const options = await optimizeAndPoll(periodId, { onStatus: setAiStatus })
@@ -491,13 +625,14 @@ export function RealRosterBoard() {
     } finally { setAiLoading(false) }
   }
 
-  async function handlePublishOption(vid: string) {
-    setPublishingId(vid); setPublishError('')
-    try {
-      await api.publish(vid)
-      setPublishedIds((prev) => new Set(prev).add(vid))
-      await refresh()
-    } catch (e) { setPublishError(e instanceof Error ? e.message : 'Publish failed') } finally { setPublishingId('') }
+  function handlePublishOption(vid: string) {
+    // Solver options must use the identical fresh validation and omission flow;
+    // selecting one never invokes a client-only direct publish path.
+    setVersionId(vid)
+    setAiOpen(false)
+    flash(isZH
+      ? '已選擇方案；請完成規則檢視後在上方發佈。'
+      : 'Option selected. Complete rule review, then publish from the fixed control above.')
   }
 
   // "➕ Create Shift" opens the full dialog - staff, day, shift type and a task
@@ -511,7 +646,6 @@ export function RealRosterBoard() {
 
   function handleEventCreated(title: string) {
     setCreateEventOpen(false)
-    logChange('event', T.actionEvent, title)
     loadGrid(periodId, versionId)
   }
 
@@ -547,13 +681,22 @@ export function RealRosterBoard() {
     })
   }
 
+  function toggleSoftOmission(omissionId: string) {
+    setSoftOmissionIds((current) => {
+      const next = new Set(current)
+      if (next.has(omissionId)) next.delete(omissionId)
+      else next.add(omissionId)
+      return next
+    })
+  }
+
   // ── render ───────────────────────────────────────────────────────────────
   const periodLabel = grid?.period_start && grid?.period_end ? `${grid.period_start} → ${grid.period_end}` : ''
 
   return (
     <div className="flex flex-col h-full overflow-hidden">
       {/* Toolbar */}
-      <div className="bg-white border-b border-gray-200 px-5 py-3 flex-shrink-0 space-y-2.5">
+      <div className="sticky top-0 z-40 bg-white border-b border-gray-200 px-5 py-3 flex-shrink-0 space-y-2.5">
         <div className="flex items-center gap-3 flex-wrap">
           <div>
             <h1 className="text-xl font-bold text-gray-900">{isZH ? '更表工作區' : 'Roster Workspace'}</h1>
@@ -591,6 +734,23 @@ export function RealRosterBoard() {
               {step}
             </div>
           ))}
+        </div>
+
+        <div className="flex flex-col gap-2 border-t border-slate-100 pt-2 lg:flex-row lg:items-center lg:justify-between">
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="flex rounded-xl bg-slate-100 p-1">
+              {([
+                ['week', isZH ? '全體週表' : 'All-staff week'],
+                ['month', isZH ? '全體月表' : 'All-staff month'],
+                ['staff', isZH ? '單一員工' : 'Single staff'],
+              ] as Array<[RosterViewMode, string]>).map(([mode, label]) => <button key={mode} type="button" onClick={() => setViewMode(mode)} className={`rounded-lg px-3 py-1.5 text-[10px] font-bold ${viewMode === mode ? 'bg-white text-pink-700 shadow-sm' : 'text-slate-500'}`}>{label}</button>)}
+            </div>
+            <button type="button" onClick={() => moveView(-1)} className="rounded-lg border border-slate-200 px-2 py-1 text-xs text-slate-600">‹</button>
+            <input type="date" value={focusDate} min={periodColumns[0]} max={periodColumns[periodColumns.length - 1]} onChange={(event) => setFocusDate(event.target.value)} className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-[11px]" />
+            <button type="button" onClick={() => moveView(1)} className="rounded-lg border border-slate-200 px-2 py-1 text-xs text-slate-600">›</button>
+            <span className="text-[10px] font-semibold text-slate-500">{currentDateRange}</span>
+          </div>
+          {viewMode === 'staff' && <select value={selectedStaffId} onChange={(event) => setSelectedStaffId(event.target.value)} className="rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-[11px] font-semibold text-slate-700"><option value="">{isZH ? '選擇員工' : 'Select staff'}</option>{grid?.rows.map((row) => <option key={row.staff.id} value={row.staff.id}>{row.staff.name_en || row.staff.name} · {row.staff.rank}</option>)}</select>}
         </div>
 
         {/* Version tabs + actions */}
@@ -639,19 +799,40 @@ export function RealRosterBoard() {
               className="text-xs px-3 py-1.5 border border-gray-200 rounded-lg hover:bg-gray-50 disabled:opacity-50">
               {busy === 'save' ? '…' : T.saveDraft}
             </button>
-            <button onClick={handlePublish} disabled={!activeVersionId || busy === 'publish'}
-              title={blockingCount > 0 ? (isZH ? '先檢視及處理blocking rules' : 'Review and resolve blocking rules first') : undefined}
+            <button onClick={() => { setRuleReviewMode('all'); setRuleReviewOpen(true); if (!validation) void handleValidate() }} disabled={!activeVersionId || !!busy}
+              title={blockingCount > 0
+                ? (isZH ? '硬規則已強制執行；必須先處理。' : 'Hard rules are enforced and must be resolved first.')
+                : undefined}
+              className="text-xs px-3 py-1.5 border border-slate-300 rounded-lg bg-white text-slate-700 font-semibold hover:bg-slate-50 disabled:opacity-50">
+              {T.prePublishReview}
+            </button>
+            <button onClick={() => { setRuleReviewMode('soft'); setRuleReviewOpen(true); if (!validation) void handleValidate() }} disabled={!activeVersionId || !!busy}
+              title={isZH ? '只顯示本次伺服器規則檢查的soft例外；不是另一個檢查或略過機制。' : 'Shows only soft findings from this server rule-check snapshot; it is not a second check or an override.'}
+              className="text-xs px-3 py-1.5 border border-amber-200 rounded-lg bg-amber-50 text-amber-800 font-semibold hover:bg-amber-100 disabled:opacity-50">
+              {T.softReport} ({warningCount})
+            </button>
+            <span title={isZH ? '硬規則由伺服器在發佈前再次強制核對。' : 'The server enforces hard rules again immediately before publication.'}
+              className={`rounded-lg border px-2.5 py-1.5 text-[10px] font-bold ${blockingCount > 0 ? 'border-rose-200 bg-rose-50 text-rose-700' : 'border-emerald-200 bg-emerald-50 text-emerald-700'}`}>
+              {isZH ? (blockingCount > 0 ? `硬規則強制 · ${blockingCount}` : '硬規則已強制') : (blockingCount > 0 ? `Hard enforced · ${blockingCount}` : 'Hard enforced')}
+            </span>
+            <button onClick={() => { setRuleReviewMode('all'); setRuleReviewOpen(true); if (!validation) void handleValidate() }} disabled={!activeVersionId || !!busy || !mayPublish}
+              title={!mayPublish
+                ? (isZH ? '只有院長可批准及發佈；伺服器會再次核對權限。' : 'Only the superintendent may approve and publish; the server verifies this again.')
+                : blockingCount > 0 ? (isZH ? '先檢視及處理blocking rules' : 'Review and resolve blocking rules first')
+                  : !softAcknowledgementsComplete ? (hasUnacknowledgeableSoftViolation
+                    ? (isZH ? '請重新執行規則檢查。' : 'Run the rule checks again.')
+                    : (isZH ? '請逐項剔選所有soft違規。' : 'Tick every soft violation individually.')) : undefined}
               className="text-xs px-3 py-1.5 rounded-lg text-white font-semibold disabled:opacity-50"
-              style={{ background: blockingCount > 0 ? '#475569' : PINK }}>
-              {busy === 'publish' ? '…' : blockingCount > 0 ? (isZH ? '發佈前檢視規則' : 'Review rules before publishing') : T.publish}
+              style={{ background: !mayPublish || blockingCount > 0 || !softAcknowledgementsComplete ? '#475569' : PINK }}>
+              {busy === 'publish' ? '…' : T.publish}
             </button>
             <button onClick={() => setShowSaveList((v) => !v)}
               className="text-xs px-3 py-1.5 rounded-lg border border-gray-200 bg-white text-gray-700 font-semibold hover:bg-gray-50">
-              {T.saveList} ({pendingLog.length})
+              {T.saveList} ({history?.changes.length ?? 0})
             </button>
             <button onClick={() => setShowPublishList((v) => !v)}
               className="text-xs px-3 py-1.5 rounded-lg border border-gray-200 bg-white text-gray-700 font-semibold hover:bg-gray-50">
-              {T.publishList} ({publishedLog.length})
+              {T.publishList} ({history?.publish_events.length ?? 0})
             </button>
           </div>
         </div>
@@ -686,11 +867,19 @@ export function RealRosterBoard() {
               className="text-xs px-2.5 py-1.5 border border-gray-200 rounded-lg bg-white w-40" />
             <button onClick={() => { setFilterRank('ALL'); setFilterFloor('ALL'); setFilterSearch('') }}
               className="text-[10px] text-gray-400 hover:text-gray-600">✕ Clear</button>
-            <div className="ml-auto">
-              <button onClick={() => window.open(`/api/export/roster?period_id=${periodId}`, '_blank')}
-                disabled={!periodId}
+            <div className="ml-auto flex flex-wrap gap-2">
+              <button onClick={() => window.location.assign(`/reports?period_id=${encodeURIComponent(periodId)}${activeVersionId ? `&version_id=${encodeURIComponent(activeVersionId)}` : ''}`)} disabled={!periodId}
+                className="text-xs px-3 py-1.5 border border-pink-200 rounded-lg bg-white text-pink-700 hover:bg-pink-50 disabled:opacity-50">
+                {isZH ? '下載更表' : 'Download roster'}
+              </button>
+              <button onClick={() => void handleDownloadAudit()} disabled={!periodId || busy === 'audit'}
                 className="text-xs px-3 py-1.5 border border-gray-200 rounded-lg hover:bg-gray-50 disabled:opacity-50">
-                {T.exportRoster}
+                {busy === 'audit' ? '…' : T.downloadAudit}
+              </button>
+              <button onClick={() => void refresh()} disabled={!periodId || !!busy || loading}
+                title={isZH ? '重新從目前登入帳戶的伺服器範圍讀取；不會刪除、更改或假裝重設草稿。' : 'Re-reads the current signed-in server scope; it does not delete, change, or pretend to reset a draft.'}
+                className="text-xs px-3 py-1.5 border border-gray-200 rounded-lg text-gray-700 hover:bg-gray-50 disabled:opacity-50">
+                {T.reload}
               </button>
             </div>
           </div>
@@ -718,8 +907,8 @@ export function RealRosterBoard() {
             <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-semibold text-emerald-700">
               {isZH ? '通過檢查' : 'Checks passed'} {passingCheckCount}
             </span>
-            <button onClick={() => setRuleReviewOpen(true)} className="ml-auto rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-[10px] font-bold text-slate-700 hover:bg-slate-50">
-              {isZH ? '檢視規則' : 'Review rules'}
+            <button onClick={() => { setRuleReviewMode('all'); setRuleReviewOpen(true) }} className="ml-auto rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-[10px] font-bold text-slate-700 hover:bg-slate-50">
+              {isZH ? '規則摘要' : 'Rule summary'}
             </button>
           </div>
         </div>
@@ -731,14 +920,16 @@ export function RealRosterBoard() {
           <aside className="relative flex max-h-[84vh] w-full flex-col overflow-hidden rounded-t-2xl border border-slate-200 bg-white shadow-2xl md:max-h-none md:max-w-md md:rounded-none md:rounded-l-2xl">
             <div className="flex items-start justify-between gap-3 border-b border-slate-100 px-5 py-4">
               <div>
-                <h2 className="text-base font-black text-slate-950">{isZH ? '更表規則檢視' : 'Roster rule review'}</h2>
-                <p className="mt-1 text-[10px] leading-relaxed text-slate-500">{isZH ? '規則引擎決定結果；Emma AI只可解釋同一份證據。' : 'The rules engine decides the result; Emma AI can only explain the same evidence.'}</p>
+                <h2 className="text-base font-black text-slate-950">{ruleReviewMode === 'soft' ? (isZH ? 'Soft例外報告' : 'Soft findings report') : (isZH ? '更表規則摘要' : 'Roster rule summary')}</h2>
+                <p className="mt-1 text-[10px] leading-relaxed text-slate-500">{ruleReviewMode === 'soft'
+                  ? (isZH ? '只顯示目前伺服器規則檢查的soft例外；硬規則仍會在發佈前強制核對。' : 'Only current server rule-check soft findings are shown; hard rules remain enforced before publication.')
+                  : (isZH ? '規則引擎決定結果；Emma AI只可解釋同一份證據。' : 'The rules engine decides the result; Emma AI can only explain the same evidence.')}</p>
               </div>
               <button onClick={() => setRuleReviewOpen(false)} className="rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs text-slate-500 hover:bg-slate-50">✕</button>
             </div>
 
             <div className="flex-1 space-y-5 overflow-y-auto px-5 py-4">
-              <section>
+              {ruleReviewMode === 'all' && <section>
                 <div className="mb-2 flex items-center justify-between">
                   <h3 className="text-xs font-black uppercase tracking-wide text-rose-700">{isZH ? '必須處理' : 'Blocking'}</h3>
                   <span className="rounded-full bg-rose-100 px-2 py-0.5 text-[10px] font-bold text-rose-700">{blockingCount}</span>
@@ -783,7 +974,7 @@ export function RealRosterBoard() {
                   {blockingGroups.length === 0 && blockingCount > 0 && <div className="rounded-xl border border-dashed border-rose-200 p-3 text-[11px] text-rose-700">{isZH ? `規則引擎報告${blockingCount}項阻塞，但未返回逐項資料。請重新執行規則檢查或查看validation evidence。` : `The rules engine reports ${blockingCount} blockers but returned no item-level data. Run the checks again or review the validation evidence.`}</div>}
                   {blockingCount === 0 && <div className="rounded-xl border border-emerald-100 bg-emerald-50 p-3 text-[11px] text-emerald-700">{isZH ? '沒有阻塞發佈的規則。' : 'No rules are blocking publication.'}</div>}
                 </div>
-              </section>
+              </section>}
 
               <section>
                 <div className="mb-2 flex items-center justify-between">
@@ -797,6 +988,27 @@ export function RealRosterBoard() {
                       <article key={group.key} className="rounded-xl border border-amber-200 bg-amber-50/60 p-3">
                         <div className="flex flex-wrap items-center gap-2"><div className="text-xs font-bold text-slate-900">{group.ruleCode}</div><span className="rounded-full bg-white px-2 py-0.5 text-[9px] font-bold text-amber-800">{group.items.length} {isZH ? '項結果' : 'results'}</span></div>
                         <p className="mt-1 text-[11px] leading-relaxed text-slate-600">{first?.message || (isZH ? '需要院長檢視。' : 'Manager review is required.')}</p>
+                        <div className="mt-3 space-y-2 border-t border-amber-100 pt-3">
+                          {group.items.map((item, index) => {
+                            const omissionId = item.omission_id
+                            const checked = !!omissionId && softOmissionIds.has(omissionId)
+                            return (
+                              <label key={omissionId || `${item.rule_code}-${index}`} className={`flex gap-2 rounded-lg border px-2.5 py-2 text-[10px] ${checked ? 'border-amber-300 bg-amber-100/60' : 'border-amber-100 bg-white/80'}`}>
+                                <input
+                                  type="checkbox"
+                                  checked={checked}
+                                  disabled={!mayPublish || !omissionId}
+                                  onChange={() => omissionId && toggleSoftOmission(omissionId)}
+                                  className="mt-0.5 h-3.5 w-3.5 accent-[#E8187A]"
+                                />
+                                <span className="min-w-0 text-slate-600">
+                                  <b className="text-slate-800">{item.date || (isZH ? '未有日期' : 'Date unavailable')}</b>{item.message ? ` · ${item.message}` : ''}
+                                  <span className="mt-0.5 block text-[9px] text-amber-800">{isZH ? '略過／Omit 此soft例外；發佈時伺服器會重新核對。' : 'Omit this soft exception; the server re-checks it at publish.'}</span>
+                                </span>
+                              </label>
+                            )
+                          })}
+                        </div>
                         <button onClick={() => explainRule(group.ruleCode, first?.date)} className="mt-3 rounded-lg border border-amber-200 bg-white px-3 py-1.5 text-[10px] font-bold text-amber-800">{isZH ? '由Emma AI解釋' : 'Explain in Emma AI'}</button>
                       </article>
                     )
@@ -827,6 +1039,10 @@ export function RealRosterBoard() {
                 </div>
               </section>
             </div>
+            <footer className="shrink-0 border-t border-slate-200 bg-white p-4">
+              <p className="mb-2 text-xs text-slate-600">{blockingCount > 0 ? (isZH ? '硬規則必須先處理，不能略過。' : 'Hard rules must be resolved and cannot be omitted.') : !softAcknowledgementsComplete ? (isZH ? '剩餘soft警告請逐項勾選略過。' : 'Select Omit for each remaining soft warning.') : ''}</p>
+              {ruleReviewMode === 'soft' ? <button type="button" onClick={() => setRuleReviewMode('all')} className="w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm font-bold text-slate-700 hover:bg-slate-50">{isZH ? '查看完整規則摘要' : 'View full rule summary'}</button> : <button type="button" onClick={() => void handlePublish()} disabled={!mayPublish || !!busy || !validation?.passes || !validation?.validation_run_id || !validation?.input_digest || blockingCount > 0 || !softAcknowledgementsComplete} className="w-full rounded-xl bg-[#E8187A] px-4 py-3 text-sm font-bold text-white disabled:opacity-40">{busy === 'publish' ? '…' : (isZH ? '院長批准並發佈' : 'Approve and publish')}</button>}
+            </footer>
           </aside>
         </div>
       )}
@@ -867,7 +1083,7 @@ export function RealRosterBoard() {
               </tr>
             </thead>
             <tbody>
-              {grid.rows
+              {shownRows
                 .filter((row) => {
                   if (filterRank !== 'ALL' && row.staff.rank !== filterRank) return false
                   if (filterFloor !== 'ALL' && row.staff.unit_name !== filterFloor) return false
@@ -879,13 +1095,12 @@ export function RealRosterBoard() {
                   return true
                 })
                 .map((row) => {
-                const workedHrs = columns.reduce((sum, iso) => {
+                const paid = columns.map((iso) => cellLookup.get(row.staff.id)?.get(iso)?.paid_minutes)
+                const hasUnknownPaidMinutes = columns.some((iso) => {
                   const cell = cellLookup.get(row.staff.id)?.get(iso)
-                  if (!cell?.shift_type) return sum
-                  const sDef = shiftDefs.find((d) => d.shift_type === cell.shift_type)
-                  if (!sDef?.is_working) return sum
-                  return sum + (sDef.paid_minutes ?? 480) / 60
-                }, 0)
+                  return !!cell?.is_working && cell.paid_minutes == null
+                })
+                const paidMinutes = paid.reduce<number>((sum, value) => sum + (typeof value === 'number' ? value : 0), 0)
                 return (
                 <tr key={row.staff.id} className="border-t border-gray-100">
                   <td className="px-3 py-2 border-r border-gray-200 sticky left-0 bg-white z-10 w-44 min-w-44">
@@ -896,7 +1111,7 @@ export function RealRosterBoard() {
                     </div>
                   </td>
                   <td className="px-1 py-2 border-r border-gray-200 text-center">
-                    <div className="text-[10px] font-bold text-gray-600">{workedHrs.toFixed(1)}</div>
+                    <div className="text-[10px] font-bold text-gray-600" title={hasUnknownPaidMinutes ? (isZH ? '部分在職更次沒有持久化paid_minutes；總時數保持未知，未以時鐘時間估算。' : 'Some working cells lack persisted paid_minutes; the total remains unknown and is not estimated from clock times.') : undefined}>{hasUnknownPaidMinutes ? '—' : formatHoursMinutes(paidMinutes, isZH ? 'zh' : 'en')}</div>
                   </td>
                   {columns.map((iso) => {
                     const cell = cellLookup.get(row.staff.id)?.get(iso)
@@ -904,12 +1119,10 @@ export function RealRosterBoard() {
                     const style = st ? (SHIFT_STYLE[st] ?? DEFAULT_STYLE) : null
                     return (
                       <td key={iso} id={`roster-cell-${row.staff.id}-${iso}`}
-                        onClick={() => editable && (setCellIssues([]), setEditing({
-                          staffId: row.staff.id, staffName: row.staff.name_en || row.staff.name,
-                          staffRank: row.staff.rank,
-                          date: iso, shiftType: st ?? '', tasks: cell?.tasks ?? [],
-                          wasWorking: !!st,
-                        }))}
+                        onClick={() => editable && setEditorInitial({
+                          staffId: row.staff.id, date: iso, shiftType: st ?? '',
+                          tasks: cell?.tasks ?? [], assignmentId: cell?.assignment_id,
+                        })}
                         className={`relative border-r border-gray-100 p-1 align-top ${editable ? 'cursor-pointer hover:bg-pink-50/40' : ''} ${focusedCell?.staffId === row.staff.id && focusedCell.date === iso ? 'bg-rose-50 ring-2 ring-inset ring-[#E8187A]' : ''}`}>
                         {(issueCountByCell.get(`${row.staff.id}|${iso}`) ?? 0) > 0 && (
                           <span className="absolute right-0.5 top-0.5 h-2 w-2 rounded-full bg-rose-500 ring-2 ring-white" title={isZH ? '此更次有規則提示' : 'This shift has a rule alert'} />
@@ -936,142 +1149,15 @@ export function RealRosterBoard() {
       </div>
 
       {(showSaveList || showPublishList) && (
-        <div className="border-l border-gray-200 bg-white overflow-auto xl:min-w-[340px]">
-          {showSaveList && (
-            <div className="p-4 border-b border-gray-100">
-              <h3 className="text-sm font-bold text-gray-900 mb-2">{T.saveListTitle}</h3>
-              <div className="space-y-2 max-h-96 overflow-auto">
-                {pendingLog.length === 0 ? (
-                  <div className="rounded-xl border border-dashed border-gray-200 p-4 text-xs text-gray-400 text-center">
-                    {T.saveListEmpty}
-                  </div>
-                ) : (
-                  pendingLog.map((item) => (
-                    <div key={item.id} className="rounded-xl border border-pink-100 bg-pink-50/50 p-3">
-                      <div className="flex items-center justify-between gap-2 mb-1">
-                        <span className="text-xs font-semibold" style={{ color: PINK }}>{item.title}</span>
-                        <span className="text-[10px] text-gray-400">{item.createdAt}</span>
-                      </div>
-                      <div className="text-[11px] text-gray-600">{item.subtitle}</div>
-                    </div>
-                  ))
-                )}
-              </div>
-            </div>
-          )}
-
-          {showPublishList && (
-            <div className="p-4">
-              <h3 className="text-sm font-bold text-gray-900 mb-2">{T.publishListTitle}</h3>
-              <div className="space-y-2 max-h-96 overflow-auto">
-                {publishedLog.length === 0 ? (
-                  <div className="rounded-xl border border-dashed border-gray-200 p-4 text-xs text-gray-400 text-center">
-                    {T.publishListEmpty}
-                  </div>
-                ) : (
-                  publishedLog.map((item) => (
-                    <div key={item.id} className="rounded-xl border border-emerald-100 bg-emerald-50/60 p-3">
-                      <div className="flex items-center justify-between gap-2 mb-1">
-                        <span className="text-xs font-semibold text-emerald-700">{item.title}</span>
-                        <span className="text-[10px] text-gray-400">{item.createdAt}</span>
-                      </div>
-                      <div className="text-[11px] text-gray-600">{item.subtitle}</div>
-                    </div>
-                  ))
-                )}
-              </div>
-            </div>
-          )}
-        </div>
+        <aside className="border-l border-gray-200 bg-white overflow-auto xl:min-w-[340px]" aria-live="polite">
+          <div className="flex items-center justify-between border-b border-gray-100 p-4"><h3 className="text-sm font-bold text-gray-900">{isZH ? '伺服器記錄' : 'Server records'}</h3><button onClick={() => void loadHistory()} disabled={historyLoading} className="text-[10px] font-semibold text-pink-700">{historyLoading ? '…' : (isZH ? '重新整理' : 'Refresh')}</button></div>
+          {historyError && <p className="m-4 rounded-xl border border-rose-200 bg-rose-50 p-3 text-xs text-rose-700">{historyError}</p>}
+          {!historyLoading && !history && !historyError && <p className="p-4 text-xs text-gray-400">{isZH ? '未有可顯示的正式伺服器記錄。' : 'No formal server records are available.'}</p>}
+          {showSaveList && <section className="p-4 border-b border-gray-100"><h4 className="text-xs font-bold text-gray-800 mb-2">{T.saveListTitle} ({history?.changes.length ?? 0})</h4>{history && !history.can_read_audit ? <p className="text-xs text-amber-700">{isZH ? '此帳戶沒有讀取Audit記錄的權限。' : 'This account cannot read audit records.'}</p> : <div className="space-y-2">{history?.changes.length ? history.changes.map((item) => <article key={item.id} className="rounded-xl border border-pink-100 bg-pink-50/50 p-3"><div className="flex items-start justify-between gap-2"><b className="text-xs text-pink-700">{item.action}</b><time className="text-[9px] text-gray-400">{new Date(item.created_at).toLocaleString(isZH ? 'zh-HK' : 'en-HK')}</time></div><p className="mt-1 text-[10px] text-gray-600 break-all">{item.entity_table}{item.entity_id ? ` · ${item.entity_id}` : ''}</p></article>) : <p className="rounded-xl border border-dashed border-gray-200 p-3 text-xs text-gray-400 text-center">{T.saveListEmpty}</p>}</div>}</section>}
+          {showPublishList && <section className="p-4"><h4 className="text-xs font-bold text-gray-800 mb-2">{T.publishListTitle} ({history?.publish_events.length ?? 0})</h4><div className="space-y-2">{history?.publish_events.length ? history.publish_events.map((item) => <article key={item.id} className="rounded-xl border border-emerald-100 bg-emerald-50/60 p-3"><div className="flex items-start justify-between gap-2"><b className="text-xs text-emerald-700">{item.event_type}</b><time className="text-[9px] text-gray-400">{new Date(item.created_at).toLocaleString(isZH ? 'zh-HK' : 'en-HK')}</time></div><p className="mt-1 text-[10px] text-gray-600 break-all">{item.roster_version_id}</p></article>) : <p className="rounded-xl border border-dashed border-gray-200 p-3 text-xs text-gray-400 text-center">{T.publishListEmpty}</p>}</div></section>}
+        </aside>
       )}
       </div>
-
-      {/* Cell editor */}
-      {editing && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-6" style={{ background: 'rgba(0,0,0,0.4)' }}
-          onClick={() => setEditing(null)}>
-          <div className="bg-white w-full max-w-md rounded-2xl shadow-2xl p-6" onClick={(e) => e.stopPropagation()}>
-            <div className="text-sm font-bold text-gray-900">{T.edit}</div>
-
-            <div className="text-xs text-gray-500 mb-4">{editing.staffName} · {editing.date}</div>
-
-            <div className="flex flex-wrap gap-1.5 mb-4">
-              {shiftDefs.map((sd) => {
-                const sel = editing.shiftType === sd.shift_type
-                const style = SHIFT_STYLE[sd.shift_type] ?? DEFAULT_STYLE
-                return (
-                  <button key={sd.id} onClick={() => setEditing({
-                    ...editing, shiftType: sel ? '' : sd.shift_type, tasks: [],
-                  })}
-                    className="px-2.5 py-1 rounded-lg text-xs font-bold border-2 transition-all"
-                    style={{ background: style.bg, color: style.fg, borderColor: sel ? PINK : 'transparent' }}
-                    title={sd.label ?? sd.shift_type}>
-                    {sd.shift_type}
-                  </button>
-                )
-              })}
-            </div>
-
-            {taskDefs.length > 0 && editing.shiftType && (
-              <div className="mb-4">
-                <div className="text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-1.5">{T.tasks}</div>
-                <div className="flex flex-wrap gap-1.5 max-h-24 overflow-y-auto">
-                  {taskDefs.filter((td) => canSeeTask(
-                    editing.staffRank, td, editing.shiftType, shiftDefs,
-                  )).map((td) => {
-                    const label = td.task_name || td.task_code
-                    const on = editing.tasks.includes(label)
-                    return (
-                      <button key={td.id}
-                        onClick={() => setEditing({
-                          ...editing,
-                          tasks: on ? editing.tasks.filter((t) => t !== label) : [...editing.tasks, label],
-                        })}
-                        className="px-2 py-0.5 rounded-full text-[10px] border transition-all"
-                        style={{ borderColor: on ? PINK : '#e5e7eb', background: on ? '#fff0f5' : '#fff', color: on ? PINK : '#6b7280' }}>
-                        {label}
-                      </button>
-                    )
-                  })}
-                </div>
-              </div>
-            )}
-
-            {cellIssues.length > 0 && (
-              <div className="mb-4 rounded-lg border p-2.5"
-                   style={{ background: '#fff1f2', borderColor: '#fecdd3' }}>
-                <div className="text-[10px] font-bold uppercase tracking-wider mb-1"
-                     style={{ color: '#be123c' }}>
-                  {T.rejected}
-                </div>
-                <ul className="space-y-1">
-                  {cellIssues.map((issue, i) => (
-                    <li key={i} className="text-[11px]" style={{ color: '#9f1239' }}>
-                      {issue.task_label && (
-                        <span className="font-semibold">{issue.task_label}: </span>
-                      )}
-                      {(issue.issues?.length ? issue.issues : [issue])
-                        .map((r) => reasonText(r, isZH))
-                        .join(' · ')}
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            )}
-
-            <div className="flex gap-2 justify-end">
-              <button onClick={() => setEditing({ ...editing, shiftType: '', tasks: [] })}
-                className="px-3 py-1.5 text-xs rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-50">{T.clear}</button>
-              <button onClick={() => setEditing(null)}
-                className="px-3 py-1.5 text-xs rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50">{T.cancel}</button>
-              <button onClick={saveCell} disabled={busy === 'cell'}
-                className="px-4 py-1.5 text-xs rounded-lg text-white font-semibold disabled:opacity-60" style={{ background: PINK }}>
-                {busy === 'cell' ? '…' : T.save}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
 
       {newPeriodOpen && (
         <NewPeriodModal
@@ -1084,9 +1170,8 @@ export function RealRosterBoard() {
       {aiOpen && (
         <AiOptionsModal
           options={aiOptions} loading={aiLoading} status={aiStatus} error={aiError}
-          publishError={publishError} periodLabel={periodLabel} isZH={isZH}
-          publishingId={publishingId} publishedIds={publishedIds}
-          onPublish={handlePublishOption} onClose={() => setAiOpen(false)}
+          periodLabel={periodLabel} isZH={isZH}
+          onSelect={handlePublishOption} onClose={() => setAiOpen(false)}
         />
       )}
 
@@ -1094,10 +1179,20 @@ export function RealRosterBoard() {
         <BatchCreateShiftModal
           open={batchShiftOpen}
           onClose={() => setBatchShiftOpen(false)}
+          versionId={activeVersionId}
           staff={grid.rows.map((r) => r.staff)}
           shiftDefs={shiftDefs}
-          dates={columns}
-          onBatchCreated={(count) => { flash(`${count} shifts created`); void loadGrid(periodId, versionId) }}
+          dates={periodColumns}
+          occupiedCells={grid.rows.flatMap((row) => row.cells
+            .filter((cell) => !!cell.assignment_id || !!cell.shift_type || cell.tasks.length > 0)
+            .map((cell) => ({ staffId: row.staff.id, date: cell.date, tasks: cell.tasks })))}
+          onBatchCreated={({ saved, requested, skipped, partial }) => {
+            const skippedText = skipped ? (isZH ? `；略過${skipped}格現有更次` : `; ${skipped} existing cell(s) skipped`) : ''
+            flash(partial
+              ? (isZH ? `批量排更部分完成：${saved}/${requested}${skippedText}` : `Batch partly saved: ${saved}/${requested}${skippedText}`)
+              : (isZH ? `已儲存${saved}格${skippedText}` : `${saved} cells saved${skippedText}`))
+            void Promise.all([loadGrid(periodId, versionId), loadHistory()])
+          }}
         />
       )}
 
@@ -1110,12 +1205,26 @@ export function RealRosterBoard() {
           dates={columns}
           shiftDefs={shiftDefs}
           taskDefs={taskDefs}
-          onSaved={({ staffName, date, shiftType, wasWorking }) => {
-            logChange(wasWorking ? 'edit' : 'create',
-                      wasWorking ? T.actionEdit : T.actionCreate,
-                      `${staffName} · ${date} · ${shiftType}`)
-            loadGrid(periodId, versionId)
-          }}
+          occupiedCells={grid.rows.flatMap((row) => row.cells
+            .filter((cell) => !!cell.assignment_id)
+            .map((cell) => ({ staffId: row.staff.id, date: cell.date, assignmentId: cell.assignment_id })))}
+          onSaved={() => { void Promise.all([loadGrid(periodId, versionId), loadHistory()]) }}
+        />
+      )}
+
+      {editorInitial && grid && (
+        <CreateShiftModal
+          open={!!editorInitial}
+          mode={editorInitial.shiftType ? 'edit' : 'create'}
+          onClose={() => setEditorInitial(null)}
+          versionId={activeVersionId}
+          staff={grid.rows.map((row) => row.staff)} dates={periodColumns} shiftDefs={shiftDefs} taskDefs={taskDefs}
+          occupiedCells={grid.rows.flatMap((row) => row.cells
+            .filter((cell) => !!cell.assignment_id)
+            .map((cell) => ({ staffId: row.staff.id, date: cell.date, assignmentId: cell.assignment_id })))}
+          initial={editorInitial}
+          onSaved={() => { setEditorInitial(null); void Promise.all([loadGrid(periodId, versionId), loadHistory()]) }}
+          onDeleted={() => { setEditorInitial(null); void Promise.all([loadGrid(periodId, versionId), loadHistory()]) }}
         />
       )}
 
@@ -1123,6 +1232,7 @@ export function RealRosterBoard() {
         <CreateEventModal
           isZH={isZH}
           defaultDate={columns[0] ?? new Date().toISOString().slice(0, 10)}
+          dates={periodColumns}
           staffList={grid?.rows.map((r) => r.staff) ?? []}
           onClose={() => setCreateEventOpen(false)}
           onCreated={handleEventCreated}

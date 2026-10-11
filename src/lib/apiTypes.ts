@@ -110,6 +110,8 @@ export interface ShiftDef {
 }
 
 export interface RosterCell {
+  /** Exact persisted credit; null is unknown, not zero or elapsed clock time. */
+  paid_minutes?: number | null
   date: string
   shift_type?: string | null
   is_working: boolean
@@ -200,6 +202,7 @@ export interface TaskDefOut {
   shift_type?: string | null
   required_rank?: string | null
   requires_audit: boolean
+  needs_location?: boolean
   unit_id?: string | null
   description?: string | null
   required_qualification_json?: Record<string, unknown> | unknown[] | string | null
@@ -221,6 +224,8 @@ export interface ViolationOut {
   message?: string | null
   details: Record<string, unknown>
   resolved: boolean
+  /** Server-derived identifier for one current soft finding only. */
+  omission_id?: string | null
 }
 
 export interface StaffingRequirement {
@@ -301,6 +306,8 @@ export interface TaskAssignment {
   source_type: string
   task_status: string
   completed_at?: string | null
+  /** Destination carried on an escort assignment; null means none was persisted. */
+  escort_location?: string | null
 }
 
 export interface OptionScoreOut {
@@ -327,11 +334,21 @@ export interface ValidationOut {
   method: string
   passes: boolean
   hard_violation_count: number
+  soft_violation_count: number
   constraint_score?: number | null
   violations: ViolationOut[]
   ratio_checks: RatioResult[]
   validation_run_id?: string | null
   input_digest?: string | null
+}
+
+/** Response from the final server-authoritative publish transition. */
+export interface PublishRosterOut {
+  roster_version_id: string
+  status: string
+  validation_run_id?: string | null
+  input_digest?: string | null
+  omitted_soft_violation_ids: string[]
 }
 
 export interface RuleDefinition {
@@ -913,4 +930,13 @@ export interface StaffAiAnalysis {
     emergency_covers: number
   }
   evidence_note: string
+}
+
+export interface RosterHistory {
+  period_id: string
+  version_id?: string | null
+  can_read_audit: boolean
+  truncated: boolean
+  changes: Array<{ id: string; action: string; entity_table: string; entity_id?: string | null; created_at: string; before_json?: Record<string, unknown> | null; after_json?: Record<string, unknown> | null; reason?: string | null }>
+  publish_events: Array<{ id: string; roster_version_id: string; event_type: string; created_at: string; created_by?: string | null }>
 }

@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from . import audit
 from ..constants import AssignmentStatus, OverrideAction, PublishEvent, RosterStatus
 from ..models import RosterCell, RosterGrid, RosterRow, ShiftDef, StaffLite
-from ._common import as_date, assignments_for_shifts
+from ._common import as_date, assignments_for_shifts, shift_minutes
 from .organisations import org_id_for
 
 
@@ -34,7 +34,10 @@ def _latest_version(client, facility_id: str, period_id: str | None = None,
     explicit ``version_id`` for a specific option."""
     if version_id:
         # SQL: select * from roster_versions where id = :version_id
-        rows = client.table("roster_versions").select("*").eq("id", version_id).execute().data
+        query = client.table("roster_versions").select("*").eq("facility_id", facility_id).eq("id", version_id)
+        if period_id:
+            query = query.eq("period_id", period_id)
+        rows = query.execute().data
         return rows[0] if rows else None
     # SQL: select * from roster_versions
     #      where facility_id = :facility_id
@@ -101,6 +104,7 @@ def get_roster_grid(client, facility_id: str, period_id: str | None = None, *,
                 cells.append(RosterCell(
                     date=d, shift_type=sh["shift_type"], is_working=sh["is_working"],
                     tasks=a.get("tasks") or [], assignment_id=a["id"], shift_id=sh["id"],
+                    paid_minutes=shift_minutes(sh) if sh.get("is_working") else 0,
                 ))
             else:
                 cells.append(RosterCell(date=d))
@@ -331,24 +335,23 @@ def clear_cell(client, *, facility_id, roster_version_id, staff_id, date, change
 
 
 # ── publish workflow ────────────────────────────────────────────────────────
-def _audit_publish(client, facility_id: str, roster_version_id: str,
-                   published: dict, created_by) -> None:
-    audit.record(client, facility_id=facility_id, action="publish",
-                 entity_table="roster_versions", entity_id=roster_version_id,
-                 after={"status": published.get("status"),
-                        "published_at": published.get("published_at"),
-                        "period_id": published.get("period_id")},
-                 actor_profile_id=created_by)
-
-
-def publish_version(client, *, facility_id, roster_version_id, created_by=None):
+def publish_version(
+    client,
+    *,
+    facility_id,
+    roster_version_id,
+    created_by,
+    validation_run_id,
+    input_digest,
+    omitted_soft_violation_row_ids,
+):
     """Make one validated version operative for its period.
 
-    Production clients use the database function so archiving the old operative
-    version and publishing the target are one transaction. The audit row is
-    written here rather than in that function, so both paths leave the same
-    evidence. The small fallback keeps in-memory/offline adapters useful while
-    preserving the same single-operative semantics.
+    Production clients use the database function so validation evidence,
+    archiving, publication, event and audit rows are one transaction. The
+    service submits database row IDs only after it has mapped server-derived
+    stable omission IDs to the exact fresh validation run. There is no
+    multi-write fallback; adapters must have the reviewed atomic RPC.
     """
     rpc = getattr(client, "rpc", None)
     if callable(rpc):
@@ -358,67 +361,20 @@ def publish_version(client, *, facility_id, roster_version_id, created_by=None):
                 "p_facility_id": facility_id,
                 "p_roster_version_id": roster_version_id,
                 "p_created_by": created_by,
+                "p_validation_run_id": validation_run_id,
+                "p_input_digest": input_digest,
+                "p_omitted_soft_violation_row_ids": omitted_soft_violation_row_ids,
             },
         ).execute()
         rows = result.data or []
         published = rows if isinstance(rows, dict) else (rows[0] if rows else None)
         if not published:
             raise ValueError("roster version not found")
-        _audit_publish(client, facility_id, roster_version_id, published, created_by)
         return published
 
-    # Offline adapter fallback. The production RPC above is atomic; here the
-    # explicit facility/period predicates still prevent cross-tenant updates.
-    target_rows = (
-        client.table("roster_versions")
-        .select("*")
-        .eq("id", roster_version_id)
-        .eq("facility_id", facility_id)
-        .limit(1)
-        .execute()
-        .data
-    )
-    if not target_rows:
-        raise ValueError("roster version not found")
-    target = target_rows[0]
-    period_id = target.get("period_id")
-    if not period_id:
-        raise ValueError("a roster period is required for publication")
-    prior = (
-        client.table("roster_versions")
-        .update({"status": RosterStatus.ARCHIVED})
-        .eq("facility_id", facility_id)
-        .eq("period_id", period_id)
-        .eq("status", RosterStatus.PUBLISHED)
-        .execute()
-        .data
-    )
-    _ = prior  # returned rows are useful to richer adapters, but not required here
-    published_at = _now()
-    updated = (
-        client.table("roster_versions")
-        .update({
-            "status": RosterStatus.PUBLISHED,
-            "published_at": published_at,
-        })
-        .eq("id", roster_version_id)
-        .eq("facility_id", facility_id)
-        .eq("period_id", period_id)
-        .execute()
-        .data
-    )
-    if not updated:
-        raise ValueError("roster version not found")
-    # SQL: insert into roster_publish_events
-    #        (facility_id, roster_version_id, event_type, created_by)
-    #      values (:facility_id, :roster_version_id, 'publish', :created_by)
-    #      returning *
-    client.table("roster_publish_events").insert({
-        "facility_id": facility_id, "roster_version_id": roster_version_id,
-        "event_type": PublishEvent.PUBLISH, "created_by": created_by,
-    }).execute()
-    _audit_publish(client, facility_id, roster_version_id, updated[0], created_by)
-    return updated[0]
+    # No multi-write fallback: a production adapter without the reviewed RPC
+    # must fail rather than publish without atomic event/audit evidence.
+    raise ValueError("atomic publication RPC is required; no direct-write fallback")
 
 
 def notify_published(client, facility_id: str, roster_version_id: str) -> list[dict]:

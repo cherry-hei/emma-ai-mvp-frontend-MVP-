@@ -637,6 +637,65 @@ def _assignment_context(client, facility_id: str, assignment_id: str):
     return assignment, shifts[0], staff_rows[0]
 
 
+class TaskAssignmentDraftError(ValueError):
+    """A task mutation targeted a roster that is not editable.
+
+    The scheduling router maps this narrow service error to the same 404/409
+    contract as roster cell edits. Keeping it in the service is intentional:
+    task rows are also materialised by ``sync_task_rows_for_assignment``, so a
+    router-only check would leave an alternate write path around publication.
+    """
+
+    def __init__(self, code: str, message: str):
+        super().__init__(message)
+        self.code = code
+
+
+def authorize_task_assignment_draft(
+    client,
+    facility_id: str,
+    shift_assignment_id: str,
+    *,
+    task_assignment: dict | None = None,
+) -> tuple[dict, dict, dict]:
+    """Return a facility-owned assignment only when its roster is a draft.
+
+    A task request never supplies a roster version: it is derived from the
+    facility-scoped shift assignment and its facility-scoped shift. This makes
+    the relationship authoritative for create, update, delete and task-row
+    synchronisation, rather than trusting a denormalised task row or a UI
+    value. A pre-existing task row must agree with that relationship too.
+    """
+    assignment, shift, staff = _assignment_context(
+        client, facility_id, shift_assignment_id)
+    roster_version_id = shift.get("roster_version_id")
+    if not roster_version_id:
+        raise TaskAssignmentDraftError(
+            "roster_version_not_found", "roster version not found")
+
+    versions = (client.table("roster_versions").select("*")
+                .eq("facility_id", facility_id).eq("id", roster_version_id)
+                .execute().data)
+    if not versions:
+        # Do not disclose another facility's version through an assignment that
+        # happens to carry its identifier.
+        raise TaskAssignmentDraftError(
+            "roster_version_not_found", "roster version not found")
+    version = versions[0]
+    if version.get("status") != "draft":
+        raise TaskAssignmentDraftError(
+            "roster_locked", "Only a draft roster may be edited.")
+
+    if (task_assignment is not None
+            and task_assignment.get("roster_version_id") != roster_version_id):
+        # Phase 4 backfills this column from the assignment's shift. Treat a
+        # mismatch (including null) as invalid rather than quietly updating a
+        # task attached to another or no roster version.
+        raise TaskAssignmentDraftError(
+            "roster_version_not_found", "roster version not found")
+    return assignment, shift, staff
+
+
 def _persist_violations(
     client,
     facility_id: str,
@@ -924,7 +983,7 @@ def create_task_assignment(client, facility_id: str, payload: dict) -> dict:
     source_type = payload.get("source_type") or "manual"
     if source_type not in TASK_SOURCE_TYPES:
         raise ValueError(f"source_type must be one of {sorted(TASK_SOURCE_TYPES)}")
-    assignment, shift, staff = _assignment_context(
+    assignment, shift, staff = authorize_task_assignment_draft(
         client, facility_id, payload["shift_assignment_id"])
     task = _task_definition(client, facility_id, payload["task_id"])
     qualifications = _active_qualification_map(
@@ -959,6 +1018,8 @@ def create_task_assignment(client, facility_id: str, payload: dict) -> dict:
                 .eq("shift_assignment_id", assignment["id"])
                 .eq("task_label", label).execute().data)
     if existing:
+        authorize_task_assignment_draft(
+            client, facility_id, assignment["id"], task_assignment=existing[0])
         result = (client.table("task_assignments").update(row)
                   .eq("id", existing[0]["id"]).execute().data[0])
     else:
@@ -979,8 +1040,8 @@ def update_task_assignment(
     if not rows:
         raise ValueError("task assignment not found")
     current = rows[0]
-    assignment, shift, staff = _assignment_context(
-        client, facility_id, current["shift_assignment_id"])
+    assignment, shift, staff = authorize_task_assignment_draft(
+        client, facility_id, current["shift_assignment_id"], task_assignment=current)
     task = _task_definition(
         client, facility_id, patch.get("task_id") or current["task_id"])
     source_type = patch.get("source_type", current.get("source_type") or "manual")
@@ -1028,8 +1089,8 @@ def delete_task_assignment(client, facility_id: str, task_assignment_id: str) ->
     if not rows:
         return
     current = rows[0]
-    assignment, _, _ = _assignment_context(
-        client, facility_id, current["shift_assignment_id"])
+    assignment, _, _ = authorize_task_assignment_draft(
+        client, facility_id, current["shift_assignment_id"], task_assignment=current)
     (client.table("task_assignments").delete()
      .eq("facility_id", facility_id).eq("id", task_assignment_id).execute())
     _update_legacy_task_labels(client, assignment, remove=current.get("task_label"))
@@ -1042,11 +1103,38 @@ def sync_task_rows_for_assignment(
 ) -> list[dict]:
     from .tasks import sync_assignment_tasks, task_definitions_by_label
 
-    assignment, shift, _ = _assignment_context(client, facility_id, assignment_id)
+    assignment, shift, _ = authorize_task_assignment_draft(
+        client, facility_id, assignment_id)
     return sync_assignment_tasks(
         client, facility_id, assignment, shift,
         task_definitions_by_label(client, facility_id),
     )
+
+
+def set_task_assignment_escort_location(
+    client,
+    facility_id: str,
+    task_assignment_id: str,
+    *,
+    location: str | None,
+) -> dict:
+    """Set an escort destination only on a draft task assignment.
+
+    The destination dictionary remains owned by ``escort``; this narrow wrapper
+    puts its task-row mutation behind the same authoritative guard as the other
+    scheduling edits without granting a parallel API path around publication.
+    """
+    rows = (client.table("task_assignments").select("*")
+            .eq("facility_id", facility_id).eq("id", task_assignment_id)
+            .execute().data)
+    if not rows:
+        raise ValueError("task assignment not found")
+    current = rows[0]
+    authorize_task_assignment_draft(
+        client, facility_id, current["shift_assignment_id"], task_assignment=current)
+    from . import escort as escort_svc
+    return escort_svc.set_escort_location(
+        client, facility_id, task_assignment_id, location=location)
 
 
 def _validate_unit(client, facility_id: str, unit_id: str | None) -> None:

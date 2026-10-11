@@ -40,6 +40,12 @@ def _require_write_role(ctx: AuthCtx) -> None:
         )
 
 
+def _raise_draft_guard_error(exc: svc.TaskAssignmentDraftError) -> None:
+    if exc.code == "roster_version_not_found":
+        raise api_error(404, "not_found", str(exc)) from exc
+    raise api_error(409, "roster_locked", str(exc)) from exc
+
+
 @router.get("/task-assignments", response_model=list[TaskAssignmentOut])
 def task_assignments(
     roster_version_id: str | None = Query(default=None),
@@ -60,11 +66,14 @@ def create_task_assignment(
     ctx: AuthCtx = Depends(get_ctx),
 ):
     _require_write_role(ctx)
-    return svc.create_task_assignment(
-        ctx.client,
-        ctx.facility_id,
-        body.model_dump(mode="json"),
-    )
+    try:
+        return svc.create_task_assignment(
+            ctx.client,
+            ctx.facility_id,
+            body.model_dump(mode="json"),
+        )
+    except svc.TaskAssignmentDraftError as exc:
+        _raise_draft_guard_error(exc)
 
 
 @router.patch("/task-assignments/{task_assignment_id}", response_model=TaskAssignmentOut)
@@ -74,12 +83,15 @@ def update_task_assignment(
     ctx: AuthCtx = Depends(get_ctx),
 ):
     _require_write_role(ctx)
-    return svc.update_task_assignment(
-        ctx.client,
-        ctx.facility_id,
-        task_assignment_id,
-        body.model_dump(mode="json", exclude_unset=True),
-    )
+    try:
+        return svc.update_task_assignment(
+            ctx.client,
+            ctx.facility_id,
+            task_assignment_id,
+            body.model_dump(mode="json", exclude_unset=True),
+        )
+    except svc.TaskAssignmentDraftError as exc:
+        _raise_draft_guard_error(exc)
 
 
 @router.delete("/task-assignments/{task_assignment_id}", status_code=204)
@@ -88,7 +100,10 @@ def delete_task_assignment(
     ctx: AuthCtx = Depends(get_ctx),
 ):
     _require_write_role(ctx)
-    svc.delete_task_assignment(ctx.client, ctx.facility_id, task_assignment_id)
+    try:
+        svc.delete_task_assignment(ctx.client, ctx.facility_id, task_assignment_id)
+    except svc.TaskAssignmentDraftError as exc:
+        _raise_draft_guard_error(exc)
     return Response(status_code=204)
 
 
@@ -131,10 +146,12 @@ def set_escort_location(
     """
     _require_write_role(ctx)
     try:
-        return escort_svc.set_escort_location(
+        return svc.set_task_assignment_escort_location(
             ctx.client, ctx.facility_id, task_assignment_id,
             location=body.escort_location,
         )
+    except svc.TaskAssignmentDraftError as exc:
+        _raise_draft_guard_error(exc)
     except ValueError as exc:
         raise api_error(404 if "not found" in str(exc) else 400,
                         "invalid_escort_location", str(exc)) from exc

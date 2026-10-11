@@ -24,18 +24,14 @@ export interface AiOptionsModalProps {
   loading: boolean
   status: string
   error: string
-  publishError?: string
   periodLabel?: string
   isZH: boolean
-  publishingId: string
-  publishedIds: Set<string>
-  onPublish: (versionId: string) => void
+  onSelect: (versionId: string) => void
   onClose: () => void
 }
 
 export function AiOptionsModal({
-  options, loading, status, error, publishError, periodLabel, isZH,
-  publishingId, publishedIds, onPublish, onClose,
+  options, loading, status, error, periodLabel, isZH, onSelect, onClose,
 }: AiOptionsModalProps) {
   const meta = planMeta(isZH)
   const L = {
@@ -46,9 +42,9 @@ export function AiOptionsModal({
     agency: isZH ? '外判' : 'Agency',
     ot: isZH ? '超時' : 'OT',
     gap: isZH ? '人手缺口' : 'Coverage gap',
-    publish: isZH ? '發佈此方案' : 'Publish this option',
-    published: isZH ? '✓ 已發佈' : '✓ Published',
-    notPublishable: isZH ? '未達發佈標準' : 'Below publish threshold',
+    select: isZH ? '選擇並檢視規則' : 'Select & review rules',
+    notPublishable: isZH ? '不可選擇' : 'Not selectable',
+    qualityWarning: isZH ? '低分反映soft取捨；選擇後須逐項檢視及確認當前soft例外。' : 'Low score reflects soft trade-offs; review and acknowledge each current soft finding after selection.',
     close: isZH ? '關閉' : 'Close',
   }
 
@@ -78,18 +74,12 @@ export function AiOptionsModal({
             <div className="py-12 text-center text-sm text-rose-600">{error}</div>
           ) : (
             <div className="space-y-3">
-              {publishError && (
-                <div className="rounded-xl bg-rose-50 border border-rose-100 px-4 py-2 text-xs text-rose-600">
-                  {publishError}
-                </div>
-              )}
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               {(options ?? []).map((o) => {
                 const m = meta[o.plan_mode] ?? { title: o.plan_mode, desc: '' }
-                const passing = o.constraint_score >= PUBLISH_THRESHOLD && o.hard_violation_count === 0
-                const publishable = !!o.roster_version_id && passing
-                const published = !!o.roster_version_id && publishedIds.has(o.roster_version_id)
-                const scoreColor = passing ? '#15803d' : '#be123c'
+                const lowQuality = o.constraint_score < PUBLISH_THRESHOLD
+                const selectable = !!o.roster_version_id && o.hard_violation_count === 0 && o.status !== 'infeasible'
+                const scoreColor = o.hard_violation_count > 0 ? '#be123c' : lowQuality ? '#b45309' : '#15803d'
                 return (
                   <div key={o.plan_mode}
                     className="rounded-2xl border border-gray-200 p-5 flex flex-col"
@@ -130,15 +120,16 @@ export function AiOptionsModal({
                         {o.infeasible_reasons.slice(0, 2).join('; ')}
                       </div>
                     )}
+                    {lowQuality && o.hard_violation_count === 0 && (
+                      <div className="text-[10px] text-amber-700 mb-3">{L.qualityWarning}</div>
+                    )}
 
                     <button
-                      disabled={!publishable || published || publishingId === o.roster_version_id}
-                      onClick={() => o.roster_version_id && onPublish(o.roster_version_id)}
+                      disabled={!selectable}
+                      onClick={() => o.roster_version_id && onSelect(o.roster_version_id)}
                       className="mt-auto py-2.5 rounded-xl text-xs font-bold text-white transition-colors disabled:cursor-not-allowed"
-                      style={{ background: published ? '#15803d' : publishable ? PINK : '#d1d5db' }}>
-                      {published ? L.published
-                        : publishingId === o.roster_version_id ? '…'
-                        : publishable ? L.publish : L.notPublishable}
+                      style={{ background: selectable ? PINK : '#d1d5db' }}>
+                      {selectable ? L.select : L.notPublishable}
                     </button>
                   </div>
                 )

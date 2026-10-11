@@ -146,16 +146,15 @@ def test_clearing_a_cell_is_audited(db):
     assert row["actor_profile_id"] == "prof-2"
 
 
-def test_publishing_is_audited(db):
+def test_publication_without_rpc_cannot_create_unaudited_status_change(db):
     db.tables["roster_versions"] = [{"id": "v1", "facility_id": "home-a",
                                      "period_id": "p1", "status": "draft"}]
-    roster.publish_version(db, facility_id="home-a", roster_version_id="v1",
-                           created_by="prof-1")
-
-    row = db.audit_rows("publish")[0]
-    assert row["entity_table"] == "roster_versions"
-    assert row["entity_id"] == "v1"
-    assert row["after_json"]["status"] == "published"
+    with pytest.raises(ValueError, match="atomic publication RPC"):
+        roster.publish_version(db, facility_id="home-a", roster_version_id="v1",
+                               created_by="prof-1", validation_run_id="run-1",
+                               input_digest="a" * 64, omitted_soft_violation_row_ids=[])
+    assert db.tables["roster_versions"][0]["status"] == "draft"
+    assert db.audit_rows("publish") == []
 
 
 def test_a_failed_audit_write_never_breaks_the_edit(db, monkeypatch):

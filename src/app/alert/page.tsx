@@ -506,20 +506,25 @@ export default function AlertPage() {
         <NewIncidentModal isZH={isZH} onClose={() => setCreating(false)} onCreated={load} />
       )}
 
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="text-lg font-bold text-gray-900">{L.pageTitle}</h1>
           <p className="text-xs text-gray-500 mt-0.5">
             {L.subtitle(alerts.length, stats?.month_start?.slice(0, 7) ?? '')}
           </p>
         </div>
-        <button onClick={() => setCreating(true)}
-          className="px-3 py-1.5 text-xs rounded-lg text-white font-medium"
-          style={{ background: PINK }}
-          onMouseEnter={(e) => (e.currentTarget.style.background = PINK_HOVER)}
-          onMouseLeave={(e) => (e.currentTarget.style.background = PINK)}>
-          {L.newRequest}
-        </button>
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="rounded-xl border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-[10px] text-slate-500">
+            {isZH ? `目前 ${stats?.open ?? alerts.length} 宗待處理；Emma只讀取既有事件與deterministic資格證據。` : `${stats?.open ?? alerts.length} open; Emma reads existing incidents and deterministic eligibility evidence only.`}
+          </div>
+          <button onClick={() => setCreating(true)}
+            className="rounded-xl px-3 py-2 text-xs font-medium text-white"
+            style={{ background: PINK }}
+            onMouseEnter={(e) => (e.currentTarget.style.background = PINK_HOVER)}
+            onMouseLeave={(e) => (e.currentTarget.style.background = PINK)}>
+            {L.newRequest}
+          </button>
+        </div>
       </div>
 
       {error && (
@@ -527,7 +532,7 @@ export default function AlertPage() {
       )}
 
       {/* KPI */}
-      <div className="grid grid-cols-4 gap-3">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
         {kpiCards.map((c) => (
           <div key={c.label} className="bg-white border border-gray-200 rounded-xl p-4">
             <div className="text-[9px] text-gray-500 uppercase tracking-wider mb-1">{c.label}</div>
@@ -651,7 +656,7 @@ export default function AlertPage() {
             <span className="text-xl">↻</span>
             <span className="text-sm font-bold">{L.summaryTitle}</span>
           </div>
-          <div className="grid grid-cols-3 gap-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
             <div className="rounded-xl p-3" style={{ background: 'rgba(255,255,255,0.08)' }}>
               <div className="text-[9px] text-gray-400 tracking-wider mb-1.5">{L.response}</div>
               <div className="text-xs font-bold text-white">{stats.avg_response_minutes} min</div>
