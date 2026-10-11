@@ -1,51 +1,50 @@
-# MVP Publish / Soft Omission 交付紀錄
+# MVP發佈／Soft Omit — Review交付
 
-**分支：** `agent/mvp-publish-soft-omit-oct11`
-**基準：** `origin/main` / `698b981`
-**範圍：** 固定 Publish 控制、OWNER-only 發佈、伺服器 hard gate、逐項 soft exception checkbox、stale snapshot 拒絕。
+- 工作樹：`/home/ubuntu/emma-mvp-publish-oct11`
+- 分支：`agent/mvp-publish-soft-omit-oct11`
+- 基線：`origin/main`，`698b981`
+- 本輪為獨立review程式；沒有合併main、執行migration或部署MVP。
 
-## 已完成
+## 完成內容
 
-- 排班工作區的工具列維持 sticky；Publish 只有一個固定入口。AI A/B/C 視窗只能「選擇並檢視規則」，不能旁路直接發佈。
-- Publish 按鈕依介面語言顯示 **「發佈」** 或 **「Publish」**；前端以 canonical `OWNER` 與 legacy `superintendent` 對齊的 RBAC mirror 做 UX gate，後端仍為唯一權限裁決。
-- `POST /rosters/{version_id}/publish` 改由 `require_decide(Feature.ROSTER_PUBLISH)` 保護，只有 OWNER（含 legacy superintendent 正規化）可通過 API gate。
-- 每一次 `/validate-roster` 回傳的 soft finding 都有 server-derived `omission_id`。規則檢視 drawer 逐條 checkbox；沒有 omission ID 的 soft row 會 fail closed，不能發佈。
-- 每次重新 validation 或切換 grid 都會清空既有勾選。Publish request 同時送出已勾選 ID 與使用者實際覆核的 `validation_input_digest`；伺服器立即重算並比較 digest，stale snapshot 以 `409 stale_validation` 拒絕。
-- 伺服器 publish gate 拒絕：hard/未知 severity、已 resolved 或缺 resolved state、缺 validation run/digest、hard/soft summary 與 finding rows 不一致、未知/重複/未勾齊 soft ID。
-- `soft_violation_count` 加入 validation API contract；它和 `hard_violation_count` 都必須與 fresh finding rows 一致。
-- solver 的 `constraint_score` 公式包含 agency、OT、fairness 等 **soft trade-off**；route 的應用層 gate 改為僅拒絕 `hard_violation_count != 0`。低品質分數在 AI 選項中是 warning，仍要走 fresh validation + 逐項 soft acknowledgement。
-- 保留 existing service-role atomic publish RPC 呼叫；沒有新 migration、沒有 production 操作、沒有外部資料庫/API 呼叫。
+1. 更表上方固定顯示中文「發佈」／英文「Publish」。按下打開規則檢視；最後在drawer按「院長批准並發佈」。
+2. OWNER（兼容legacy superintendent）才可批准。API重新檢查RBAC，不接受browser提供的pass/fail。
+3. Hard、unknown severity、無完整validation evidence及summary與finding不一致均拒絕發佈；hard沒有Omit。
+4. 每條soft finding有server生成的識別碼，須逐條勾Omit。未勾齊、重複或不屬當前snapshot的ID均拒絕。重新檢查、修改或切version清空舊選項。
+5. Server發佈時重新deterministic validation，核對使用者已檢視的digest。A/B/C只能選方案再走同一批准路徑，不能直接旁路發佈。
+6. 低solver score可能来自soft penalties，不單靠低分阻擋；非零solver hard違規仍阻擋。
+7. 新review-only migration：`20261011000024_publish_soft_omissions.sql`。移除舊三參數RPC旁路，改為六參數exact run/digest/OWNER/soft row IDs。鎖period、version及當前validation rows，核對timestamp、actor、tenant、hard/soft數及每條soft。狀態、發佈event與Audit在同一RPC交易寫入。
+8. API把server soft fingerprint映射成fresh DB row ID；前端不提交DB row IDs。validation持久化同一fingerprint。
+9. 取消無RPC的多次寫入fallback：若未裝新RPC，停止發佈而非留下無Audit的status。
+10. 匯入Excel不會代替OWNER批准：即使要求published，亦保留draft並提示到更表workspace審核。避免historical import旁路soft或hard gate。
 
-## 已驗證（全部使用離線 fixture）
+## 已完成驗證
 
-測試命令一律以以下 synthetic config 執行：
+- **215 passed、6 skipped**：完整Phase5、soft gate、atomic contract、Audit及import離線回歸。6個skip是既有外部workbook fixture缺失，未當作通過。
+- TypeScript `npx tsc --noEmit`通過；Next production build通過。
+- PostgreSQL `pglast`解析新SQL成功（10 statements）。這只是語法解析，**不是實際執行PL/pgSQL、schema/RLS或transaction驗收**。
+- 純mock瀏覽器四組：中文／英文 ×1440桌面／390手機；固定Publish、未勾soft不能批准、全部soft勾後發送正確digest和IDs、全部soft勾後hard仍不能批准。無page errors，已查看手機及桌面截圖。
+- 沒有啟動API/DB服務，沒有外部Supabase/Postgres連線或正式secret。mock token無效且僅存在隔離瀏覽器。
 
-```bash
-APP_ENV=test \
-SUPABASE_URL=https://test.invalid \
-SUPABASE_ANON_KEY=test-anon-key \
-SUPABASE_SERVICE_ROLE_KEY=test-service-role-key \
-DATABASE_URL=postgresql://test:test@127.0.0.1:1/test
-```
+## 合併／部署前必要DB Review與UAT
 
-- focused publish gate：`tests/test_publish_soft_omission.py`
-- publish/RBAC/service escalation：`tests/test_phase5_api_security.py`
-- Phase 5 security regression：`tests/test_phase5_security.py`
-- focused 結果：`18 passed`；加上專門 Phase 5 security regression：`31 passed`。
-- 完整 Phase 5 離線集合：`pytest -q tests/test_phase5_*.py` → `127 passed`（3 個既有 deprecation warning，無失敗）。
-- frontend：`npm ci --no-audit --no-fund` 成功；`npx tsc --noEmit` 成功；`node_modules/.bin/next build` 成功（20/20 static pages）。
+新backend与migration必須當作一個版本協調部署；只部署frontend或backend而未套新RPC，可能因RPC signature不匹配而停止發佈。這是fail-closed，不可為趕上線保留舊旁路。
 
-沒有啟動 API server、沒有連到 Supabase、沒有連到 Postgres，也沒有使用真實 token、secret 或 seed data。
+Kien／DB owner需在隔離合成DB審核及執行：
+- canonical OWNER與legacy superintendent成功；scheduler/admin/frontline與null actor拒絕。
+- hard / unknown / soft未勾 / 偽造、重複、跨tenant、歷史run IDs拒絕。
+- 全soft確認且低score/no hard可以發佈；solver hard非零拒絕。
+- concurrent cell edit、validation重跑、同period雙publisher、規則及每日院友數變更後stale檢查。
+- event或Audit插入故障使整個發佈交易rollback；原版本仍operative。
+- 验证existing published roster immutable、原有RLS與通知只在RPC成功後執行。
+- 驗證新migration的依賴、實際欄位、索引及enum相容性，舊function DROP RESTRICT如有dependency應停下而非CASCADE。
 
-## DB / UAT 限制（必須在合併或部署前處理）
+## Rollback規劃
 
-1. **不能在本工作範圍內修 DB migration。** 現有已部署的 `publish_roster_version` RPC 仍把 `roster_option_scores.constraint_score < 60` 視為拒絕條件；但該分數公式含 soft penalty。即使 API 層已正確把 soft 視為可逐項 acknowledge，低於 60 的 generated option 仍可能被資料庫 atomic RPC 拒絕。要令「所有 soft 勾選後可發佈」真正適用於低分 generated option，必須在經核准的後續 DB change 中把 RPC gate 改成真正 hard-only evidence（且同步 migration review / rollback / UAT）。**本工作依要求沒有新增或改寫 migration。**
-2. 同一 RPC 的 `p_created_by` profile role allow-list 目前只列 legacy `superintendent/admin/scheduler`，未列 canonical `OWNER`。API RBAC 已正確授權 canonical OWNER，但在 canonical role 已落庫的環境，RPC 可能以 42501 拒絕。這也是既有 DB contract，需後續核准的 DB/RBAC compatibility 修正；不能以 client token、偽造 actor 或移除 audit actor 繞過。
-3. 真實 UAT 必須在**隔離 test Supabase 專案**進行，至少涵蓋：legacy superintendent 與 canonical OWNER、hard fail、每一 soft checkbox、未勾 soft、digest stale（編輯或規則變更後）、同週期併發 publish、以及低 score / soft-only generated option 的 RPC 行為。不得以 production 或真憑證驗證。
-4. 前端沒有 browser E2E runner/受控 mock route；本次以 TypeScript compile/build 與純離線 API/gate fixtures 驗證。若需視覺／點擊 UAT，應另建只回傳合成 validation JSON 的 local mock，而不是連 live backend。
+套用前備份schema/function definitions及versioned data、記錄migration checksum。若新RPC/後端不匹配，先停發佈入口、回退應用至匹配review版，保留已產生的event/Audit資料；不可盲目把舊三參數旁路恢復為可呼叫。DB owner須先演練reversible DDL及資料還原，不在本輪執行。
 
-## 不在本次範圍
+## 範圍界線
 
-- 沒有 migration、schema/RLS/RPC 修改。
-- 沒有 production deploy、seed、外部資料庫/API、真憑證或真 token。
-- 沒有合併其他 PR 或修改 parent 管理的 Haven。
+- 沒有改Haven的職系、工時或Blob。
+- 沒有正式帳戶、production IAM/RLS、HK cutover、DNS、通知发送或新AI provider。
+- 此修正不代表M1已被接受，也不取代NAAC/SA各自synthetic UAT。

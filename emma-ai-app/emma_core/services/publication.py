@@ -180,3 +180,60 @@ def require_publishable_validation(
             "Every soft violation from this fresh validation run must be individually acknowledged before publication.",
         )
     return findings, soft
+
+
+def resolve_persisted_soft_omission_row_ids(
+    client: Any,
+    *,
+    facility_id: str,
+    roster_version_id: str,
+    validation_run_id: str,
+    approved_soft_omission_ids: Iterable[str],
+) -> list[str]:
+    """Map reviewed stable IDs to the exact persisted violation rows.
+
+    A browser only ever supplies deterministic omission fingerprints.  The
+    service re-derives those fingerprints from the just-persisted validation
+    evidence and passes *database* row IDs to the publication RPC.  This keeps
+    a guessed historical/cross-tenant violation ID out of the client contract.
+    """
+    approved = list(approved_soft_omission_ids)
+    if any(not isinstance(x, str) or not x for x in approved) or len(set(approved)) != len(approved):
+        raise PublishGateError("invalid_soft_omission", "Soft evidence IDs must be unique.")
+    rows = (
+        client.table("violation_log")
+        .select("*")
+        .eq("facility_id", facility_id)
+        .eq("roster_version_id", roster_version_id)
+        .eq("validation_run_id", validation_run_id)
+        .eq("severity", "soft")
+        .eq("resolved", False)
+        .execute()
+        .data
+        or []
+    )
+    by_omission_id: dict[str, str] = {}
+    for row in rows:
+        if (
+            not isinstance(row, Mapping)
+            or not row.get("id")
+            or not isinstance(row.get("omission_id"), str)
+            or not row["omission_id"]
+        ):
+            raise PublishGateError(
+                "validation_evidence_unavailable",
+                "Publication requires persisted soft-finding evidence.",
+            )
+        omission_id = str(row["omission_id"])
+        if omission_id in by_omission_id:
+            raise PublishGateError(
+                "validation_evidence_unavailable",
+                "Persisted soft findings contain a duplicate omission identifier.",
+            )
+        by_omission_id[omission_id] = str(row["id"])
+    if set(approved) != set(by_omission_id):
+        raise PublishGateError(
+            "validation_evidence_unavailable",
+            "Persisted soft findings do not exactly match the reviewed validation snapshot.",
+        )
+    return [by_omission_id[omission_id] for omission_id in approved]

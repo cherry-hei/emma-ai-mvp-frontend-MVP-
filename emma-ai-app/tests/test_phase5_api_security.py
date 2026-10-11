@@ -141,6 +141,8 @@ def test_publish_uses_one_service_client_after_rls_authorization(monkeypatch):
         lambda client, **_kwargs: publication_clients.append(client),
     )
 
+    monkeypatch.setattr(roster_router.publication_svc, "resolve_persisted_soft_omission_row_ids",
+                        lambda client, **kwargs: [] if client is service_client else None)
     result = roster_router.publish(
         "mv1", PublishRosterRequest(validation_input_digest="a" * 64),
         _ctx(user_client, role="OWNER"),
@@ -187,6 +189,8 @@ def test_publish_does_not_promote_a_soft_only_low_solver_score_to_hard_block(
         lambda client, **_kwargs: publication_clients.append(client),
     )
 
+    monkeypatch.setattr(roster_router.publication_svc, "resolve_persisted_soft_omission_row_ids",
+                        lambda client, **kwargs: [] if client is service_client else None)
     roster_router.publish(
         "mv1", PublishRosterRequest(validation_input_digest="a" * 64),
         _ctx(user_client, role="OWNER"),

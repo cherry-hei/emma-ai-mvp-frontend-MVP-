@@ -221,19 +221,30 @@ def publish(
                 409, "not_publishable",
                 "Generated option has unresolved hard solver violations.",
             )
-    svc.publish_version(service_client, facility_id=ctx.facility_id,
-                        roster_version_id=version_id, created_by=ctx.profile_id)
-    # After the atomic publication write, so this audit event cannot claim a
-    # transition that rolled back. The omission IDs are bound to the fresh
-    # deterministic evidence, not client-authored free text.
-    _audit(ctx, "publish", "roster_versions", entity_id=version_id,
-           after={"status": "published",
-                  "hard_violation_count": validation["hard_violation_count"],
-                  "constraint_score": score["constraint_score"] if score else None,
-                  "validation_run_id": validation.get("validation_run_id"),
-                  "input_digest": validation.get("input_digest"),
-                  "omitted_soft_violation_ids": [row["omission_id"] for row in omitted],
-                  "soft_violation_count": len(omitted)})
+    try:
+        persisted_omission_row_ids = (
+            publication_svc.resolve_persisted_soft_omission_row_ids(
+                service_client,
+                facility_id=ctx.facility_id,
+                roster_version_id=version_id,
+                validation_run_id=validation["validation_run_id"],
+                approved_soft_omission_ids=[row["omission_id"] for row in omitted],
+            )
+        )
+    except publication_svc.PublishGateError as exc:
+        raise api_error(409, exc.code, str(exc)) from exc
+    svc.publish_version(
+        service_client,
+        facility_id=ctx.facility_id,
+        roster_version_id=version_id,
+        created_by=ctx.profile_id,
+        validation_run_id=validation["validation_run_id"],
+        input_digest=validation["input_digest"],
+        omitted_soft_violation_row_ids=persisted_omission_row_ids,
+    )
+    # Event/audit evidence is inserted by the RPC in this same transaction as
+    # the operative status change. Do not add a best-effort post-RPC duplicate:
+    # it would reintroduce an evidence gap if that write failed.
     # Only now that the version is operative (spec SA.4b, "push triggers: roster
     # changes"). Notifying before the publish could tell a ward to work a roster
     # that a failed publish left unpublished. Uses the service client because the

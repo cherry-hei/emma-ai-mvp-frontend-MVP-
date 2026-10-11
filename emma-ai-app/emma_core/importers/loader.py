@@ -82,10 +82,9 @@ def apply(client, parsed: ParsedRoster, *, mode: str = "commit",
           write_period_records: bool = True) -> LoadResult:
     """Load one parsed workbook into its facility.
 
-    ``version_status`` of ``published`` makes the imported roster the operative
-    one for its period, which is what a historical "as worked" sheet is. The
-    caller supplies a service-role client: creating staff and publishing a roster
-    are trusted server operations, not tenant writes.
+    ``version_status`` of ``published`` records a publication-review warning;
+    import remains a draft. An OWNER must approve through the reviewed roster
+    workspace. Historical workbook content cannot supply that approval.
 
     ``write_period_records`` controls the records that belong to the *period*
     rather than to one version of it - leave, events, holidays, configuration.
@@ -428,39 +427,14 @@ def _create_version(client, facility_id: str, period_id: str,
 
 def _publish(client, facility_id: str, version_id: str, created_by: str | None,
              result: LoadResult) -> None:
-    """Publish an imported 'as worked' roster - if it passes validation.
+    """Imported workbooks never substitute for an OWNER's reviewed approval.
 
-    `publish_roster_version` requires a passed deterministic validation run, and
-    that gate is not negotiable just because the roster is historical: a month
-    that breached the rules must not become an operative, rule-compliant record
-    merely by being imported.
-
-    So the import validates, and publishes only on a pass. On a fail the version
-    stays a draft and the violation count is reported - which is the answer the
-    pilot actually wants from importing a real month.
+    Historical/imported versions remain drafts; the roster workspace supplies
+    the same fresh validation, explicit soft acknowledgements and atomic RPC.
     """
-    from ..services.roster import publish_version
-    from ..services.validation import validate_roster
-
-    validation = validate_roster(client, facility_id, version_id,
-                                 validated_by=created_by, persist=True)
-    if not validation.get("passes"):
-        result.warnings.append({
-            "severity": "warning", "code": "not_publishable",
-            "message": (
-                f"The imported roster has "
-                f"{validation.get('hard_violation_count', 0)} hard compliance "
-                "violation(s) against the current rule set, so it stays a draft. "
-                "Open Validate on the roster for the breakdown."),
-            "raw_value": f"score {validation.get('constraint_score')}",
-        })
-        return
-    publish_version(client, facility_id=facility_id,
-                    roster_version_id=version_id, created_by=created_by)
     result.warnings.append({
-        "severity": "info", "code": "published",
-        "message": "The imported roster passed validation and is now the "
-                   "operative version for its period.",
+        "severity": "warning", "code": "publication_review_required",
+        "message": "The imported roster remains a draft. An OWNER must review current rules and approve publication from the roster workspace.",
     })
 
 
