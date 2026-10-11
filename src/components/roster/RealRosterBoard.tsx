@@ -464,6 +464,7 @@ export function RealRosterBoard() {
 
   async function handleValidate() {
     if (!activeVersionId) return
+    setValidation(null); setSoftOmissionIds(new Set())
     setBusy('validate'); setError('')
     try { await validateVersion(activeVersionId) }
     catch (e) { setError(e instanceof Error ? e.message : 'Validation failed') } finally { setBusy('') }
@@ -509,11 +510,13 @@ export function RealRosterBoard() {
       flash(published.omitted_soft_violation_ids.length
         ? (isZH ? `已發佈；已審批${published.omitted_soft_violation_ids.length}項soft例外。` : `Published with ${published.omitted_soft_violation_ids.length} approved soft omission(s).`)
         : (isZH ? '已發佈' : 'Published'))
+      setRuleReviewOpen(false)
       setPublishedLog((prev) => [...pendingLog, ...prev])
       setPendingLog([])
       await refresh()
     } catch (e) {
       const message = e instanceof Error ? e.message : 'Publish failed'
+      setValidation(null); setSoftOmissionIds(new Set())
       try { await validateVersion(activeVersionId) } catch { /* preserve the publish error */ }
       setError(message)
     } finally { setBusy('') }
@@ -690,7 +693,7 @@ export function RealRosterBoard() {
               className="text-xs px-3 py-1.5 border border-gray-200 rounded-lg hover:bg-gray-50 disabled:opacity-50">
               {busy === 'save' ? '…' : T.saveDraft}
             </button>
-            <button onClick={handlePublish} disabled={!activeVersionId || busy === 'publish' || !mayPublish}
+            <button onClick={() => { setRuleReviewOpen(true); if (!validation) void handleValidate() }} disabled={!activeVersionId || !!busy || !mayPublish}
               title={!mayPublish
                 ? (isZH ? '只有院長可批准及發佈；伺服器會再次核對權限。' : 'Only the superintendent may approve and publish; the server verifies this again.')
                 : blockingCount > 0 ? (isZH ? '先檢視及處理blocking rules' : 'Review and resolve blocking rules first')
@@ -699,7 +702,7 @@ export function RealRosterBoard() {
                     : (isZH ? '請逐項剔選所有soft違規。' : 'Tick every soft violation individually.')) : undefined}
               className="text-xs px-3 py-1.5 rounded-lg text-white font-semibold disabled:opacity-50"
               style={{ background: !mayPublish || blockingCount > 0 || !softAcknowledgementsComplete ? '#475569' : PINK }}>
-              {busy === 'publish' ? '…' : !mayPublish ? (isZH ? '待院長批准' : 'Awaiting superintendent') : blockingCount > 0 ? (isZH ? '發佈前檢視規則' : 'Review rules before publishing') : !softAcknowledgementsComplete ? (hasUnacknowledgeableSoftViolation ? (isZH ? '重新檢查規則' : 'Recheck rules') : (isZH ? `剔選soft違規（${softOmissionIds.size}/${softOmittableViolations.length}）` : `Tick soft findings (${softOmissionIds.size}/${softOmittableViolations.length})`)) : T.publish}
+              {busy === 'publish' ? '…' : T.publish}
             </button>
             <button onClick={() => setShowSaveList((v) => !v)}
               className="text-xs px-3 py-1.5 rounded-lg border border-gray-200 bg-white text-gray-700 font-semibold hover:bg-gray-50">
@@ -868,7 +871,7 @@ export function RealRosterBoard() {
                                 />
                                 <span className="min-w-0 text-slate-600">
                                   <b className="text-slate-800">{item.date || (isZH ? '未有日期' : 'Date unavailable')}</b>{item.message ? ` · ${item.message}` : ''}
-                                  <span className="mt-0.5 block text-[9px] text-amber-800">{isZH ? '逐項確認此soft例外；發佈時伺服器會重新核對。' : 'Acknowledge this soft exception individually; the server re-checks it at publish.'}</span>
+                                  <span className="mt-0.5 block text-[9px] text-amber-800">{isZH ? '略過／Omit 此soft例外；發佈時伺服器會重新核對。' : 'Omit this soft exception; the server re-checks it at publish.'}</span>
                                 </span>
                               </label>
                             )
@@ -904,6 +907,10 @@ export function RealRosterBoard() {
                 </div>
               </section>
             </div>
+            <footer className="shrink-0 border-t border-slate-200 bg-white p-4">
+              <p className="mb-2 text-xs text-slate-600">{blockingCount > 0 ? (isZH ? '硬規則必須先處理，不能略過。' : 'Hard rules must be resolved and cannot be omitted.') : !softAcknowledgementsComplete ? (isZH ? '剩餘soft警告請逐項勾選略過。' : 'Select Omit for each remaining soft warning.') : ''}</p>
+              <button type="button" onClick={() => void handlePublish()} disabled={!mayPublish || !!busy || !validation?.passes || !validation?.validation_run_id || !validation?.input_digest || blockingCount > 0 || !softAcknowledgementsComplete} className="w-full rounded-xl bg-[#E8187A] px-4 py-3 text-sm font-bold text-white disabled:opacity-40">{busy === 'publish' ? '…' : (isZH ? '院長批准並發佈' : 'Approve and publish')}</button>
+            </footer>
           </aside>
         </div>
       )}
