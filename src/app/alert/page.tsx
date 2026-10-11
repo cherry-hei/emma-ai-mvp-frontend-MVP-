@@ -1,7 +1,6 @@
 'use client'
 
 import { useCallback, useEffect, useState } from 'react'
-import { useRouter } from 'next/navigation'
 import { api } from '@/lib/api'
 import type {
   AlertItem, ApiStaff, Incident, IncidentStats, ReplacementCandidate,
@@ -435,7 +434,6 @@ function NewIncidentModal({ onClose, onCreated, isZH }: {
 /* ─── Page ────────────────────────────────────────────────────────────────── */
 export default function AlertPage() {
   const { lang } = useLang()
-  const router = useRouter()
   const isZH = lang === 'zh'
 
   const [alerts, setAlerts] = useState<AlertItem[]>([])
@@ -519,10 +517,6 @@ export default function AlertPage() {
           <div className="rounded-xl border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-[10px] text-slate-500">
             {isZH ? `目前 ${stats?.open ?? alerts.length} 宗待處理；Emma只讀取既有事件與deterministic資格證據。` : `${stats?.open ?? alerts.length} open; Emma reads existing incidents and deterministic eligibility evidence only.`}
           </div>
-          <button type="button" onClick={() => router.push('/insights?mode=emergency')}
-            className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-bold text-[#E8187A] transition hover:bg-rose-100">
-            ✦ Emma AI
-          </button>
           <button onClick={() => setCreating(true)}
             className="rounded-xl px-3 py-2 text-xs font-medium text-white"
             style={{ background: PINK }}

@@ -13,7 +13,8 @@ import { useLang } from '@/components/layout/LanguageContext'
 import { useAuth } from '@/components/layout/AuthContext'
 import { canDecide } from '@/lib/permissions'
 import { CreateShiftModal } from '@/components/modals/CreateShiftModal'
-import { addUtcDays, datesForRosterView, formatExactMinutes, type RosterViewMode } from '@/lib/roster-ui'
+import { addUtcDays, datesForRosterView, type RosterViewMode } from '@/lib/roster-ui'
+import { formatHoursMinutes } from '@/lib/format-hours'
 import { AiOptionsModal } from './AiOptionsModal'
 import { CreateEventModal } from './CreateEventModal'
 import { BatchCreateShiftModal } from '@/components/modals/BatchCreateShiftModal'
@@ -1110,7 +1111,7 @@ export function RealRosterBoard() {
                     </div>
                   </td>
                   <td className="px-1 py-2 border-r border-gray-200 text-center">
-                    <div className="text-[10px] font-bold text-gray-600" title={hasUnknownPaidMinutes ? (isZH ? '部分在職更次沒有持久化paid_minutes；未以時鐘時間估算。' : 'Some working cells lack persisted paid_minutes; no elapsed-time estimate is used.') : undefined}>{formatExactMinutes(paidMinutes)}{hasUnknownPaidMinutes ? ' + ?' : ''}</div>
+                    <div className="text-[10px] font-bold text-gray-600" title={hasUnknownPaidMinutes ? (isZH ? '部分在職更次沒有持久化paid_minutes；總時數保持未知，未以時鐘時間估算。' : 'Some working cells lack persisted paid_minutes; the total remains unknown and is not estimated from clock times.') : undefined}>{hasUnknownPaidMinutes ? '—' : formatHoursMinutes(paidMinutes, isZH ? 'zh' : 'en')}</div>
                   </td>
                   {columns.map((iso) => {
                     const cell = cellLookup.get(row.staff.id)?.get(iso)
@@ -1181,9 +1182,15 @@ export function RealRosterBoard() {
           versionId={activeVersionId}
           staff={grid.rows.map((r) => r.staff)}
           shiftDefs={shiftDefs}
-          dates={columns}
-          onBatchCreated={({ saved, requested, partial }) => {
-            flash(partial ? (isZH ? `批量排更部分完成：${saved}/${requested}` : `Batch partly saved: ${saved}/${requested}`) : (isZH ? `已儲存${saved}格` : `${saved} cells saved`))
+          dates={periodColumns}
+          occupiedCells={grid.rows.flatMap((row) => row.cells
+            .filter((cell) => !!cell.assignment_id || !!cell.shift_type || cell.tasks.length > 0)
+            .map((cell) => ({ staffId: row.staff.id, date: cell.date, tasks: cell.tasks })))}
+          onBatchCreated={({ saved, requested, skipped, partial }) => {
+            const skippedText = skipped ? (isZH ? `；略過${skipped}格現有更次` : `; ${skipped} existing cell(s) skipped`) : ''
+            flash(partial
+              ? (isZH ? `批量排更部分完成：${saved}/${requested}${skippedText}` : `Batch partly saved: ${saved}/${requested}${skippedText}`)
+              : (isZH ? `已儲存${saved}格${skippedText}` : `${saved} cells saved${skippedText}`))
             void Promise.all([loadGrid(periodId, versionId), loadHistory()])
           }}
         />

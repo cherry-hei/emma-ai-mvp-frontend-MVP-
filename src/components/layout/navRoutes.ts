@@ -33,8 +33,8 @@ export const SIDEBAR_NAVIGATION = [
   { key: 'nav_personnel',  icon: '👤',  path: ROUTES.staff },
   { key: 'nav_reports',    icon: '📊',  path: ROUTES.reports },
   { key: 'nav_alert',      icon: '🔔',  path: ROUTES.alert },
-  { key: 'nav_messages',   icon: '💬',  path: ROUTES.messages },
   { key: 'nav_ai',         icon: '✦',   path: ROUTES.insights },
+  { key: 'nav_messages',   icon: '💬',  path: ROUTES.messages },
   { key: 'nav_settings',   icon: '⚙️',  path: ROUTES.settings },
 ] as const
 
