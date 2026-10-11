@@ -2258,6 +2258,7 @@ def validate_roster(
             validated_by=validated_by,
         )
     hard_count = sum(row.get("severity", "hard") == "hard" for row in violations)
+    soft_count = sum(row.get("severity", "hard") == "soft" for row in violations)
     ratio_checks = [{
         "label": row["label"],
         "rank": row.get("rank"),
@@ -2273,6 +2274,7 @@ def validate_roster(
         "method": "deterministic-phase5",
         "passes": hard_count == 0,
         "hard_violation_count": hard_count,
+        "soft_violation_count": soft_count,
         "violations": violations,
         "ratio_checks": ratio_checks,
         "validation_run_id": run_id,

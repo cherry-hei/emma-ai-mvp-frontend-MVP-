@@ -14,17 +14,18 @@ from fastapi import APIRouter, BackgroundTasks, Depends, Query
 from pydantic import BaseModel
 
 from api.deps import AuthCtx, api_error, get_ctx
-from emma_core.constants import PUBLISH_THRESHOLD, JobStatus
+from emma_core.constants import JobStatus
 from emma_core.db import get_service_client
 from emma_core.models import (
     JobView, OptimizeRequest, OptimizeResponse, OptionScoreOut, ValidationOut,
     ViolationOut,
 )
+from emma_core.permissions import Feature, can_write
 from emma_core.services import optimize as opt
+from emma_core.services import publication as publication_svc
 from emma_core.services import validation as validation_svc
 
 router = APIRouter(tags=["optimize"])
-VALIDATION_WRITE_ROLES = {"superintendent", "admin", "scheduler"}
 OPTIMIZE_WRITE_ROLES = {"superintendent", "admin", "scheduler"}
 
 
@@ -42,7 +43,10 @@ def _to_option_score_out(row: dict, *, with_violations: bool = True) -> OptionSc
         soft_penalty_total=int(row.get("soft_penalty_total") or 0),
         objective_weights=row.get("objective_weights_json"),
         infeasible_reasons=row.get("infeasible_reasons_json") or [],
-        publishable=(cs >= PUBLISH_THRESHOLD and hv == 0),
+        # `constraint_score` includes weighted soft trade-offs. Current hard
+        # publish authority is the fresh deterministic validation; this score
+        # field therefore marks only solver-recorded hard violations.
+        publishable=(hv == 0),
         version_label=row.get("version_label"),      # set by list_period_option_scores (compare)
         version_status=row.get("version_status"),
         violations=[
@@ -154,7 +158,10 @@ def option_scores(roster_version_id: str, ctx: AuthCtx = Depends(get_ctx)):
 # ── validate ──────────────────────────────────────────────────────────────────
 @router.post("/validate-roster", response_model=ValidationOut)
 def validate_roster(body: ValidateRequest, ctx: AuthCtx = Depends(get_ctx)):
-    persist = str(ctx.profile.role) in VALIDATION_WRITE_ROLES
+    # Owners and authorised schedulers may create the immutable deterministic
+    # evidence run. Do not key this to legacy role spellings: canonical OWNER
+    # must receive the same audit evidence as `superintendent`.
+    persist = can_write(ctx.profile.role, Feature.ROSTER_AI_DRAFT)
     # Authorize the caller-supplied version with the user's RLS client before
     # allowing the service client to persist authoritative audit evidence.
     if not (
@@ -182,4 +189,8 @@ def validate_roster(body: ValidateRequest, ctx: AuthCtx = Depends(get_ctx)):
     score = opt.get_option_scores(ctx.client, body.roster_version_id)
     if score is not None:
         result["constraint_score"] = int(score.get("constraint_score") or 0)
+    # The browser can render only server-issued identifiers for individual soft
+    # acknowledgements. The publish route runs this same derivation again over a
+    # fresh snapshot and rejects IDs that no longer belong to its findings.
+    result["violations"] = publication_svc.annotate_violations(result.get("violations", []))
     return ValidationOut.model_validate(result)

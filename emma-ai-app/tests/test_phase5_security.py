@@ -195,6 +195,10 @@ def test_part_time_policy_maps_to_solver_work_pattern():
 
 def test_saturday_part_time_writeback_uses_earliest_unoccupied_weekday():
     store = FakeSupabase()
+    # The production dictionary is charity-owned. Keep this isolated fixture
+    # self-contained rather than relying on a prior test to warm org_id_for's
+    # process cache.
+    store.data["facilities"] = [{"id": "f1", "org_id": "org-1"}]
     store.data["shift_definitions"] = [{
         "id": "cl-definition",
         "facility_id": "f1",
@@ -266,6 +270,7 @@ def test_saturday_part_time_writeback_uses_earliest_unoccupied_weekday():
 
 def test_saturday_part_time_writeback_defers_boundary_cl_without_definition():
     store = FakeSupabase()
+    store.data["facilities"] = [{"id": "f1", "org_id": "org-1"}]
     staff = StaffInput(
         id="pt1",
         rank="CW",

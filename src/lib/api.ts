@@ -14,6 +14,7 @@ import type {
   EmergencyAiSuggestion, GeneratedReport, ImportJob, Incident,
   IncidentStats, JobView, KpiOverview, LeaveCategory, LeaveGroup, LeaveRequest, LeaveStats,
   MyAttendance, MyProfile, MyRoster, MySummary, MyTask, OptimizeResponse, PeriodOut,
+  PublishRosterOut,
   FloorRule, Profile, RatioResult, RegulatoryDoc, ReplacementCandidate, ReplacementOffer, ReportRow,
   RuleDefinition, RuleDefinitionCreate,
   ReportSchedule, ReportType, ResidentCountOut, RoiSettings, RoiSummary, RosterGrid,
@@ -252,9 +253,20 @@ export const api = {
     method: 'PATCH', body: JSON.stringify(patch),
   }),
 
-  publish: (versionId: string) =>
-    apiFetch<{ roster_version_id: string; status: string }>(
-      `/rosters/${versionId}/publish`, { method: 'POST' }),
+  /**
+   * Final publication always reruns deterministic validation on the server.
+   * The only client input is the complete set of server-issued current soft
+   * finding IDs that the authorised OWNER explicitly acknowledges and the
+   * digest of the snapshot reviewed. The digest is compared with a new server
+   * result; it is never trusted as a client-side pass/fail decision.
+   */
+  publish: (versionId: string, softOmissionIds: string[], validationInputDigest: string) =>
+    apiFetch<PublishRosterOut>(`/rosters/${versionId}/publish`, {
+      method: 'POST', body: JSON.stringify({
+        soft_omission_ids: softOmissionIds,
+        validation_input_digest: validationInputDigest,
+      }),
+    }),
 
   rosterPeriods: () => apiFetch<PeriodOut[]>('/roster-periods'),
 

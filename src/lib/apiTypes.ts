@@ -221,6 +221,8 @@ export interface ViolationOut {
   message?: string | null
   details: Record<string, unknown>
   resolved: boolean
+  /** Server-derived identifier for one current soft finding only. */
+  omission_id?: string | null
 }
 
 export interface StaffingRequirement {
@@ -327,11 +329,21 @@ export interface ValidationOut {
   method: string
   passes: boolean
   hard_violation_count: number
+  soft_violation_count: number
   constraint_score?: number | null
   violations: ViolationOut[]
   ratio_checks: RatioResult[]
   validation_run_id?: string | null
   input_digest?: string | null
+}
+
+/** Response from the final server-authoritative publish transition. */
+export interface PublishRosterOut {
+  roster_version_id: string
+  status: string
+  validation_run_id?: string | null
+  input_digest?: string | null
+  omitted_soft_violation_ids: string[]
 }
 
 export interface RuleDefinition {

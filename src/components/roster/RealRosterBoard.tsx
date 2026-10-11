@@ -10,6 +10,8 @@ import type {
   ShiftDef, TaskDefOut, ValidationOut, VersionOut,
 } from '@/lib/apiTypes'
 import { useLang } from '@/components/layout/LanguageContext'
+import { useAuth } from '@/components/layout/AuthContext'
+import { canDecide } from '@/lib/permissions'
 import { CreateShiftModal } from '@/components/modals/CreateShiftModal'
 import { canSeeTask, reasonText } from '@/lib/shiftRules'
 import { AiOptionsModal } from './AiOptionsModal'
@@ -144,6 +146,7 @@ function groupRatios(items: NonNullable<ValidationOut['ratio_checks']>): RatioGr
 
 export function RealRosterBoard() {
   const { lang } = useLang()
+  const { user } = useAuth()
   const isZH = lang === 'zh'
 
   const [periods, setPeriods] = useState<PeriodOut[]>([])
@@ -163,6 +166,9 @@ export function RealRosterBoard() {
   const [cellIssues, setCellIssues] = useState<RuleIssue[]>([])
   const [newPeriodOpen, setNewPeriodOpen] = useState(false)
   const [validation, setValidation] = useState<ValidationOut | null>(null)
+  // These IDs are issued by the server for individual current soft findings.
+  // The server re-validates and verifies them again before the atomic publish.
+  const [softOmissionIds, setSoftOmissionIds] = useState<Set<string>>(new Set())
   const [ruleReviewOpen, setRuleReviewOpen] = useState(false)
   const [focusedCell, setFocusedCell] = useState<FocusedCell>(null)
   const [expandedRuleGroups, setExpandedRuleGroups] = useState<Set<string>>(new Set())
@@ -172,9 +178,6 @@ export function RealRosterBoard() {
   const [aiOptions, setAiOptions] = useState<RosterOption[] | null>(null)
   const [aiStatus, setAiStatus] = useState('')
   const [aiError, setAiError] = useState('')
-  const [publishingId, setPublishingId] = useState('')
-  const [publishedIds, setPublishedIds] = useState<Set<string>>(new Set())
-  const [publishError, setPublishError] = useState('')
   const [createEventOpen, setCreateEventOpen] = useState(false)
   const [createShiftOpen, setCreateShiftOpen] = useState(false)
   const [batchShiftOpen, setBatchShiftOpen] = useState(false)
@@ -190,13 +193,14 @@ export function RealRosterBoard() {
   // Which period's logs are currently in state, so the writer below never saves
   // an empty initial state over a stored list before the reader has run.
   const logsHydrated = useRef('')
+  const mayPublish = canDecide(user?.role, 'roster.publish')
 
   const T = {
     period: isZH ? '週期' : 'Period', newPeriod: isZH ? '＋ 新週期' : '＋ New period',
     version: isZH ? '版本' : 'Version', manual: isZH ? '手動' : 'Manual',
     ai: isZH ? '生成更表方案' : 'Generate roster options', aiBusy: isZH ? '生成中…' : 'Generating…',
     validate: isZH ? '執行規則檢查' : 'Run rule checks', saveDraft: isZH ? '儲存草稿' : 'Save draft',
-    publish: isZH ? '批准並發佈' : 'Approve & publish', staff: isZH ? '員工' : 'Staff',
+    publish: isZH ? '發佈' : 'Publish', staff: isZH ? '員工' : 'Staff',
     filterRank: isZH ? '職級' : 'Rank',
     filterFloor: isZH ? '樓層/單位' : 'Floor/Unit',
     filterSearch: isZH ? '搜尋員工…' : 'Search staff…',
@@ -301,7 +305,13 @@ export function RealRosterBoard() {
     const requestId = ++validationRequestRef.current
     try {
       const result = await api.validateRoster(vid)
-      if (requestId === validationRequestRef.current) setValidation(result)
+      if (requestId === validationRequestRef.current) {
+        setValidation(result)
+        // Every re-check is a new snapshot. Do not silently carry an earlier
+        // checkbox into it, even if the finding fingerprint happens to match:
+        // the OWNER must re-review and explicitly acknowledge each current row.
+        setSoftOmissionIds(new Set())
+      }
       return result
     } catch (e) {
       // A newer version or manual re-check supersedes this request.
@@ -314,7 +324,7 @@ export function RealRosterBoard() {
     const requestId = ++gridRequestRef.current
     // The next grid owns the validation strip; invalidate any older response.
     validationRequestRef.current += 1
-    setLoading(true); setError(''); setValidation(null)
+    setLoading(true); setError(''); setValidation(null); setSoftOmissionIds(new Set())
     try {
       const nextGrid = await api.rosterGrid(pid, vid ? { versionId: vid } : undefined)
       if (requestId !== gridRequestRef.current) return
@@ -351,19 +361,34 @@ export function RealRosterBoard() {
   const editable = currentVersion?.version_type === 'manual' && currentVersion?.status === 'draft'
 
   const blockingViolations = useMemo(
-    () => (validation?.violations ?? []).filter((item) => !item.resolved && item.severity.toLowerCase() === 'hard'),
+    // Unknown severity is deliberately a block, never a warning that can be
+    // omitted. The final server gate applies the same fail-closed posture.
+    () => (validation?.violations ?? []).filter((item) => !item.resolved && item.severity.toLowerCase() !== 'soft'),
     [validation],
   )
   const warningViolations = useMemo(
-    () => (validation?.violations ?? []).filter((item) => !item.resolved && item.severity.toLowerCase() !== 'hard'),
+    () => (validation?.violations ?? []).filter((item) => !item.resolved && item.severity.toLowerCase() === 'soft'),
     [validation],
   )
   const failingRatios = useMemo(
     () => (validation?.ratio_checks ?? []).filter((item) => !item.passes),
     [validation],
   )
-  const blockingCount = validation?.hard_violation_count ?? 0
-  const warningCount = warningViolations.length + failingRatios.length
+  const blockingCount = Math.max(validation?.hard_violation_count ?? 0, blockingViolations.length)
+  // Ratio failures also produce deterministic hard violations (`swd_ratio`),
+  // hence they are never counted as soft omissions.
+  const warningCount = warningViolations.length
+  const softOmittableViolations = useMemo(
+    () => warningViolations.filter((item) => !!item.omission_id),
+    [warningViolations],
+  )
+  // `omission_id` is server evidence, not optional UI decoration. A soft row
+  // without it cannot be individually acknowledged, so do not let the browser
+  // present a permissive Publish action while the server will (correctly) deny.
+  const hasUnacknowledgeableSoftViolation = warningViolations.some((item) => !item.omission_id)
+  const allSoftOmissionsSelected = softOmittableViolations.length === softOmissionIds.size
+    && softOmittableViolations.every((item) => softOmissionIds.has(item.omission_id!))
+  const softAcknowledgementsComplete = !hasUnacknowledgeableSoftViolation && allSoftOmissionsSelected
   const passingCheckCount = (validation?.ratio_checks ?? []).filter((item) => item.passes).length
   const blockingGroups = useMemo(() => groupViolations(blockingViolations), [blockingViolations])
   const warningGroups = useMemo(() => groupViolations(warningViolations), [warningViolations])
@@ -457,17 +482,33 @@ export function RealRosterBoard() {
 
   async function handlePublish() {
     if (!activeVersionId) return
-    if (!validation || blockingCount > 0) {
+    if (!mayPublish) {
+      setError(isZH ? '只有院長可批准及發佈更表。' : 'Only the superintendent may approve and publish a roster.')
+      return
+    }
+    // This is a usability preflight only. The server always repeats the
+    // deterministic validation immediately before its atomic publication RPC.
+    if (!validation || !validation.validation_run_id || !validation.input_digest || blockingCount > 0) {
       setRuleReviewOpen(true)
       return
     }
-    if (warningCount > 0 && !window.confirm(isZH
-      ? `現時有${warningCount}項警告。規則引擎沒有阻止發佈；是否由院長確認後繼續？`
-      : `There are ${warningCount} warnings. The rules engine does not block publishing; continue with manager confirmation?`)) return
+    if (!softAcknowledgementsComplete) {
+      setError(hasUnacknowledgeableSoftViolation
+        ? (isZH ? '規則檢查缺少soft例外識別碼；請重新執行檢查。' : 'The rule check is missing a soft-exception identifier; run the checks again.')
+        : (isZH ? '請逐項剔選所有soft違規後才可發佈。' : 'Tick every soft violation individually before publishing.'))
+      setRuleReviewOpen(true)
+      return
+    }
     setBusy('publish'); setError('')
     try {
-      await api.publish(activeVersionId)
-      flash(isZH ? '已發佈' : 'Published')
+      const published = await api.publish(
+        activeVersionId,
+        [...softOmissionIds],
+        validation.input_digest,
+      )
+      flash(published.omitted_soft_violation_ids.length
+        ? (isZH ? `已發佈；已審批${published.omitted_soft_violation_ids.length}項soft例外。` : `Published with ${published.omitted_soft_violation_ids.length} approved soft omission(s).`)
+        : (isZH ? '已發佈' : 'Published'))
       setPublishedLog((prev) => [...pendingLog, ...prev])
       setPendingLog([])
       await refresh()
@@ -480,7 +521,7 @@ export function RealRosterBoard() {
 
   async function handleAI() {
     if (aiLoading || !periodId) return
-    setAiOpen(true); setAiError(''); setPublishError(''); setAiOptions(null)
+    setAiOpen(true); setAiError(''); setAiOptions(null)
     setAiLoading(true); setAiStatus('pending')
     try {
       const options = await optimizeAndPoll(periodId, { onStatus: setAiStatus })
@@ -491,13 +532,14 @@ export function RealRosterBoard() {
     } finally { setAiLoading(false) }
   }
 
-  async function handlePublishOption(vid: string) {
-    setPublishingId(vid); setPublishError('')
-    try {
-      await api.publish(vid)
-      setPublishedIds((prev) => new Set(prev).add(vid))
-      await refresh()
-    } catch (e) { setPublishError(e instanceof Error ? e.message : 'Publish failed') } finally { setPublishingId('') }
+  function handlePublishOption(vid: string) {
+    // Solver options must use the identical fresh validation and omission flow;
+    // selecting one never invokes a client-only direct publish path.
+    setVersionId(vid)
+    setAiOpen(false)
+    flash(isZH
+      ? '已選擇方案；請完成規則檢視後在上方發佈。'
+      : 'Option selected. Complete rule review, then publish from the fixed control above.')
   }
 
   // "➕ Create Shift" opens the full dialog - staff, day, shift type and a task
@@ -547,13 +589,22 @@ export function RealRosterBoard() {
     })
   }
 
+  function toggleSoftOmission(omissionId: string) {
+    setSoftOmissionIds((current) => {
+      const next = new Set(current)
+      if (next.has(omissionId)) next.delete(omissionId)
+      else next.add(omissionId)
+      return next
+    })
+  }
+
   // ── render ───────────────────────────────────────────────────────────────
   const periodLabel = grid?.period_start && grid?.period_end ? `${grid.period_start} → ${grid.period_end}` : ''
 
   return (
     <div className="flex flex-col h-full overflow-hidden">
       {/* Toolbar */}
-      <div className="bg-white border-b border-gray-200 px-5 py-3 flex-shrink-0 space-y-2.5">
+      <div className="sticky top-0 z-40 bg-white border-b border-gray-200 px-5 py-3 flex-shrink-0 space-y-2.5">
         <div className="flex items-center gap-3 flex-wrap">
           <div>
             <h1 className="text-xl font-bold text-gray-900">{isZH ? '更表工作區' : 'Roster Workspace'}</h1>
@@ -639,11 +690,16 @@ export function RealRosterBoard() {
               className="text-xs px-3 py-1.5 border border-gray-200 rounded-lg hover:bg-gray-50 disabled:opacity-50">
               {busy === 'save' ? '…' : T.saveDraft}
             </button>
-            <button onClick={handlePublish} disabled={!activeVersionId || busy === 'publish'}
-              title={blockingCount > 0 ? (isZH ? '先檢視及處理blocking rules' : 'Review and resolve blocking rules first') : undefined}
+            <button onClick={handlePublish} disabled={!activeVersionId || busy === 'publish' || !mayPublish}
+              title={!mayPublish
+                ? (isZH ? '只有院長可批准及發佈；伺服器會再次核對權限。' : 'Only the superintendent may approve and publish; the server verifies this again.')
+                : blockingCount > 0 ? (isZH ? '先檢視及處理blocking rules' : 'Review and resolve blocking rules first')
+                  : !softAcknowledgementsComplete ? (hasUnacknowledgeableSoftViolation
+                    ? (isZH ? '請重新執行規則檢查。' : 'Run the rule checks again.')
+                    : (isZH ? '請逐項剔選所有soft違規。' : 'Tick every soft violation individually.')) : undefined}
               className="text-xs px-3 py-1.5 rounded-lg text-white font-semibold disabled:opacity-50"
-              style={{ background: blockingCount > 0 ? '#475569' : PINK }}>
-              {busy === 'publish' ? '…' : blockingCount > 0 ? (isZH ? '發佈前檢視規則' : 'Review rules before publishing') : T.publish}
+              style={{ background: !mayPublish || blockingCount > 0 || !softAcknowledgementsComplete ? '#475569' : PINK }}>
+              {busy === 'publish' ? '…' : !mayPublish ? (isZH ? '待院長批准' : 'Awaiting superintendent') : blockingCount > 0 ? (isZH ? '發佈前檢視規則' : 'Review rules before publishing') : !softAcknowledgementsComplete ? (hasUnacknowledgeableSoftViolation ? (isZH ? '重新檢查規則' : 'Recheck rules') : (isZH ? `剔選soft違規（${softOmissionIds.size}/${softOmittableViolations.length}）` : `Tick soft findings (${softOmissionIds.size}/${softOmittableViolations.length})`)) : T.publish}
             </button>
             <button onClick={() => setShowSaveList((v) => !v)}
               className="text-xs px-3 py-1.5 rounded-lg border border-gray-200 bg-white text-gray-700 font-semibold hover:bg-gray-50">
@@ -797,6 +853,27 @@ export function RealRosterBoard() {
                       <article key={group.key} className="rounded-xl border border-amber-200 bg-amber-50/60 p-3">
                         <div className="flex flex-wrap items-center gap-2"><div className="text-xs font-bold text-slate-900">{group.ruleCode}</div><span className="rounded-full bg-white px-2 py-0.5 text-[9px] font-bold text-amber-800">{group.items.length} {isZH ? '項結果' : 'results'}</span></div>
                         <p className="mt-1 text-[11px] leading-relaxed text-slate-600">{first?.message || (isZH ? '需要院長檢視。' : 'Manager review is required.')}</p>
+                        <div className="mt-3 space-y-2 border-t border-amber-100 pt-3">
+                          {group.items.map((item, index) => {
+                            const omissionId = item.omission_id
+                            const checked = !!omissionId && softOmissionIds.has(omissionId)
+                            return (
+                              <label key={omissionId || `${item.rule_code}-${index}`} className={`flex gap-2 rounded-lg border px-2.5 py-2 text-[10px] ${checked ? 'border-amber-300 bg-amber-100/60' : 'border-amber-100 bg-white/80'}`}>
+                                <input
+                                  type="checkbox"
+                                  checked={checked}
+                                  disabled={!mayPublish || !omissionId}
+                                  onChange={() => omissionId && toggleSoftOmission(omissionId)}
+                                  className="mt-0.5 h-3.5 w-3.5 accent-[#E8187A]"
+                                />
+                                <span className="min-w-0 text-slate-600">
+                                  <b className="text-slate-800">{item.date || (isZH ? '未有日期' : 'Date unavailable')}</b>{item.message ? ` · ${item.message}` : ''}
+                                  <span className="mt-0.5 block text-[9px] text-amber-800">{isZH ? '逐項確認此soft例外；發佈時伺服器會重新核對。' : 'Acknowledge this soft exception individually; the server re-checks it at publish.'}</span>
+                                </span>
+                              </label>
+                            )
+                          })}
+                        </div>
                         <button onClick={() => explainRule(group.ruleCode, first?.date)} className="mt-3 rounded-lg border border-amber-200 bg-white px-3 py-1.5 text-[10px] font-bold text-amber-800">{isZH ? '由Emma AI解釋' : 'Explain in Emma AI'}</button>
                       </article>
                     )
@@ -1084,9 +1161,8 @@ export function RealRosterBoard() {
       {aiOpen && (
         <AiOptionsModal
           options={aiOptions} loading={aiLoading} status={aiStatus} error={aiError}
-          publishError={publishError} periodLabel={periodLabel} isZH={isZH}
-          publishingId={publishingId} publishedIds={publishedIds}
-          onPublish={handlePublishOption} onClose={() => setAiOpen(false)}
+          periodLabel={periodLabel} isZH={isZH}
+          onSelect={handlePublishOption} onClose={() => setAiOpen(false)}
         />
       )}
 

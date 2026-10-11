@@ -5,15 +5,16 @@ from datetime import date as Date
 
 from fastapi import APIRouter, Depends, Query, Response
 
-from api.deps import AuthCtx, api_error, get_ctx
-from emma_core.constants import PUBLISH_THRESHOLD
+from api.deps import AuthCtx, api_error, get_ctx, require_decide
 from emma_core.db import get_service_client
 from emma_core.models import (
-    CellWriteRequest, PeriodCreateRequest, PeriodOut, RosterGrid, ShiftDef,
-    TaskDefOut, VersionOut,
+    CellWriteRequest, PeriodCreateRequest, PeriodOut, PublishRosterOut,
+    PublishRosterRequest, RosterGrid, ShiftDef, TaskDefOut, VersionOut,
 )
+from emma_core.permissions import Feature
 from emma_core.services import audit
 from emma_core.services import optimize as opt
+from emma_core.services import publication as publication_svc
 from emma_core.services import roster as svc
 from emma_core.services import scheduling as scheduling_svc
 from emma_core.services import validation as validation_svc
@@ -161,9 +162,19 @@ def save_draft(version_id: str, ctx: AuthCtx = Depends(get_ctx)):
     return {"ok": True}
 
 
-@router.post("/rosters/{version_id}/publish")
-def publish(version_id: str, ctx: AuthCtx = Depends(get_ctx)):
-    _require_write_role(ctx)
+@router.post("/rosters/{version_id}/publish", response_model=PublishRosterOut)
+def publish(
+    version_id: str,
+    body: PublishRosterRequest,
+    ctx: AuthCtx = Depends(require_decide(Feature.ROSTER_PUBLISH)),
+):
+    """Final, server-authoritative roster publication.
+
+    The request contains only an OWNER's individual acknowledgement IDs and the
+    digest of the snapshot they reviewed. The server always recomputes the
+    deterministic check; hard, unknown, stale and incomplete soft states are
+    refused before the atomic publication RPC is called.
+    """
     if not (
         ctx.client.table("roster_versions").select("id")
         .eq("facility_id", ctx.facility_id)
@@ -182,31 +193,47 @@ def publish(version_id: str, ctx: AuthCtx = Depends(get_ctx)):
         )
     except ValueError as exc:
         raise api_error(404, "not_found", str(exc)) from exc
-    if not validation["passes"]:
-        raise api_error(
-            409, "not_publishable",
-            (
-                f"Roster has {validation['hard_violation_count']} hard "
-                "compliance violation(s). Validate the roster for details."
-            ),
+    try:
+        _, omitted = publication_svc.require_publishable_validation(
+            validation,
+            body.soft_omission_ids,
+            expected_input_digest=body.validation_input_digest,
         )
-    # A generated option retains its Phase 2 quality threshold, while the fresh
-    # deterministic run above is authoritative for every hard constraint.
+    except publication_svc.PublishGateError as exc:
+        raise api_error(
+            409, exc.code, str(exc),
+        ) from exc
+    # A solver score may be low solely because it includes agency/OT/fairness
+    # soft penalties. The current deterministic validation above decides every
+    # hard rule; retain a non-zero solver hard count as a separate hard quality
+    # refusal, but never convert a soft quality trade-off into an unacknowledged
+    # hard violation.
     score = opt.get_option_scores(ctx.client, version_id)
     if score is not None:
-        if score["constraint_score"] < PUBLISH_THRESHOLD:
+        score_hard_count = score.get("hard_violation_count")
+        if not isinstance(score_hard_count, int) or isinstance(score_hard_count, bool):
+            raise api_error(
+                409, "option_score_state_unknown",
+                "Generated option score evidence is incomplete; regenerate or review the roster.",
+            )
+        if score_hard_count != 0:
             raise api_error(
                 409, "not_publishable",
-                f"Option scores {score['constraint_score']}; minimum publishable "
-                f"score is {PUBLISH_THRESHOLD}.",
+                "Generated option has unresolved hard solver violations.",
             )
     svc.publish_version(service_client, facility_id=ctx.facility_id,
                         roster_version_id=version_id, created_by=ctx.profile_id)
-    # After the write, so we never log a publish that rolled back.
+    # After the atomic publication write, so this audit event cannot claim a
+    # transition that rolled back. The omission IDs are bound to the fresh
+    # deterministic evidence, not client-authored free text.
     _audit(ctx, "publish", "roster_versions", entity_id=version_id,
            after={"status": "published",
                   "hard_violation_count": validation["hard_violation_count"],
-                  "constraint_score": score["constraint_score"] if score else None})
+                  "constraint_score": score["constraint_score"] if score else None,
+                  "validation_run_id": validation.get("validation_run_id"),
+                  "input_digest": validation.get("input_digest"),
+                  "omitted_soft_violation_ids": [row["omission_id"] for row in omitted],
+                  "soft_violation_count": len(omitted)})
     # Only now that the version is operative (spec SA.4b, "push triggers: roster
     # changes"). Notifying before the publish could tell a ward to work a roster
     # that a failed publish left unpublished. Uses the service client because the
@@ -220,4 +247,10 @@ def publish(version_id: str, ctx: AuthCtx = Depends(get_ctx)):
         svc.notify_published(service_client, ctx.facility_id, version_id)
     except Exception:  # noqa: BLE001 - see above
         pass
-    return {"roster_version_id": version_id, "status": "published"}
+    return {
+        "roster_version_id": version_id,
+        "status": "published",
+        "validation_run_id": validation.get("validation_run_id"),
+        "input_digest": validation.get("input_digest"),
+        "omitted_soft_violation_ids": [row["omission_id"] for row in omitted],
+    }
