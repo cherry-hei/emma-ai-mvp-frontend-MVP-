@@ -1,269 +1,109 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { api } from '@/lib/api'
 import type { FacilityEventType, StaffLite } from '@/lib/apiTypes'
 
 const PINK = '#E8187A'
-
-// The picker reads GET /facility-events/types, so it can only offer a type the
-// API will accept. The list used to be hardcoded here, and three of its six
-// entries - 'lecture', 'visit', 'other' - were not event types at all, while
-// 'haircut' was an alias of 'hair_cutting'. A picker that can post a rejected
-// value is worse than no picker: the error arrives after the manager has filled
-// the form in.
 const ICONS: Record<string, string> = {
-  hair_cutting: '✂️', cgat: '🩺', pgt: '📋',
-  medication_board_checking: '💊', medication_record_checking: '📒',
-  podiatry: '🦶', monthly_weighing: '⚖️', visiting: '🏠', meeting_training: '👥',
+  hair_cutting: '✂️', cgat: '🩺', pgt: '📋', medication_board_checking: '💊',
+  medication_record_checking: '📒', podiatry: '🦶', monthly_weighing: '⚖️',
+  visiting: '🏠', meeting_training: '👥',
 }
-const DEFAULT_ICON = '📌'
-
-// Care ranks recognised by the backend (emma_core.constants.CARE_RANKS).
-const RANKS = ['RN', 'EN', 'HW', 'HCA', 'CW', 'PCW', 'AW']
 
 type StaffingRow = { id: string; rank: string; count: string }
 
 export interface CreateEventModalProps {
   isZH: boolean
   defaultDate: string
+  /** Dates currently loaded for this authenticated roster period. */
+  dates?: string[]
   staffList?: StaffLite[]
   onClose: () => void
   onCreated: (title: string) => void
 }
 
-export function CreateEventModal({ isZH, defaultDate, staffList = [], onClose, onCreated }: CreateEventModalProps) {
+/**
+ * Facility events are real server records. The current API persists event type,
+ * date/time, title/notes and rank staffing requirements. It deliberately does
+ * not pretend to persist per-person attendance: that requires an event-assignee
+ * contract and is shown as unavailable rather than silently dropped.
+ */
+export function CreateEventModal({ isZH, defaultDate, dates = [], staffList = [], onClose, onCreated }: CreateEventModalProps) {
   const [types, setTypes] = useState<FacilityEventType[]>([])
-  const EVENT_TYPES = types.map((t) => ({
-    value: t.code, label: isZH ? t.label_zh : t.label_en, icon: ICONS[t.code] ?? DEFAULT_ICON,
-  }))
-  const L = {
-    title: isZH ? '建立特殊事件' : 'Create Special Event',
-    subtitle: isZH ? 'AI 智能排更調整' : 'AI Intelligent Scheduling',
-    event_type: isZH ? '事件類型' : 'Event Type',
-    event_title: isZH ? '標題' : 'Title',
-    title_ph: isZH ? '例如：季度大掃除' : 'e.g. Quarterly deep clean',
-    remark: isZH ? '備註' : 'Remarks',
-    remark_ph: isZH ? '請輸入備註' : 'Enter remarks',
-    date: isZH ? '日期' : 'Date',
-    time_range: isZH ? '時間範圍' : 'Time Range',
-    to: isZH ? '至' : 'to',
-    pos_need_title: isZH ? '輸入不同職級員工所需數量' : 'Set Required Staff by Rank',
-    pos_need_sub: isZH ? '快速設定各職級所需人手' : 'Quickly configure headcount per rank',
-    add_pos: isZH ? '+ 新增職級需求' : '+ Add Rank Requirement',
-    qty_ph: isZH ? '所需數量' : 'Qty needed',
-    remove: isZH ? '移除' : 'Remove',
-    cancel: isZH ? '取消' : 'Cancel',
-    save: isZH ? '儲存更改' : 'Save Changes',
-    assign_staff: isZH ? '指定參加員工' : 'Assign Specific Staff',
-    assign_staff_sub: isZH ? '選擇必須參加此活動的員工' : 'Select staff who must attend this event',
-    search_staff: isZH ? '搜尋員工…' : 'Search staff…',
-    selected: isZH ? '已選' : 'Selected',
-  }
-
-  // No hardcoded default: the first type is whatever this facility publishes.
   const [eventType, setEventType] = useState('')
   const [title, setTitle] = useState('')
   const [remark, setRemark] = useState('')
   const [date, setDate] = useState(defaultDate)
   const [startTime, setStartTime] = useState('09:00')
   const [endTime, setEndTime] = useState('11:00')
+  const ranks = useMemo(() => [...new Set(staffList.map((staff) => staff.rank).filter(Boolean))].sort(), [staffList])
   const [needsEnabled, setNeedsEnabled] = useState(false)
-  const [needs, setNeeds] = useState<StaffingRow[]>([{ id: '1', rank: 'RN', count: '1' }])
+  const [needs, setNeeds] = useState<StaffingRow[]>([])
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
-  const [assignStaffEnabled, setAssignStaffEnabled] = useState(false)
-  const [assignedStaffIds, setAssignedStaffIds] = useState<string[]>([])
-  const [staffSearch, setStaffSearch] = useState('')
+  const eventTypes = useMemo(() => types.map((type) => ({ value: type.code, label: isZH ? type.label_zh : type.label_en, icon: ICONS[type.code] ?? '📌' })), [isZH, types])
+  const periodDates = useMemo(() => [...new Set(dates)].sort(), [dates])
+  const L = {
+    title: isZH ? '新增特別事項' : 'Create Special Event',
+    subtitle: isZH ? '事件人手需求會交由伺服器規則引擎驗證' : 'Event staffing requirements are validated by the server rules engine',
+    type: isZH ? '事件類型' : 'Event type', name: isZH ? '名稱' : 'Name', namePh: isZH ? '例如：感染控制培訓' : 'e.g. Infection-control training',
+    note: isZH ? '備註' : 'Notes', date: isZH ? '日期' : 'Date', start: isZH ? '開始' : 'Start', end: isZH ? '結束' : 'End',
+    requirements: isZH ? '硬性人手需求（按職級）' : 'Hard staffing requirements (by rank)',
+    requirementHelp: isZH ? '儲存至本機構事件記錄；發佈前由伺服器規則檢查決定結果。' : 'Stored on this facility event; the server rule check determines the result before publication.',
+    add: isZH ? '＋ 新增職級需求' : '+ Add rank requirement', remove: isZH ? '移除' : 'Remove', count: isZH ? '所需人數' : 'Headcount',
+    staff: isZH ? '指定員工' : 'Specific staff',
+    staffUnavailable: isZH ? '目前MVP事件API未有已指派員工／hard旗標的持久化合約。為避免假裝已儲存，指定員工選擇已停用；此事件的職級人手需求仍會儲存並由伺服器規則檢查。' : 'The MVP event API has no persisted event-assignee/hard-flag contract. Specific-staff selection is disabled rather than falsely claiming it saved; rank staffing requirements are still persisted and server-validated.',
+    noStaff: isZH ? '這個登入機構沒有可用員工職級。' : 'This signed-in organisation has no available staff ranks.',
+    cancel: isZH ? '取消' : 'Cancel', save: isZH ? '儲存特別事項' : 'Save special event',
+  }
 
   useEffect(() => {
     let cancelled = false
-    api.facilityEventTypes()
-      .then((rows) => {
-        if (cancelled) return
-        setTypes(rows)
-        setEventType((prev) => prev || rows[0]?.code || '')
-      })
-      .catch((e) => { if (!cancelled) setErr(e instanceof Error ? e.message : 'Could not load event types') })
+    api.facilityEventTypes().then((rows) => {
+      if (cancelled) return
+      setTypes(rows); setEventType((current) => current || rows[0]?.code || '')
+    }).catch((cause) => { if (!cancelled) setErr(cause instanceof Error ? cause.message : 'Could not load event types') })
     return () => { cancelled = true }
   }, [])
 
-  const addNeed = () => needs.length < 8 && setNeeds((prev) => [
-    ...prev, { id: `${prev.length + 1}-${prev.length}`, rank: 'CW', count: '1' },
-  ])
-  const updateNeed = (id: string, patch: Partial<StaffingRow>) =>
-    setNeeds((prev) => prev.map((r) => (r.id === id ? { ...r, ...patch } : r)))
-  const removeNeed = (id: string) => setNeeds((prev) => prev.filter((r) => r.id !== id))
+  useEffect(() => {
+    if (!periodDates.length) return
+    setDate((current) => periodDates.includes(current) ? current : (periodDates.includes(defaultDate) ? defaultDate : periodDates[0]))
+  }, [defaultDate, periodDates])
 
-  async function handleSave() {
+  useEffect(() => {
+    if (!needs.length && ranks.length) setNeeds([{ id: 'initial', rank: ranks[0], count: '1' }])
+  }, [needs.length, ranks])
+
+  function addNeed() { if (needs.length < 8) setNeeds((current) => [...current, { id: `${Date.now()}-${current.length}`, rank: ranks[0] || '', count: '1' }]) }
+  function updateNeed(id: string, patch: Partial<StaffingRow>) { setNeeds((current) => current.map((row) => row.id === id ? { ...row, ...patch } : row)) }
+  function removeNeed(id: string) { setNeeds((current) => current.filter((row) => row.id !== id)) }
+
+  async function save() {
+    if (!eventType || !date) return
+    const requirements = needsEnabled ? needs.filter((row) => row.rank && Number(row.count) > 0).map((row) => ({ rank: row.rank, count: Number(row.count), is_additive: true })) : undefined
+    if (needsEnabled && !requirements?.length) { setErr(isZH ? '請至少提供一項有效的人手需求。' : 'Provide at least one valid staffing requirement.'); return }
     setBusy(true); setErr('')
     try {
-      await api.createFacilityEvent({
-        event_type: eventType,
-        event_date: date,
-        start_at: startTime ? `${date}T${startTime}:00` : undefined,
-        end_at: endTime ? `${date}T${endTime}:00` : undefined,
-        title: title || undefined,
-        notes: remark || undefined,
-        staffing_requirements: needsEnabled
-          ? needs.filter((r) => r.rank && Number(r.count) > 0).map((r) => ({ rank: r.rank, count: Number(r.count) }))
-          : undefined,
-      })
-      onCreated(title || EVENT_TYPES.find((e) => e.value === eventType)?.label || eventType)
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : 'Create failed')
-    } finally {
-      setBusy(false)
-    }
+      await api.createFacilityEvent({ event_type: eventType, event_date: date, start_at: startTime ? `${date}T${startTime}:00` : undefined, end_at: endTime ? `${date}T${endTime}:00` : undefined, title: title.trim() || undefined, notes: remark.trim() || undefined, staffing_requirements: requirements })
+      onCreated(title.trim() || eventTypes.find((event) => event.value === eventType)?.label || eventType)
+    } catch (cause) { setErr(cause instanceof Error ? cause.message : 'Create failed') } finally { setBusy(false) }
   }
 
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-6" style={{ background: 'rgba(0,0,0,0.4)' }} onClick={onClose}>
-      <div className="bg-white w-full max-w-lg rounded-2xl shadow-2xl max-h-[90vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
-        <div className="px-6 pt-6 pb-3 border-b border-gray-100 flex items-center gap-3 flex-shrink-0">
-          <div className="w-11 h-11 rounded-xl flex items-center justify-center text-xl shrink-0" style={{ background: '#fce8f3' }}>📌</div>
-          <div className="min-w-0">
-            <div className="text-lg font-bold truncate">{L.title}</div>
-            <p className="text-xs font-semibold mt-0.5 truncate" style={{ color: PINK }}>{L.subtitle}</p>
-          </div>
-        </div>
-
-        <div className="px-6 py-4 overflow-y-auto space-y-4">
-          <div>
-            <label className="text-[9px] font-bold text-gray-500 uppercase tracking-wider block mb-2">{L.event_type}</label>
-            <div className="flex flex-wrap gap-2">
-              {EVENT_TYPES.map((item) => (
-                <button key={item.value} type="button" onClick={() => setEventType(item.value)}
-                  className="px-3 py-2 rounded-xl text-xs font-semibold border transition-all flex items-center gap-1.5"
-                  style={{
-                    background: eventType === item.value ? PINK : '#fff',
-                    color: eventType === item.value ? '#fff' : '#6b7280',
-                    borderColor: eventType === item.value ? PINK : '#e5e7eb',
-                  }}>
-                  <span>{item.icon}</span><span>{item.label}</span>
-                </button>
-              ))}
-            </div>
-          </div>
-
-          <div>
-            <label className="text-[9px] font-bold text-gray-500 uppercase tracking-wider">{L.event_title}</label>
-            <input type="text" value={title} onChange={(e) => setTitle(e.target.value)} placeholder={L.title_ph}
-              className="mt-1.5 w-full px-3.5 py-2.5 border border-gray-200 rounded-xl text-sm bg-gray-50 focus:outline-none focus:border-pink-400" />
-          </div>
-
-          <div>
-            <label className="text-[9px] font-bold text-gray-500 uppercase tracking-wider">{L.remark}</label>
-            <textarea value={remark} onChange={(e) => setRemark(e.target.value)} placeholder={L.remark_ph}
-              className="mt-1.5 w-full px-3.5 py-2.5 border border-gray-200 rounded-xl text-sm bg-gray-50 focus:outline-none focus:border-pink-400 min-h-[70px]" />
-          </div>
-
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            <div>
-              <label className="text-[9px] font-bold text-gray-500 uppercase tracking-wider">{L.date}</label>
-              <input type="date" value={date} onChange={(e) => setDate(e.target.value)}
-                className="mt-1.5 w-full px-3.5 py-2.5 border border-gray-200 rounded-xl text-sm bg-gray-50" />
-            </div>
-            <div>
-              <label className="text-[9px] font-bold text-gray-500 uppercase tracking-wider">{L.time_range}</label>
-              <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-2 mt-1.5">
-                <input type="time" value={startTime} onChange={(e) => setStartTime(e.target.value)}
-                  className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm bg-gray-50" />
-                <span className="text-xs text-gray-400">{L.to}</span>
-                <input type="time" value={endTime} onChange={(e) => setEndTime(e.target.value)}
-                  className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm bg-gray-50" />
-              </div>
-            </div>
-          </div>
-
-          <div className="flex items-center gap-3 p-3 rounded-xl" style={{ background: '#fce8f3' }}>
-            <div className="w-8 h-8 rounded-lg flex items-center justify-center text-white text-sm shrink-0" style={{ background: PINK }}>🧩</div>
-            <div className="flex-1 min-w-0">
-              <div className="text-sm font-semibold">{L.pos_need_title}</div>
-              <div className="text-[10px] text-gray-500 mt-0.5">{L.pos_need_sub}</div>
-            </div>
-            <button type="button" onClick={() => setNeedsEnabled(!needsEnabled)}
-              className="w-10 h-6 rounded-full transition-all relative shrink-0"
-              style={{ background: needsEnabled ? PINK : '#d1d5db' }}>
-              <span className="absolute top-1 w-4 h-4 rounded-full bg-white transition-all" style={{ left: needsEnabled ? '20px' : '4px' }} />
-            </button>
-          </div>
-
-          {needsEnabled && (
-            <div className="space-y-2">
-              {needs.map((row) => (
-                <div key={row.id} className="grid grid-cols-[1fr_110px_auto] gap-2 items-center">
-                  <select value={row.rank} onChange={(e) => updateNeed(row.id, { rank: e.target.value })}
-                    className="rounded-xl bg-gray-50 border border-gray-200 px-3 py-2 text-sm">
-                    {RANKS.map((r) => <option key={r} value={r}>{r}</option>)}
-                  </select>
-                  <input type="number" value={row.count} onChange={(e) => updateNeed(row.id, { count: e.target.value })}
-                    placeholder={L.qty_ph} className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm bg-gray-50" />
-                  <button type="button" onClick={() => removeNeed(row.id)} className="text-xs text-red-500 font-semibold">{L.remove}</button>
-                </div>
-              ))}
-              {needs.length < 8 && (
-                <button type="button" onClick={addNeed} className="text-xs font-semibold" style={{ color: PINK }}>{L.add_pos}</button>
-              )}
-            </div>
-          )}
-
-          {/* Assign specific staff */}
-          <div className="flex items-center gap-3 p-3 rounded-xl" style={{ background: '#e8f5e9' }}>
-            <div className="w-8 h-8 rounded-lg flex items-center justify-center text-white text-sm shrink-0" style={{ background: '#4caf50' }}>👤</div>
-            <div className="flex-1 min-w-0">
-              <div className="text-sm font-semibold">{L.assign_staff}</div>
-              <div className="text-[10px] text-gray-500 mt-0.5">{L.assign_staff_sub}</div>
-            </div>
-            <button type="button" onClick={() => setAssignStaffEnabled(!assignStaffEnabled)}
-              className="w-10 h-6 rounded-full transition-all relative shrink-0"
-              style={{ background: assignStaffEnabled ? '#4caf50' : '#d1d5db' }}>
-              <span className="absolute top-1 w-4 h-4 rounded-full bg-white transition-all" style={{ left: assignStaffEnabled ? '20px' : '4px' }} />
-            </button>
-          </div>
-
-          {assignStaffEnabled && staffList.length > 0 && (
-            <div className="space-y-2">
-              <input type="text" value={staffSearch} onChange={(e) => setStaffSearch(e.target.value)}
-                placeholder={L.search_staff}
-                className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm bg-gray-50" />
-              <div className="max-h-40 overflow-y-auto space-y-1 border border-gray-200 rounded-xl p-2">
-                {staffList
-                  .filter((s) => {
-                    if (!staffSearch) return true
-                    const q = staffSearch.toLowerCase()
-                    return (s.name_en || s.name || '').toLowerCase().includes(q) || s.rank.toLowerCase().includes(q)
-                  })
-                  .map((s) => (
-                  <label key={s.id} className="flex items-center gap-2 px-2 py-1.5 rounded-lg hover:bg-gray-50 cursor-pointer">
-                    <input type="checkbox" checked={assignedStaffIds.includes(s.id)}
-                      onChange={(e) => {
-                        if (e.target.checked) setAssignedStaffIds((prev) => [...prev, s.id])
-                        else setAssignedStaffIds((prev) => prev.filter((id) => id !== s.id))
-                      }}
-                      className="rounded border-gray-300" />
-                    <span className="text-xs font-medium">{s.name_en || s.name}</span>
-                    <span className="text-[10px] text-gray-400">({s.rank})</span>
-                  </label>
-                ))}
-              </div>
-              {assignedStaffIds.length > 0 && (
-                <div className="text-[10px] text-gray-500">{L.selected}: {assignedStaffIds.length}</div>
-              )}
-            </div>
-          )}
-
-          {err && <div className="text-xs text-rose-600">{err}</div>}
-        </div>
-
-        <div className="px-6 py-4 border-t border-gray-100 flex gap-2 justify-end flex-shrink-0">
-          <button onClick={onClose} className="px-3 py-1.5 text-xs rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50">{L.cancel}</button>
-          <button onClick={handleSave} disabled={busy || !eventType}
-            className="px-4 py-1.5 text-xs rounded-lg text-white font-semibold disabled:opacity-60" style={{ background: PINK }}>
-            {busy ? '…' : L.save}
-          </button>
-        </div>
+  return <div className="fixed inset-0 z-50 flex items-end justify-center bg-slate-950/35 p-0 backdrop-blur-[2px] sm:items-center sm:p-5" role="dialog" aria-modal="true" aria-label={L.title}>
+    <button type="button" className="absolute inset-0 cursor-default" onClick={onClose} aria-label={L.cancel} />
+    <section className="relative z-10 flex max-h-[94dvh] w-full max-w-3xl flex-col overflow-hidden rounded-t-[28px] bg-white shadow-2xl sm:max-h-[90vh] sm:rounded-3xl">
+      <header className="flex items-start gap-3 border-b border-slate-100 px-4 py-4 sm:px-6"><div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-pink-50 text-xl">📌</div><div className="min-w-0 flex-1"><h2 className="text-lg font-black text-slate-950">{L.title}</h2><p className="mt-1 text-xs font-bold text-pink-600">{L.subtitle}</p></div><button type="button" onClick={onClose} className="rounded-full p-2 text-slate-500 hover:bg-slate-100" aria-label={L.cancel}>×</button></header>
+      <div className="min-h-0 flex-1 space-y-5 overflow-y-auto px-4 py-4 sm:px-6">
+        <section><div className="text-[10px] font-black uppercase tracking-wider text-slate-500">{L.type}</div><div className="mt-2 flex flex-wrap gap-2">{eventTypes.map((event) => <button key={event.value} type="button" onClick={() => setEventType(event.value)} className={`rounded-xl border px-3 py-2 text-xs font-bold ${eventType === event.value ? 'border-pink-600 bg-pink-600 text-white' : 'border-slate-200 bg-white text-slate-600'}`}><span className="mr-1">{event.icon}</span>{event.label}</button>)}</div></section>
+        <div className="grid gap-3 sm:grid-cols-2"><label className="text-xs font-bold text-slate-600">{L.name}<input value={title} onChange={(event) => setTitle(event.target.value)} placeholder={L.namePh} className="mt-1.5 w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-pink-400" /></label><label className="text-xs font-bold text-slate-600">{L.date}{periodDates.length ? <select value={date} onChange={(event) => setDate(event.target.value)} className="mt-1.5 w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-pink-400">{periodDates.map((value) => <option key={value} value={value}>{value}</option>)}</select> : <input type="date" value={date} onChange={(event) => setDate(event.target.value)} className="mt-1.5 w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm" />}</label><label className="text-xs font-bold text-slate-600">{L.start}<input type="time" value={startTime} onChange={(event) => setStartTime(event.target.value)} className="mt-1.5 w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm" /></label><label className="text-xs font-bold text-slate-600">{L.end}<input type="time" value={endTime} onChange={(event) => setEndTime(event.target.value)} className="mt-1.5 w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm" /></label></div>
+        <label className="block text-xs font-bold text-slate-600">{L.note}<textarea value={remark} onChange={(event) => setRemark(event.target.value)} className="mt-1.5 min-h-20 w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-pink-400" /></label>
+        <section className="rounded-2xl border border-pink-100 bg-pink-50/50 p-4"><div className="flex items-start justify-between gap-3"><div><h3 className="text-sm font-black text-slate-900">{L.requirements}</h3><p className="mt-1 text-[10px] leading-4 text-slate-600">{L.requirementHelp}</p></div><button type="button" onClick={() => setNeedsEnabled((current) => !current)} className={`h-7 w-12 shrink-0 rounded-full p-1 ${needsEnabled ? 'bg-pink-600' : 'bg-slate-300'}`} aria-pressed={needsEnabled}><span className={`block h-5 w-5 rounded-full bg-white transition-transform ${needsEnabled ? 'translate-x-5' : ''}`} /></button></div>{needsEnabled && <div className="mt-4 space-y-2">{ranks.length ? needs.map((row) => <div key={row.id} className="grid gap-2 sm:grid-cols-[1fr_120px_auto]"><select value={row.rank} onChange={(event) => updateNeed(row.id, { rank: event.target.value })} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm">{ranks.map((rank) => <option key={rank} value={rank}>{rank}</option>)}</select><input type="number" min="1" value={row.count} onChange={(event) => updateNeed(row.id, { count: event.target.value })} placeholder={L.count} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm" /><button type="button" onClick={() => removeNeed(row.id)} className="text-xs font-bold text-red-600">{L.remove}</button></div>) : <p className="text-xs text-amber-800">{L.noStaff}</p>}{ranks.length > 0 && needs.length < 8 && <button type="button" onClick={addNeed} className="text-xs font-bold text-pink-700">{L.add}</button>}</div>}</section>
+        <section className="rounded-2xl border border-amber-200 bg-amber-50 p-4"><h3 className="text-sm font-black text-amber-900">{L.staff}</h3><p className="mt-1 text-[11px] leading-5 text-amber-900">{L.staffUnavailable}</p><div className="mt-3 flex flex-wrap gap-1.5">{staffList.slice(0, 12).map((staff) => <span key={staff.id} className="rounded-full border border-amber-200 bg-white px-2 py-1 text-[10px] text-amber-800 opacity-60">{staff.name_en || staff.name} · {staff.rank}</span>)}</div></section>
+        {err && <p className="rounded-xl border border-rose-200 bg-rose-50 p-3 text-xs text-rose-700">{err}</p>}
       </div>
-    </div>
-  )
+      <footer className="flex items-center justify-between gap-3 border-t border-slate-100 bg-white px-4 py-4 sm:px-6"><button type="button" onClick={onClose} disabled={busy} className="rounded-xl border border-slate-200 px-4 py-3 text-sm font-bold text-slate-700 hover:bg-slate-50">{L.cancel}</button><button type="button" onClick={() => void save()} disabled={busy || !eventType || !date} className="rounded-xl bg-pink-600 px-5 py-3 text-sm font-black text-white hover:bg-pink-700 disabled:opacity-50">{busy ? '…' : L.save}</button></footer>
+    </section>
+  </div>
 }

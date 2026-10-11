@@ -72,7 +72,7 @@
   --chart-3: oklch(0.592 0.249 0.584);
   --chart-4: oklch(0.525 0.223 3.958);
   --chart-5: oklch(0.459 0.187 3.815);
-  --radius: 0.45rem;
+  --radius: 0.65rem;
   --sidebar: oklch(0.985 0 0);
   --sidebar-foreground: oklch(0.141 0.005 285.823);
   --sidebar-primary: oklch(0.592 0.249 0.584);
@@ -123,8 +123,14 @@
   }
   body {
     @apply bg-background text-foreground;
+    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+    -webkit-font-smoothing: antialiased;
   }
   html {
     @apply font-sans;
+    background: #f8fafc;
+  }
+  button, input, select, textarea {
+    font: inherit;
   }
 }

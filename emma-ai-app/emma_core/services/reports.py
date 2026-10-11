@@ -83,11 +83,19 @@ def get_report(client, facility_id: str, report_id: str) -> dict | None:
 
 
 # ── roster loading shared by the roster-derived reports ──────────────────────
-def _roster_context(client, facility_id: str, period_id: str | None):
+def _roster_context(client, facility_id: str, period_id: str | None, version_id: str | None = None):
     period = resolve_period(client, facility_id, period_id)
-    if not period:
+    if not period or (period_id and str(period.get("id")) != str(period_id)) or str(period.get("facility_id")) != str(facility_id):
         raise ValueError("no roster period to report on")
-    version = operative_version(client, facility_id, period["id"])
+    if version_id:
+        rows = (client.table('roster_versions').select('*')
+                .eq('facility_id', facility_id).eq('period_id', period['id'])
+                .eq('id', version_id).execute().data or [])
+        if not rows:
+            raise ValueError('roster version not found in this facility and period')
+        version = rows[0]
+    else:
+        version = operative_version(client, facility_id, period["id"])
     # The three reads every roster-derived report shares; each generator then pivots
     # them differently in Python.
     #
@@ -124,7 +132,7 @@ def _staff_label(st: dict) -> str:
 # ── generators ───────────────────────────────────────────────────────────────
 def _roster_hours(client, facility_id: str, params: dict) -> dict:
     period, version, shifts, assigns, staff = _roster_context(
-        client, facility_id, params.get("period_id"))
+        client, facility_id, params.get("period_id"), params.get("version_id"))
     cells = _cells_by_staff(shifts, assigns)
     rows = []
     for sid, st in staff.items():
@@ -154,7 +162,7 @@ def _roster_hours(client, facility_id: str, params: dict) -> dict:
 
 def _ph_dayoff(client, facility_id: str, params: dict) -> dict:
     period, version, shifts, assigns, staff = _roster_context(
-        client, facility_id, params.get("period_id"))
+        client, facility_id, params.get("period_id"), params.get("version_id"))
     # SQL: select date, day_type from calendar_days
     #      where (facility_id = :facility_id or facility_id is null)
     #        and date >= :period_start and date <= :period_end
@@ -194,7 +202,7 @@ def _ph_dayoff(client, facility_id: str, params: dict) -> dict:
 
 def _do_count(client, facility_id: str, params: dict) -> dict:
     period, version, shifts, assigns, staff = _roster_context(
-        client, facility_id, params.get("period_id"))
+        client, facility_id, params.get("period_id"), params.get("version_id"))
     cells = _cells_by_staff(shifts, assigns)
     rows = []
     for sid, st in staff.items():
@@ -230,7 +238,7 @@ def _do_count(client, facility_id: str, params: dict) -> dict:
 
 def _ap_shifts(client, facility_id: str, params: dict) -> dict:
     period, version, shifts, assigns, staff = _roster_context(
-        client, facility_id, params.get("period_id"))
+        client, facility_id, params.get("period_id"), params.get("version_id"))
     cells = _cells_by_staff(shifts, assigns)
     rows = []
     for sid, st in staff.items():
@@ -260,7 +268,7 @@ def _ap_shifts(client, facility_id: str, params: dict) -> dict:
 
 def _night_gender(client, facility_id: str, params: dict) -> dict:
     period, version, shifts, assigns, staff = _roster_context(
-        client, facility_id, params.get("period_id"))
+        client, facility_id, params.get("period_id"), params.get("version_id"))
     buckets: dict[str, dict] = {}
     for a in assigns:
         sh = shifts[a["shift_id"]]
@@ -296,7 +304,7 @@ def _night_gender(client, facility_id: str, params: dict) -> dict:
 def _staff_register(client, facility_id: str, params: dict) -> dict:
     """SWD staff register (Annex 3.2 shape): who is employed, at what rank, with
     which certificates and medication-audit status."""
-    period, version, *_ = _roster_context(client, facility_id, params.get("period_id"))
+    period, version, *_ = _roster_context(client, facility_id, params.get("period_id"), params.get("version_id"))
     # SQL: select s.id, s.name, s.name_en, s.rank, s.employment_type, s.status,
     #             s.gender, s.is_audited_for_medication, s.is_mentor,
     #             jsonb_build_object('name', u.name) as unit
@@ -341,7 +349,7 @@ def _staff_register(client, facility_id: str, params: dict) -> dict:
 
 def _staffing_ratio(client, facility_id: str, params: dict) -> dict:
     """Both statutory report methods (spec 3.7): per-shift and minute-level window."""
-    period, version, *_ = _roster_context(client, facility_id, params.get("period_id"))
+    period, version, *_ = _roster_context(client, facility_id, params.get("period_id"), params.get("version_id"))
     start = as_date(params.get("date_from") or period["period_start"])
     end = as_date(params.get("date_to") or period["period_end"])
     version_id = version["id"] if version else None
@@ -379,7 +387,7 @@ def _compliance_summary(client, facility_id: str, params: dict) -> dict:
     """SWD-style summary: ratio result, open violations, certificate warnings."""
     from . import kpi as kpi_svc
 
-    period, version, *_ = _roster_context(client, facility_id, params.get("period_id"))
+    period, version, *_ = _roster_context(client, facility_id, params.get("period_id"), params.get("version_id"))
     ratio = kpi_svc.staffing_ratio_compliance(client, facility_id, period["id"])
     conflicts = kpi_svc.conflict_rate(client, facility_id, period["id"])
     monitors = threshold_monitors(client, facility_id)
@@ -419,7 +427,7 @@ def _monthly_staffing_compliance(client, facility_id: str, params: dict) -> dict
     from . import kpi as kpi_svc
 
     base = _compliance_summary(client, facility_id, params)
-    period, *_ = _roster_context(client, facility_id, params.get("period_id"))
+    period, *_ = _roster_context(client, facility_id, params.get("period_id"), params.get("version_id"))
     external = kpi_svc.external_workforce(client, facility_id, period["id"])
     fairness = kpi_svc.shift_fairness(client, facility_id, period["id"])
 
@@ -513,7 +521,7 @@ def _roster_export(client, facility_id: str, params: dict) -> dict:
     length.
     """
     period, version, shifts, assigns, staff = _roster_context(
-        client, facility_id, params.get("period_id"))
+        client, facility_id, params.get("period_id"), params.get("version_id"))
     units = {}
     if shifts:
         # SQL: select id, name from facility_units where facility_id = :facility_id
@@ -656,6 +664,8 @@ def generate(client, facility_id: str, report_type: str, *, params: dict | None 
         raise ValueError(f"unknown report_type {report_type!r} "
                          f"(expected one of {', '.join(sorted(GENERATORS))})")
     params = params or {}
+    if params.get('version_id') and report_type in {'compliance_summary', 'monthly_staffing_compliance'}:
+        raise ValueError('This aggregate report does not support a selected roster version; use the staffing ratio report.')
     result = gen(client, facility_id, params)
     title = TITLES.get(report_type, report_type)
     meta = result["meta"]

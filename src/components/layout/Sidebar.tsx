@@ -1,138 +1,85 @@
 'use client'
+
 import { usePathname, useRouter } from 'next/navigation'
 import { useLang } from '@/components/layout/LanguageContext'
 import { useAuth, roleLabel } from '@/components/layout/AuthContext'
-import { ROUTES, ROUTE_FEATURE, canOpenRoute, isActiveRoute } from '@/components/layout/navRoutes'
+import {
+  ROUTE_FEATURE, SIDEBAR_NAVIGATION, canOpenRoute, isActiveRoute,
+} from '@/components/layout/navRoutes'
 
-const PINK       = '#E8187A'
-const PINK_HOVER = '#c9156a'
+const PINK = '#E8187A'
 
-const NAV = [
-  { key: 'nav_dashboard',   icon: '🏠',  path: ROUTES.dashboard  },
-  { key: 'nav_roster',      icon: '📅',  path: ROUTES.roster     },
-  { key: 'nav_scheduling',  icon: '🧩',  path: ROUTES.scheduling },
-  { key: 'nav_compliance',  icon: '✅',  path: ROUTES.compliance },
-  { key: 'nav_approval',    icon: '👥✓', path: ROUTES.approval   },
-  { key: 'nav_personnel',   icon: '👤',  path: ROUTES.staff      },
-  // HIDDEN for MVP — Phase 5-8
-  // { key: 'nav_roi',         icon: '📈',  path: ROUTES.roi        },
-  { key: 'nav_reports',     icon: '📊',  path: ROUTES.reports    },
-  { key: 'nav_alert',       icon: '🔔',  path: ROUTES.alert, badge: '3' },
-  { key: 'nav_messages',   icon: '💬',  path: ROUTES.messages   },
-  { key: 'nav_shiftcodes', icon: '📖',  path: '/shift-codes'    },
-  { key: 'nav_settings',    icon: '⚙️',  path: ROUTES.settings   },
-]
+const FALLBACK: Record<string, { zh: string; en: string }> = {
+  nav_dashboard:  { zh: '儀表板', en: 'Dashboard' },
+  nav_roster:     { zh: '更表', en: 'Roster' },
+  nav_compliance: { zh: '合規', en: 'Compliance' },
+  nav_approval:   { zh: '審批', en: 'Approval' },
+  nav_personnel:  { zh: '員工檔案', en: 'Staff Portfolio' },
+  nav_reports:    { zh: '報告', en: 'Reports' },
+  nav_alert:      { zh: '警報中心', en: 'Alert Centre' },
+  nav_messages:   { zh: '訊息中心', en: 'Messages' },
+  nav_ai:         { zh: 'Emma AI', en: 'Emma AI' },
+  nav_settings:   { zh: '院舍設定', en: 'Facility Settings' },
+}
 
 export function Sidebar({ onNavigate }: { onNavigate?: () => void } = {}) {
   const pathname = usePathname()
-  const router   = useRouter()
-  const { t, lang }    = useLang()
-  const { user }       = useAuth()
+  const router = useRouter()
+  const { t, lang } = useLang()
+  const { user } = useAuth()
+  const isZH = lang === 'zh'
 
-  // Menu filtered by the RBAC matrix (spec 1.1). Before this every role was shown
-  // all eight items, so a care worker saw the superintendent's sidebar including
-  // ROI and could open /roi with the home's financials.
-  const nav = NAV.filter(({ path }) => canOpenRoute(user?.role, ROUTE_FEATURE[path]))
-
-  const FALLBACK: Record<string, { zh: string; en: string }> = {
-    nav_dashboard:  { zh: '主頁',       en: 'Dashboard'     },
-    nav_roster:     { zh: '更表',       en: 'Roster'        },
-    nav_scheduling: { zh: '排班規則設定', en: 'Scheduling Rules'},
-    nav_compliance: { zh: '合規',       en: 'Compliance'    },
-    nav_approval:   { zh: '審批',       en: 'Approval'      },
-    nav_personnel:  { zh: '員工檔案',   en: 'Staff Portfolio'},
-    nav_roi:        { zh: '投資回報',   en: 'ROI'           },
-    nav_reports:    { zh: '報告',       en: 'Reports'       },
-    nav_alert:      { zh: '警報中心',   en: 'Alert Centre'  },
-    nav_messages:   { zh: '訊息中心',   en: 'Messages'      },
-    nav_shiftcodes: { zh: '更期代號',   en: 'Shift Codes'   },
-    nav_settings:   { zh: '設定',       en: 'Settings'      },
-    urgent_alert:   { zh: '🚨 緊急警報', en: '🚨 Urgent Alert' },
-    staff_shortage: { zh: 'P更人手不足 - F3', en: 'P-shift understaffed - F3' },
-    new_request:    { zh: '+ 新增請求', en: '+ New Request'  },
-  }
-
+  const nav = SIDEBAR_NAVIGATION.filter(({ path }) => canOpenRoute(user?.role, ROUTE_FEATURE[path]))
   const label = (key: string) => {
-    const fromContext = t(key)
-    if (fromContext && fromContext !== key) return fromContext
-    return FALLBACK[key]?.[lang] ?? key
+    const translated = t(key)
+    return translated !== key ? translated : (FALLBACK[key]?.[lang] ?? key)
   }
 
   return (
-    <aside
-      className="w-48 flex flex-col flex-shrink-0 border-r"
-      style={{ background: '#ffffff', borderColor: '#e5e7eb' }}
-    >
-      {/* Logo */}
-      <div className="p-4 border-b" style={{ borderColor: '#f3f4f6' }}>
-        <div className="text-xl font-bold" style={{ color: PINK, letterSpacing: '-0.5px' }}>
-          Emma AI
+    <aside className="flex h-full w-56 max-w-[86vw] flex-col border-r bg-white" style={{ borderColor: '#e8edf3' }}>
+      <div className="border-b px-4 py-4" style={{ borderColor: '#f1f3f6' }}>
+        {/* Keep the established Emma mark; this is not replaced by a new logo. */}
+        <div className="text-xl font-bold tracking-tight" style={{ color: PINK }}>Emma AI</div>
+        <div className="mt-0.5 text-[8px] tracking-[0.26em] text-slate-400">MEDICAL INTELLIGENCE</div>
+      </div>
+
+      <div className="mx-3 mt-3 rounded-xl border bg-slate-50 px-3 py-2.5" style={{ borderColor: '#e8edf3' }}>
+        <div className="text-[9px] font-semibold uppercase tracking-[0.12em] text-slate-400">
+          {roleLabel(user?.role, isZH) || (isZH ? '院舍帳戶' : 'Facility account')}
         </div>
-        <div className="text-[8px] tracking-[2.5px] mt-0.5 text-gray-400">
-          MEDICAL INTELLIGENCE
+        <div className="mt-1 truncate text-xs font-semibold text-slate-700">
+          {user?.facilityName || (isZH ? '已登入院舍' : 'Signed-in facility')}
         </div>
       </div>
 
-      {/* Site selector - reflects the signed-in account's facility + role */}
-      <div
-        className="mx-2 mt-2 p-2.5 rounded-lg border"
-        style={{ background: '#f9fafb', borderColor: '#e5e7eb' }}
-      >
-        <div className="text-[9px] tracking-wider text-gray-400">
-          {roleLabel(user?.role, lang === 'zh') || (lang === 'zh' ? '院舍' : 'Facility')}
-        </div>
-        <div className="text-[11px] font-medium mt-0.5 text-gray-700 truncate">
-          {user?.facilityName ?? (lang === 'zh' ? '院舍管理' : 'Care Home Admin')}
-        </div>
-      </div>
-
-      {/* Nav */}
-      <nav className="flex-1 px-2 py-2 space-y-0.5">
-        {nav.map(({ key, icon, path, badge }) => {
+      <nav className="min-h-0 flex-1 space-y-1 overflow-y-auto px-2.5 py-3" aria-label={isZH ? '主要導覽' : 'Primary navigation'}>
+        {nav.map(({ key, icon, path }) => {
           const active = isActiveRoute(pathname, path)
           return (
             <button
               key={path}
+              type="button"
               onClick={() => { router.push(path); onNavigate?.() }}
-              className="w-full flex items-center gap-2 px-2.5 py-2 rounded-lg text-xs transition-all border-l-2 text-left"
+              className="flex w-full items-center gap-2.5 rounded-xl border border-transparent px-3 py-2.5 text-left text-xs transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-300"
               style={{
-                color:           active ? PINK : '#374151',
-                background:      active ? '#fff0f5' : 'transparent',
-                borderLeftColor: active ? PINK : 'transparent',
-                fontWeight:      active ? 700 : 400,
+                color: active ? PINK : '#475569',
+                background: active ? '#fff0f6' : 'transparent',
+                borderColor: active ? '#fde0ed' : 'transparent',
+                fontWeight: active ? 700 : 500,
               }}
-              onMouseEnter={e => { if (!active) e.currentTarget.style.background = '#f9fafb' }}
-              onMouseLeave={e => { if (!active) e.currentTarget.style.background = 'transparent' }}
+              onMouseEnter={(event) => { if (!active) event.currentTarget.style.background = '#f8fafc' }}
+              onMouseLeave={(event) => { if (!active) event.currentTarget.style.background = 'transparent' }}
             >
-              <span className="text-sm opacity-70">{icon}</span>
-              <span className="flex-1">{label(key)}</span>
-              {badge && (
-                <span
-                  className="text-[9px] px-1.5 rounded-full text-white"
-                  style={{ background: PINK }}
-                >
-                  {badge}
-                </span>
-              )}
+              <span className="w-4 shrink-0 text-center text-sm leading-none opacity-80" aria-hidden>{icon}</span>
+              <span className="min-w-0 flex-1 truncate">{label(key)}</span>
             </button>
           )
         })}
       </nav>
 
-      {/* Alert banner */}
-      <div
-        className="mx-2 mb-2 p-2.5 rounded-lg border hidden"
-        style={{ background: '#fff5f7', borderColor: '#fcd5dc' }}
-      >
-        <div className="text-xs font-semibold" style={{ color: PINK }}>
-          {label('urgent_alert')}
-        </div>
-        <div className="text-[10px] mt-0.5" style={{ color: PINK_HOVER }}>
-          {label('staff_shortage')}
-        </div>
+      <div className="border-t px-4 py-3 text-[10px] leading-relaxed text-slate-400" style={{ borderColor: '#f1f3f6' }}>
+        {isZH ? '管理工具僅顯示帳戶獲授權的功能。' : 'Only functions authorised for this account are shown.'}
       </div>
-
-      {/* New Request button - 已移除獨立按鈕，點 Alert 直接跳頁 */}
     </aside>
   )
 }

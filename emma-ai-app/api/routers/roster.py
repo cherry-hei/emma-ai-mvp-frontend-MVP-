@@ -18,6 +18,9 @@ from emma_core.services import publication as publication_svc
 from emma_core.services import roster as svc
 from emma_core.services import scheduling as scheduling_svc
 from emma_core.services import validation as validation_svc
+from emma_core.services import roster_history as history_svc
+from emma_core.permissions import can_read
+from api.deps import require_read, require_write
 
 router = APIRouter(tags=["roster"])
 WRITE_ROLES = {"superintendent", "admin", "scheduler"}
@@ -51,7 +54,7 @@ def list_periods(ctx: AuthCtx = Depends(get_ctx)):
 
 
 @router.post("/roster-periods", status_code=201)
-def create_period(body: PeriodCreateRequest, ctx: AuthCtx = Depends(get_ctx)):
+def create_period(body: PeriodCreateRequest, ctx: AuthCtx = Depends(require_write(Feature.ROSTER_AI_DRAFT))):
     period, version = svc.create_period(
         ctx.client, facility_id=ctx.facility_id,
         period_start=body.period_start, period_end=body.period_end,
@@ -74,6 +77,31 @@ def list_versions(period_id: str | None = Query(default=None),
 
 
 # ── grid read ───────────────────────────────────────────────────────────────
+@router.get('/roster-history')
+def roster_history(period_id: str = Query(...), version_id: str | None = Query(default=None),
+                   ctx: AuthCtx = Depends(require_read(Feature.ROSTER_VIEW))):
+    try:
+        return history_svc.read_history(ctx.client, ctx.facility_id, period_id, version_id,
+            include_audit=can_read(ctx.profile.role, Feature.AUDIT_LOG))
+    except ValueError as exc:
+        raise api_error(404, 'not_found', str(exc)) from exc
+
+
+@router.get('/roster-history/download.csv')
+def download_roster_audit(period_id: str = Query(...), version_id: str | None = Query(default=None),
+                          ctx: AuthCtx = Depends(require_read(Feature.AUDIT_LOG))):
+    try:
+        history = history_svc.read_history(ctx.client, ctx.facility_id, period_id, version_id,
+                                          include_audit=True, limit=10000)
+        content = history_svc.audit_csv(history)
+    except ValueError as exc:
+        raise api_error(409 if 'limit' in str(exc) else 404, 'audit_unavailable', str(exc)) from exc
+    return Response(content, media_type='text/csv; charset=utf-8', headers={
+        'Content-Disposition': 'attachment; filename="roster-audit.csv"',
+        'Cache-Control': 'private, no-store',
+    })
+
+
 @router.get("/rosters/{period_id}", response_model=RosterGrid)
 def get_roster(period_id: str,
                version_id: str | None = Query(default=None),
@@ -103,7 +131,25 @@ def _cell_ref(body: CellWriteRequest) -> dict:
             "date": body.date, "shift_type": body.shift_type, "tasks": body.tasks}
 
 
+def _authorize_draft(ctx: AuthCtx, version_id: str, *, on_date: Date | None = None):
+    require_write(Feature.ROSTER_AI_DRAFT)(ctx)
+    rows = (ctx.client.table('roster_versions').select('*')
+            .eq('facility_id', ctx.facility_id).eq('id', version_id).execute().data or [])
+    if not rows:
+        raise api_error(404, 'not_found', 'roster version not found')
+    version = rows[0]
+    if version.get('status') != 'draft':
+        raise api_error(409, 'roster_locked', 'Only a draft roster may be edited.')
+    if on_date is not None:
+        periods = (ctx.client.table('roster_periods').select('*')
+                   .eq('facility_id', ctx.facility_id).eq('id', version.get('period_id')).execute().data or [])
+        if not periods or not (str(periods[0]['period_start'])[:10] <= on_date.isoformat() <= str(periods[0]['period_end'])[:10]):
+            raise api_error(422, 'date_outside_period', 'The date is outside this roster period.')
+    return version
+
+
 def _upsert_cell(body: CellWriteRequest, ctx: AuthCtx, *, action: str):
+    _authorize_draft(ctx, body.roster_version_id, on_date=body.date)
     defs = {d.shift_type: d for d in svc.get_shift_defs(ctx.client, ctx.facility_id)}
     sd = defs.get(body.shift_type)
     if not sd:
@@ -144,6 +190,7 @@ def edit_shift(body: CellWriteRequest, ctx: AuthCtx = Depends(get_ctx)):
 @router.delete("/shifts", status_code=204)
 def delete_shift(roster_version_id: str = Query(...), staff_id: str = Query(...),
                  date: Date = Query(...), ctx: AuthCtx = Depends(get_ctx)):
+    _authorize_draft(ctx, roster_version_id, on_date=date)
     svc.clear_cell(ctx.client, facility_id=ctx.facility_id,
                    roster_version_id=roster_version_id, staff_id=staff_id,
                    date=date, changed_by=ctx.profile_id)
@@ -157,6 +204,7 @@ def delete_shift(roster_version_id: str = Query(...), staff_id: str = Query(...)
 # ── publish workflow ────────────────────────────────────────────────────────
 @router.post("/rosters/{version_id}/save-draft")
 def save_draft(version_id: str, ctx: AuthCtx = Depends(get_ctx)):
+    _authorize_draft(ctx, version_id)
     svc.save_draft(ctx.client, facility_id=ctx.facility_id,
                    roster_version_id=version_id, created_by=ctx.profile_id)
     return {"ok": True}

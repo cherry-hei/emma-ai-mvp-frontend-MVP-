@@ -88,6 +88,7 @@ class StaffLite(BaseModel):
 
 
 class RosterCell(BaseModel):
+    paid_minutes: int | None = None
     date: Date
     shift_type: str | None = None        # None = empty cell
     is_working: bool = False
@@ -325,6 +326,7 @@ class TaskDefOut(BaseModel):
     shift_type: str | None = None
     required_rank: str | None = None
     requires_audit: bool = False
+    needs_location: bool = False
     unit_id: str | None = None
     description: str | None = None
     required_qualification_json: dict | list | str | None = None
@@ -875,6 +877,7 @@ class RoiSettingsPatch(BaseModel):
 
 
 class ReportGenerateRequest(BaseModel):
+    version_id: str | None = None
     report_type: str
     period_id: str | None = None
     date_from: Date | None = None
@@ -882,6 +885,7 @@ class ReportGenerateRequest(BaseModel):
 
 
 class ReportRequest(BaseModel):
+    version_id: str | None = None
     """Body of the named report endpoints, which fix the report_type themselves."""
 
     period_id: str | None = None

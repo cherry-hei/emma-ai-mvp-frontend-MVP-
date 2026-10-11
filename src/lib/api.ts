@@ -14,7 +14,7 @@ import type {
   EmergencyAiSuggestion, GeneratedReport, ImportJob, Incident,
   IncidentStats, JobView, KpiOverview, LeaveCategory, LeaveGroup, LeaveRequest, LeaveStats,
   MyAttendance, MyProfile, MyRoster, MySummary, MyTask, OptimizeResponse, PeriodOut,
-  PublishRosterOut,
+  PublishRosterOut, RosterHistory,
   FloorRule, Profile, RatioResult, RegulatoryDoc, ReplacementCandidate, ReplacementOffer, ReportRow,
   RuleDefinition, RuleDefinitionCreate,
   ReportSchedule, ReportType, ResidentCountOut, RoiSettings, RoiSummary, RosterGrid,
@@ -40,6 +40,13 @@ export interface StoredSession {
 }
 
 let cachedToken: string | null = null
+let credentialsGeneration = 0
+
+interface CredentialSnapshot {
+  generation: number
+  token: string | null
+  refresh: string | null
+}
 
 function readToken(): string | null {
   if (cachedToken) return cachedToken
@@ -78,6 +85,27 @@ function writeSession(s: SessionOut | null): void {
   }
 }
 
+/** Update the three persisted credentials as one new identity generation. */
+function storeSession(session: SessionOut | null): void {
+  credentialsGeneration += 1
+  writeToken(session?.access_token ?? null)
+  writeSession(session)
+  writeRefresh(session?.refresh_token ?? null)
+}
+
+function credentialsSnapshot(): CredentialSnapshot {
+  return {
+    generation: credentialsGeneration,
+    token: readToken(),
+    refresh: readRefresh(),
+  }
+}
+
+function isCurrentCredentials(snapshot: CredentialSnapshot): boolean {
+  return credentialsGeneration === snapshot.generation &&
+    readToken() === snapshot.token && readRefresh() === snapshot.refresh
+}
+
 export function getSession(): StoredSession | null {
   if (typeof window === 'undefined') return null
   try {
@@ -93,9 +121,7 @@ export function getToken(): string | null {
 }
 
 export function logout(): void {
-  writeToken(null)
-  writeSession(null)
-  writeRefresh(null)
+  storeSession(null)
 }
 
 /**
@@ -139,17 +165,8 @@ export async function login(email: string, password: string): Promise<SessionOut
   })
   if (!res.ok) throw await toError(res)
   const session = (await res.json()) as SessionOut
-  writeToken(session.access_token)
-  writeSession(session)
-  writeRefresh(session.refresh_token ?? null)
+  storeSession(session)
   return session
-}
-
-// The bearer token for the current user, or null when signed out. Sign-in is owned
-// by the /login screen (see AuthContext) - there is no implicit env auto-login, so
-// switching facility means signing out and back in as a different account.
-async function ensureToken(): Promise<string | null> {
-  return readToken()
 }
 
 // AuthContext registers a callback here so a dead session (refresh exhausted) can
@@ -162,35 +179,57 @@ export function onUnauthorized(fn: (() => void) | null): void {
 // Swap the stored refresh token for a fresh session. De-duplicated so a burst of
 // parallel 401s triggers only one refresh. Resolves to the new access token, or
 // null when there is no refresh token or it has expired.
-let refreshInFlight: Promise<string | null> | null = null
-function refreshAccessToken(): Promise<string | null> {
-  if (refreshInFlight) return refreshInFlight
-  refreshInFlight = (async (): Promise<string | null> => {
-    const rt = readRefresh()
-    if (!rt) return null
+type RefreshResult = { token: string; snapshot: CredentialSnapshot }
+const refreshInFlight = new Map<string, Promise<RefreshResult | null>>()
+
+function refreshAccessToken(snapshot: CredentialSnapshot): Promise<RefreshResult | null> {
+  if (!snapshot.refresh || !isCurrentCredentials(snapshot)) return Promise.resolve(null)
+
+  // A refresh can only be shared by requests with the exact credentials that
+  // received their 401. A later login/logout gets its own key and never joins an
+  // old session's pending promise.
+  const key = JSON.stringify([snapshot.generation, snapshot.token, snapshot.refresh])
+  const existing = refreshInFlight.get(key)
+  if (existing) return existing
+
+  let request: Promise<RefreshResult | null>
+  request = (async (): Promise<RefreshResult | null> => {
     try {
       const res = await fetch(`${BASE}/auth/refresh`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ refresh_token: rt }),
+        body: JSON.stringify({ refresh_token: snapshot.refresh }),
       })
       if (!res.ok) throw new Error('refresh failed')
       const session = (await res.json()) as SessionOut
-      writeToken(session.access_token)
-      writeSession(session)
-      writeRefresh(session.refresh_token ?? null)
-      return session.access_token
+
+      // Logout, a facility switch, or an externally-triggered token rotation
+      // invalidates this request. Never let its late response restore credentials.
+      if (!isCurrentCredentials(snapshot)) return null
+      storeSession(session)
+      return { token: session.access_token, snapshot: credentialsSnapshot() }
     } catch {
       return null
     }
-  })().finally(() => { refreshInFlight = null })
-  return refreshInFlight
+  })().finally(() => {
+    if (refreshInFlight.get(key) === request) refreshInFlight.delete(key)
+  })
+  refreshInFlight.set(key, request)
+  return request
 }
 
 export async function apiFetch<T>(path: string, opts: RequestInit = {}, retry = true): Promise<T> {
-  const token = await ensureToken()
+  return apiFetchForCredentials<T>(path, opts, retry, credentialsSnapshot())
+}
+
+async function apiFetchForCredentials<T>(
+  path: string,
+  opts: RequestInit,
+  retry: boolean,
+  snapshot: CredentialSnapshot,
+): Promise<T> {
   const headers = new Headers(opts.headers)
-  if (token) headers.set('Authorization', `Bearer ${token}`)
+  if (snapshot.token) headers.set('Authorization', `Bearer ${snapshot.token}`)
   if (opts.body && !headers.has('Content-Type') &&
       (typeof FormData === 'undefined' || !(opts.body instanceof FormData))) {
     headers.set('Content-Type', 'application/json')
@@ -200,12 +239,19 @@ export async function apiFetch<T>(path: string, opts: RequestInit = {}, retry = 
 
   if (res.status === 401) {
     // One silent refresh attempt; if it yields a new token, replay the request once.
-    if (retry) {
-      const fresh = await refreshAccessToken()
-      if (fresh) return apiFetch<T>(path, opts, false)
+    if (retry && isCurrentCredentials(snapshot)) {
+      const fresh = await refreshAccessToken(snapshot)
+      // Only replay under the exact credential generation written by this refresh;
+      // never turn an old tenant's 401 into a request for the newly logged-in user.
+      if (fresh && isCurrentCredentials(fresh.snapshot)) {
+        return apiFetchForCredentials<T>(path, opts, false, fresh.snapshot)
+      }
     }
-    logout()
-    unauthorizedHandler?.()
+    // A stale request must not log out the person who signed in after it started.
+    if (isCurrentCredentials(snapshot)) {
+      logout()
+      unauthorizedHandler?.()
+    }
     throw await toError(res)
   }
 
@@ -268,6 +314,12 @@ export const api = {
       }),
     }),
 
+  rosterHistory: (periodId: string, versionId?: string) => {
+    const q = new URLSearchParams({ period_id: periodId })
+    if (versionId) q.set('version_id', versionId)
+    return apiFetch<RosterHistory>(`/roster-history?${q.toString()}`)
+  },
+
   rosterPeriods: () => apiFetch<PeriodOut[]>('/roster-periods'),
 
   rosterVersions: (periodId?: string) =>
@@ -292,13 +344,13 @@ export const api = {
   },
 
   createTaskAssignment: (body: {
-    shift_assignment_id: string; task_id: string; start_at?: string; end_at?: string; source_type?: string
+    shift_assignment_id: string; task_id: string; start_at?: string; end_at?: string; source_type?: string; escort_location?: string
   }) => apiFetch<TaskAssignment>('/task-assignments', {
     method: 'POST', body: JSON.stringify(body),
   }),
 
   updateTaskAssignment: (id: string, body: {
-    task_id?: string; start_at?: string | null; end_at?: string | null; source_type?: string
+    task_id?: string; start_at?: string | null; end_at?: string | null; source_type?: string; escort_location?: string | null
   }) => apiFetch<TaskAssignment>(`/task-assignments/${id}`, {
     method: 'PATCH', body: JSON.stringify(body),
   }),
@@ -565,9 +617,9 @@ export const api = {
   eventTriggers: () => apiFetch<EventTrigger[]>('/reports/event-triggers'),
   regulatoryDocs: () => apiFetch<RegulatoryDoc[]>('/reports/regulatory-docs'),
   reports: () => apiFetch<ReportRow[]>('/reports'),
-  generateReport: (reportType: string, periodId?: string) =>
+  generateReport: (reportType: string, periodId?: string, versionId?: string) =>
     apiFetch<GeneratedReport>('/reports/generate', {
-      method: 'POST', body: JSON.stringify({ report_type: reportType, period_id: periodId || undefined }),
+      method: 'POST', body: JSON.stringify({ report_type: reportType, period_id: periodId || undefined, version_id: versionId || undefined }),
     }),
   runReportSchedule: (scheduleId: string) =>
     apiFetch<GeneratedReport>(`/reports/schedules/${scheduleId}/run`, { method: 'POST' }),
@@ -635,9 +687,13 @@ export async function downloadReportFile(
   reportType: string,
   fmt: 'csv' | 'xlsx' | 'pdf',
   periodId?: string,
+  versionId?: string,
 ): Promise<void> {
   const token = getToken()
-  const q = periodId ? `?period_id=${encodeURIComponent(periodId)}` : ''
+  const params = new URLSearchParams()
+  if (periodId) params.set('period_id', periodId)
+  if (versionId) params.set('version_id', versionId)
+  const q = params.size ? `?${params.toString()}` : ''
   const res = await fetch(`${BASE}/reports/download/${reportType}.${fmt}${q}`, {
     headers: token ? { Authorization: `Bearer ${token}` } : {},
   })
@@ -678,4 +734,19 @@ export async function optimizeAndPoll(
       throw new Error((job.error_json as { message?: string } | null)?.message || 'optimization failed')
     }
   }
+}
+
+/** Same scoped append-only audit evidence as the current roster history. */
+export async function downloadRosterAudit(periodId: string, versionId?: string): Promise<void> {
+  const q = new URLSearchParams({ period_id: periodId })
+  if (versionId) q.set('version_id', versionId)
+  const token = getToken()
+  const response = await fetch(`${BASE}/roster-history/download.csv?${q.toString()}`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  })
+  if (!response.ok) throw await toError(response)
+  const url = URL.createObjectURL(await response.blob())
+  const a = document.createElement('a')
+  a.href = url; a.download = 'roster-audit.csv'; a.click()
+  URL.revokeObjectURL(url)
 }

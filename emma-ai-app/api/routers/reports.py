@@ -89,6 +89,7 @@ def generate_named(name: str, body: ReportRequest | None = None,
 @router.get("/reports/download/{report_type}.{fmt}")
 def download(report_type: str, fmt: str,
              period_id: str | None = Query(default=None),
+             version_id: str | None = Query(default=None),
              ctx: AuthCtx = Depends(require_read(Feature.REPORTS))):
     """Generate on demand and stream it back as CSV, XLSX or PDF (spec 3.3).
 
@@ -105,6 +106,8 @@ def download(report_type: str, fmt: str,
                         f"No format {fmt!r} (expected one of "
                         f"{', '.join(sorted(render.FORMATS))}).")
     params = {"period_id": period_id} if period_id else {}
+    if version_id:
+        params["version_id"] = version_id
     try:
         report = svc.generate(ctx.client, ctx.facility_id, report_type,
                               params=params, profile_id=ctx.profile_id,

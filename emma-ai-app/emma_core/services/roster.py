@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from . import audit
 from ..constants import AssignmentStatus, OverrideAction, PublishEvent, RosterStatus
 from ..models import RosterCell, RosterGrid, RosterRow, ShiftDef, StaffLite
-from ._common import as_date, assignments_for_shifts
+from ._common import as_date, assignments_for_shifts, shift_minutes
 from .organisations import org_id_for
 
 
@@ -34,7 +34,10 @@ def _latest_version(client, facility_id: str, period_id: str | None = None,
     explicit ``version_id`` for a specific option."""
     if version_id:
         # SQL: select * from roster_versions where id = :version_id
-        rows = client.table("roster_versions").select("*").eq("id", version_id).execute().data
+        query = client.table("roster_versions").select("*").eq("facility_id", facility_id).eq("id", version_id)
+        if period_id:
+            query = query.eq("period_id", period_id)
+        rows = query.execute().data
         return rows[0] if rows else None
     # SQL: select * from roster_versions
     #      where facility_id = :facility_id
@@ -101,6 +104,7 @@ def get_roster_grid(client, facility_id: str, period_id: str | None = None, *,
                 cells.append(RosterCell(
                     date=d, shift_type=sh["shift_type"], is_working=sh["is_working"],
                     tasks=a.get("tasks") or [], assignment_id=a["id"], shift_id=sh["id"],
+                    paid_minutes=shift_minutes(sh) if sh.get("is_working") else 0,
                 ))
             else:
                 cells.append(RosterCell(date=d))
