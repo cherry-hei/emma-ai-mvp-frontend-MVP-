@@ -336,12 +336,16 @@ export const api = {
 
   createTaskAssignment: (body: {
     shift_assignment_id: string; task_id: string; start_at?: string; end_at?: string; source_type?: string
+    /** Optional escort destination; the server preserves its tenant scope. */
+    escort_location?: string | null
   }) => apiFetch<TaskAssignment>('/task-assignments', {
     method: 'POST', body: JSON.stringify(body),
   }),
 
   updateTaskAssignment: (id: string, body: {
     task_id?: string; start_at?: string | null; end_at?: string | null; source_type?: string
+    /** `null` clears the persisted destination under the published API contract. */
+    escort_location?: string | null
   }) => apiFetch<TaskAssignment>(`/task-assignments/${id}`, {
     method: 'PATCH', body: JSON.stringify(body),
   }),

@@ -244,3 +244,40 @@ test('a new session replaces all credential fields instead of retaining old refr
     restoreEnvironment(previous)
   }
 })
+
+test('task-assignment escort destinations use the published create and clear contract', async () => {
+  const previous = {
+    preview: process.env.NEXT_PUBLIC_INTEGRATION_PREVIEW,
+    fetch: globalThis.fetch,
+    window: globalThis.window,
+  }
+  try {
+    delete process.env.NEXT_PUBLIC_INTEGRATION_PREVIEW
+    const storage = installBrowser()
+    storage.setItem('emma_token', 'scoped-access-token')
+    const requests = []
+    globalThis.fetch = async (url, options = {}) => {
+      requests.push({ url: String(url), options })
+      return jsonResponse({ id: 'task-1', shift_assignment_id: 'shift-1', task_label: 'Escort' })
+    }
+
+    const module = await loadApi()
+    await module.api.createTaskAssignment({
+      shift_assignment_id: 'shift-1', task_id: 'task-1', escort_location: 'CLINIC-A',
+    })
+    await module.api.updateTaskAssignment('task-1', { escort_location: null })
+
+    assert.equal(requests.length, 2)
+    assert.equal(requests[0].url, 'http://localhost:8000/task-assignments')
+    assert.equal(requests[0].options.method, 'POST')
+    assert.equal(requests[0].options.headers.get('Authorization'), 'Bearer scoped-access-token')
+    assert.deepEqual(JSON.parse(requests[0].options.body), {
+      shift_assignment_id: 'shift-1', task_id: 'task-1', escort_location: 'CLINIC-A',
+    })
+    assert.equal(requests[1].url, 'http://localhost:8000/task-assignments/task-1')
+    assert.equal(requests[1].options.method, 'PATCH')
+    assert.deepEqual(JSON.parse(requests[1].options.body), { escort_location: null })
+  } finally {
+    restoreEnvironment(previous)
+  }
+})

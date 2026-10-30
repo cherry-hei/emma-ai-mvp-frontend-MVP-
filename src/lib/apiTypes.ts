@@ -301,6 +301,8 @@ export interface TaskAssignment {
   source_type: string
   task_status: string
   completed_at?: string | null
+  /** Destination persisted for an escort assignment; absent/null means none. */
+  escort_location?: string | null
 }
 
 export interface OptionScoreOut {
