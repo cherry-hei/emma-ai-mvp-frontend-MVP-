@@ -88,6 +88,8 @@ class Duty:
     start: str | None = None
     end: str | None = None
     segments: tuple[dict[str, str], ...] = ()
+    # A source-defined payable duration, distinct from the duty's clock footprint.
+    paid_minutes_override: int | None = None
 
 
 @dataclass(frozen=True)
@@ -310,7 +312,8 @@ def _as_duty(fragment: str, sheet: SheetProfile,
 
 def _duty_from(window: ShiftWindow, task_code: str | None) -> Duty:
     return Duty(shift_code=window.code, task_code=task_code,
-                start=window.start, end=window.end, segments=window.segments)
+                start=window.start, end=window.end, segments=window.segments,
+                paid_minutes_override=window.paid_minutes_override)
 
 
 # ── the parser ───────────────────────────────────────────────────────────────
@@ -424,7 +427,8 @@ def _merge_duties(duties: list[Duty], windows: list[tuple[str, str]],
     if len(duties) == 1 and windows and not duties[0].segments:
         # An explicit time window overrides the legend's hours for that day.
         start, end = windows[0]
-        duties = [Duty(duties[0].shift_code, duties[0].task_code, start, end)]
+        duties = [Duty(duties[0].shift_code, duties[0].task_code, start, end,
+                       paid_minutes_override=duties[0].paid_minutes_override)]
     if not duties and windows and not leave:
         ad_hoc = profile.ad_hoc
         duties = [Duty(ad_hoc.code, None, windows[0][0], windows[0][1])]

@@ -1,17 +1,25 @@
-"""Roster read + manual edit + publish. RLS-scoped by the caller's token via get_ctx."""
+"""Roster read, manual draft editing, and publication.
+
+Every facility-wide route declares an executable feature guard in addition to
+``get_ctx``'s RLS-scoped client.  API guards do not make a caller's direct
+Supabase/PostgREST access role-scoped: the deployed RLS policy must separately
+be reviewed because its historical tenant-wide ``FOR ALL`` grants remain a
+separate database-policy concern.
+"""
 from __future__ import annotations
 
 from datetime import date as Date
 
 from fastapi import APIRouter, Depends, Query, Response
 
-from api.deps import AuthCtx, api_error, get_ctx
+from api.deps import AuthCtx, api_error, get_ctx, require_read, require_write
 from emma_core.constants import PUBLISH_THRESHOLD
 from emma_core.db import get_service_client
 from emma_core.models import (
     CellWriteRequest, PeriodCreateRequest, PeriodOut, RosterGrid, ShiftDef,
     TaskDefOut, VersionOut,
 )
+from emma_core.permissions import Feature, SystemRole
 from emma_core.services import audit
 from emma_core.services import optimize as opt
 from emma_core.services import roster as svc
@@ -19,16 +27,28 @@ from emma_core.services import scheduling as scheduling_svc
 from emma_core.services import validation as validation_svc
 
 router = APIRouter(tags=["roster"])
-WRITE_ROLES = {"superintendent", "admin", "scheduler"}
 
 
-def _require_write_role(ctx: AuthCtx) -> None:
-    if str(ctx.profile.role) not in WRITE_ROLES:
+def _require_period_create(ctx: AuthCtx = Depends(get_ctx)) -> AuthCtx:
+    """Allow a period bootstrap only to canonical OWNER or SCHEDULER.
+
+    ``ROSTER_AI_DRAFT`` is the matrix feature for changing a draft and is
+    intentionally granted to a nursing manager and scheduler as well.  Creating
+    a period establishes a new facility-wide planning boundary, however; the
+    currently approved policy delegates generation to the authorised scheduler,
+    not to nursing managers.  The schema has no tenant/unit entitlement that
+    would safely support a more granular delegation, so retain this closed
+    OWNER/SCHEDULER boundary until a dedicated feature/matrix row and data scope
+    are approved.
+    """
+    require_write(Feature.ROSTER_AI_DRAFT)(ctx)
+    if ctx.role not in {SystemRole.OWNER, SystemRole.SCHEDULER}:
         raise api_error(
             403,
             "forbidden",
-            "Only a superintendent, admin or scheduler may change a roster.",
+            "Only the facility owner or an authorised scheduler may create a roster period.",
         )
+    return ctx
 
 
 # `manual_override_log` only ever holds cells; this covers the rest.
@@ -45,12 +65,12 @@ def _audit(ctx: AuthCtx, action: str, entity_table: str, *,
 
 # ── periods ─────────────────────────────────────────────────────────────────
 @router.get("/roster-periods", response_model=list[PeriodOut])
-def list_periods(ctx: AuthCtx = Depends(get_ctx)):
+def list_periods(ctx: AuthCtx = Depends(require_read(Feature.ROSTER_VIEW))):
     return svc.list_periods(ctx.client, ctx.facility_id)
 
 
 @router.post("/roster-periods", status_code=201)
-def create_period(body: PeriodCreateRequest, ctx: AuthCtx = Depends(get_ctx)):
+def create_period(body: PeriodCreateRequest, ctx: AuthCtx = Depends(_require_period_create)):
     period, version = svc.create_period(
         ctx.client, facility_id=ctx.facility_id,
         period_start=body.period_start, period_end=body.period_end,
@@ -68,7 +88,7 @@ def create_period(body: PeriodCreateRequest, ctx: AuthCtx = Depends(get_ctx)):
 # ── versions ────────────────────────────────────────────────────────────────
 @router.get("/roster-versions", response_model=list[VersionOut])
 def list_versions(period_id: str | None = Query(default=None),
-                  ctx: AuthCtx = Depends(get_ctx)):
+                  ctx: AuthCtx = Depends(require_read(Feature.ROSTER_VIEW))):
     return svc.list_versions(ctx.client, ctx.facility_id, period_id)
 
 
@@ -77,7 +97,7 @@ def list_versions(period_id: str | None = Query(default=None),
 def get_roster(period_id: str,
                version_id: str | None = Query(default=None),
                version_type: str | None = Query(default="manual"),
-               ctx: AuthCtx = Depends(get_ctx)):
+               ctx: AuthCtx = Depends(require_read(Feature.ROSTER_VIEW))):
     # A specific version_id overrides the version_type default.
     return svc.get_roster_grid(
         ctx.client, ctx.facility_id, period_id,
@@ -87,12 +107,12 @@ def get_roster(period_id: str,
 
 # ── facility dictionaries ───────────────────────────────────────────────────
 @router.get("/shift-definitions", response_model=list[ShiftDef])
-def shift_definitions(ctx: AuthCtx = Depends(get_ctx)):
+def shift_definitions(ctx: AuthCtx = Depends(require_read(Feature.ROSTER_VIEW))):
     return svc.get_shift_defs(ctx.client, ctx.facility_id)
 
 
 @router.get("/task-definitions", response_model=list[TaskDefOut])
-def task_definitions(ctx: AuthCtx = Depends(get_ctx)):
+def task_definitions(ctx: AuthCtx = Depends(require_read(Feature.ROSTER_VIEW))):
     return svc.list_task_definitions(ctx.client, ctx.facility_id)
 
 
@@ -131,18 +151,21 @@ def _upsert_cell(body: CellWriteRequest, ctx: AuthCtx, *, action: str):
 
 
 @router.post("/shifts", status_code=201)
-def create_shift(body: CellWriteRequest, ctx: AuthCtx = Depends(get_ctx)):
+def create_shift(body: CellWriteRequest,
+                 ctx: AuthCtx = Depends(require_write(Feature.ROSTER_AI_DRAFT))):
     return _upsert_cell(body, ctx, action="create")
 
 
 @router.patch("/shifts")
-def edit_shift(body: CellWriteRequest, ctx: AuthCtx = Depends(get_ctx)):
+def edit_shift(body: CellWriteRequest,
+               ctx: AuthCtx = Depends(require_write(Feature.ROSTER_AI_DRAFT))):
     return _upsert_cell(body, ctx, action="update")
 
 
 @router.delete("/shifts", status_code=204)
 def delete_shift(roster_version_id: str = Query(...), staff_id: str = Query(...),
-                 date: Date = Query(...), ctx: AuthCtx = Depends(get_ctx)):
+                 date: Date = Query(...),
+                 ctx: AuthCtx = Depends(require_write(Feature.ROSTER_AI_DRAFT))):
     svc.clear_cell(ctx.client, facility_id=ctx.facility_id,
                    roster_version_id=roster_version_id, staff_id=staff_id,
                    date=date, changed_by=ctx.profile_id)
@@ -155,15 +178,16 @@ def delete_shift(roster_version_id: str = Query(...), staff_id: str = Query(...)
 
 # ── publish workflow ────────────────────────────────────────────────────────
 @router.post("/rosters/{version_id}/save-draft")
-def save_draft(version_id: str, ctx: AuthCtx = Depends(get_ctx)):
+def save_draft(version_id: str,
+               ctx: AuthCtx = Depends(require_write(Feature.ROSTER_AI_DRAFT))):
     svc.save_draft(ctx.client, facility_id=ctx.facility_id,
                    roster_version_id=version_id, created_by=ctx.profile_id)
     return {"ok": True}
 
 
 @router.post("/rosters/{version_id}/publish")
-def publish(version_id: str, ctx: AuthCtx = Depends(get_ctx)):
-    _require_write_role(ctx)
+def publish(version_id: str,
+            ctx: AuthCtx = Depends(require_write(Feature.ROSTER_PUBLISH))):
     if not (
         ctx.client.table("roster_versions").select("id")
         .eq("facility_id", ctx.facility_id)

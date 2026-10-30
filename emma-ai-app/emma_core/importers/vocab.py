@@ -54,6 +54,10 @@ class ShiftWindow:
     # Fairness/cost weight where a home counts a duty differently from its clock
     # hours. paid_minutes stays the pay truth.
     weighting_factor: float = 1.0
+    # The source dictionary may state paid time that cannot be reconstructed from
+    # clock windows (for example a sleepover allowance). When present it wins over
+    # clock/segment calculation and must survive onto definitions and shifts.
+    paid_minutes_override: int | None = None
 
     @property
     def cross_midnight(self) -> bool:
