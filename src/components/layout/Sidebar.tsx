@@ -4,8 +4,7 @@ import { useLang } from '@/components/layout/LanguageContext'
 import { useAuth, roleLabel } from '@/components/layout/AuthContext'
 import { ROUTES, ROUTE_FEATURE, canOpenRoute, isActiveRoute } from '@/components/layout/navRoutes'
 
-const PINK       = '#E8187A'
-const PINK_HOVER = '#c9156a'
+const PINK = '#E8187A'
 
 const NAV = [
   { key: 'nav_dashboard',   icon: '🏠',  path: ROUTES.dashboard  },
@@ -60,55 +59,48 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void } = {}) {
 
   return (
     <aside
-      className="w-48 flex flex-col flex-shrink-0 border-r"
-      style={{ background: '#ffffff', borderColor: '#e5e7eb' }}
+      className="flex h-full w-56 max-w-[86vw] flex-shrink-0 flex-col border-r border-slate-200 bg-white"
     >
       {/* Logo */}
-      <div className="p-4 border-b" style={{ borderColor: '#f3f4f6' }}>
-        <div className="text-xl font-bold" style={{ color: PINK, letterSpacing: '-0.5px' }}>
+      <div className="border-b border-slate-100 p-4">
+        <div className="text-xl font-bold tracking-tight" style={{ color: PINK }}>
           Emma AI
         </div>
-        <div className="text-[8px] tracking-[2.5px] mt-0.5 text-gray-400">
-          MEDICAL INTELLIGENCE
+        <div className="mt-1 text-xs font-semibold leading-4 tracking-wide text-slate-500">
+          SCHEDULING &amp; COMPLIANCE INTELLIGENCE
         </div>
       </div>
 
       {/* Site selector - reflects the signed-in account's facility + role */}
       <div
-        className="mx-2 mt-2 p-2.5 rounded-lg border"
-        style={{ background: '#f9fafb', borderColor: '#e5e7eb' }}
+        className="mx-3 mt-3 min-h-11 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2"
       >
-        <div className="text-[9px] tracking-wider text-gray-400">
+        <div className="text-xs font-medium tracking-wide text-slate-500">
           {roleLabel(user?.role, lang === 'zh') || (lang === 'zh' ? '院舍' : 'Facility')}
         </div>
-        <div className="text-[11px] font-medium mt-0.5 text-gray-700 truncate">
+        <div className="emma-reflow-text mt-0.5 break-words text-sm font-medium text-slate-700">
           {user?.facilityName ?? (lang === 'zh' ? '院舍管理' : 'Care Home Admin')}
         </div>
       </div>
 
       {/* Nav */}
-      <nav className="flex-1 px-2 py-2 space-y-0.5">
+      <nav className="min-h-0 flex-1 space-y-1 overflow-y-auto px-3 py-3" aria-label={lang === 'zh' ? '主要導覽' : 'Primary navigation'}>
         {nav.map(({ key, icon, path, badge }) => {
           const active = isActiveRoute(pathname, path)
           return (
             <button
+              type="button"
               key={path}
+              aria-label={label(key)}
+              aria-current={active ? 'page' : undefined}
               onClick={() => { router.push(path); onNavigate?.() }}
-              className="w-full flex items-center gap-2 px-2.5 py-2 rounded-lg text-xs transition-all border-l-2 text-left"
-              style={{
-                color:           active ? PINK : '#374151',
-                background:      active ? '#fff0f5' : 'transparent',
-                borderLeftColor: active ? PINK : 'transparent',
-                fontWeight:      active ? 700 : 400,
-              }}
-              onMouseEnter={e => { if (!active) e.currentTarget.style.background = '#f9fafb' }}
-              onMouseLeave={e => { if (!active) e.currentTarget.style.background = 'transparent' }}
+              className={`flex min-h-11 w-full items-center gap-3 rounded-lg border-l-2 px-3 py-2 text-left text-base font-medium leading-5 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-pink-300 focus-visible:ring-offset-2 ${active ? 'border-pink-600 bg-pink-50 text-pink-600' : 'border-transparent text-slate-700 hover:bg-slate-50 hover:text-slate-900'}`}
             >
-              <span className="text-sm opacity-70">{icon}</span>
-              <span className="flex-1">{label(key)}</span>
+              <span className="shrink-0 text-base opacity-70" aria-hidden>{icon}</span>
+              <span className="emma-reflow-text min-w-0 flex-1 break-words">{label(key)}</span>
               {badge && (
                 <span
-                  className="text-[9px] px-1.5 rounded-full text-white"
+                  className="flex min-h-5 min-w-5 items-center justify-center rounded-full px-1.5 text-xs font-semibold text-white"
                   style={{ background: PINK }}
                 >
                   {badge}
@@ -119,20 +111,9 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void } = {}) {
         })}
       </nav>
 
-      {/* Alert banner */}
-      <div
-        className="mx-2 mb-2 p-2.5 rounded-lg border hidden"
-        style={{ background: '#fff5f7', borderColor: '#fcd5dc' }}
-      >
-        <div className="text-xs font-semibold" style={{ color: PINK }}>
-          {label('urgent_alert')}
-        </div>
-        <div className="text-[10px] mt-0.5" style={{ color: PINK_HOVER }}>
-          {label('staff_shortage')}
-        </div>
+      <div className="border-t border-slate-100 px-4 py-3 text-xs leading-relaxed text-slate-500">
+        {lang === 'zh' ? '管理工具僅顯示帳戶獲授權的功能。' : 'Only functions authorised for this account are shown.'}
       </div>
-
-      {/* New Request button - 已移除獨立按鈕，點 Alert 直接跳頁 */}
     </aside>
   )
 }

@@ -49,6 +49,7 @@
 }
 
 :root {
+  --emma-text-scale: 1;
   --background: oklch(1 0 0);
   --foreground: oklch(0.141 0.005 285.823);
   --card: oklch(1 0 0);
@@ -126,5 +127,99 @@
   }
   html {
     @apply font-sans;
+  }
+}
+
+/*
+ * Text scaling changes a CSS variable rather than browser zoom or transforms,
+ * so sticky content, grid measurements, and keyboard focus remain stable.
+ */
+@layer utilities {
+  html[data-emma-text-scale] body { font-size: calc(1rem * var(--emma-text-scale)); }
+  html[data-emma-text-scale] button,
+  html[data-emma-text-scale] input,
+  html[data-emma-text-scale] select,
+  html[data-emma-text-scale] textarea {
+    font-size: inherit;
+    line-height: inherit;
+  }
+
+  html[data-emma-text-scale] .text-xs { font-size: calc(0.75rem * var(--emma-text-scale)) !important; line-height: calc(1rem * var(--emma-text-scale)) !important; }
+  html[data-emma-text-scale] .text-sm { font-size: calc(0.875rem * var(--emma-text-scale)) !important; line-height: calc(1.25rem * var(--emma-text-scale)) !important; }
+  html[data-emma-text-scale] .text-base { font-size: calc(1rem * var(--emma-text-scale)) !important; line-height: calc(1.5rem * var(--emma-text-scale)) !important; }
+  html[data-emma-text-scale] .text-lg { font-size: calc(1.125rem * var(--emma-text-scale)) !important; line-height: calc(1.75rem * var(--emma-text-scale)) !important; }
+  html[data-emma-text-scale] .text-xl { font-size: calc(1.25rem * var(--emma-text-scale)) !important; line-height: calc(1.75rem * var(--emma-text-scale)) !important; }
+  html[data-emma-text-scale] .text-2xl { font-size: calc(1.5rem * var(--emma-text-scale)) !important; line-height: calc(2rem * var(--emma-text-scale)) !important; }
+  html[data-emma-text-scale] .text-3xl { font-size: calc(1.875rem * var(--emma-text-scale)) !important; line-height: calc(2.25rem * var(--emma-text-scale)) !important; }
+  html[data-emma-text-scale] .text-4xl { font-size: calc(2.25rem * var(--emma-text-scale)) !important; line-height: calc(2.5rem * var(--emma-text-scale)) !important; }
+  html[data-emma-text-scale] .text-5xl { font-size: calc(3rem * var(--emma-text-scale)) !important; line-height: 1 !important; }
+  html[data-emma-text-scale] .text-6xl { font-size: calc(3.75rem * var(--emma-text-scale)) !important; line-height: 1 !important; }
+
+  html[data-emma-text-scale] .text-\[7px\] { font-size: calc(7px * var(--emma-text-scale)) !important; }
+  html[data-emma-text-scale] .text-\[8px\] { font-size: calc(8px * var(--emma-text-scale)) !important; }
+  html[data-emma-text-scale] .text-\[9px\] { font-size: calc(9px * var(--emma-text-scale)) !important; }
+  html[data-emma-text-scale] .text-\[10px\] { font-size: calc(10px * var(--emma-text-scale)) !important; }
+  html[data-emma-text-scale] .text-\[11px\] { font-size: calc(11px * var(--emma-text-scale)) !important; }
+  html[data-emma-text-scale] .text-\[12px\] { font-size: calc(12px * var(--emma-text-scale)) !important; }
+  html[data-emma-text-scale] .text-\[20px\] { font-size: calc(20px * var(--emma-text-scale)) !important; }
+  html[data-emma-text-scale] .text-\[22px\] { font-size: calc(22px * var(--emma-text-scale)) !important; }
+  html[data-emma-text-scale] .text-\[28px\] { font-size: calc(28px * var(--emma-text-scale)) !important; }
+
+  html[data-emma-text-scale] .leading-3 { line-height: calc(0.75rem * var(--emma-text-scale)) !important; }
+  html[data-emma-text-scale] .leading-4 { line-height: calc(1rem * var(--emma-text-scale)) !important; }
+  html[data-emma-text-scale] .leading-5 { line-height: calc(1.25rem * var(--emma-text-scale)) !important; }
+  html[data-emma-text-scale] .leading-6 { line-height: calc(1.5rem * var(--emma-text-scale)) !important; }
+  html[data-emma-text-scale] .leading-tight { line-height: 1.25 !important; }
+  html[data-emma-text-scale] .leading-snug { line-height: 1.375 !important; }
+  html[data-emma-text-scale] .leading-normal { line-height: 1.5 !important; }
+  html[data-emma-text-scale] .leading-relaxed { line-height: 1.625 !important; }
+}
+
+@media (min-width: 640px) {
+  html[data-emma-text-scale] .sm\:text-xs { font-size: calc(0.75rem * var(--emma-text-scale)) !important; line-height: calc(1rem * var(--emma-text-scale)) !important; }
+  html[data-emma-text-scale] .sm\:text-sm { font-size: calc(0.875rem * var(--emma-text-scale)) !important; line-height: calc(1.25rem * var(--emma-text-scale)) !important; }
+  html[data-emma-text-scale] .sm\:text-xl { font-size: calc(1.25rem * var(--emma-text-scale)) !important; line-height: calc(1.75rem * var(--emma-text-scale)) !important; }
+  html[data-emma-text-scale] .sm\:text-3xl { font-size: calc(1.875rem * var(--emma-text-scale)) !important; line-height: calc(2.25rem * var(--emma-text-scale)) !important; }
+}
+
+/* Every supported enlarged setting reflows controls; dense grids scroll. */
+html[data-emma-text-scale]:not([data-emma-text-scale="100"]) .emma-reflow-stack {
+  grid-template-columns: minmax(0, 1fr) !important;
+}
+html[data-emma-text-scale]:not([data-emma-text-scale="100"]) .emma-reflow-wrap {
+  flex-wrap: wrap !important;
+}
+html[data-emma-text-scale]:not([data-emma-text-scale="100"]) .emma-reflow-text {
+  min-width: 0;
+  white-space: normal !important;
+  overflow-wrap: anywhere;
+  text-overflow: clip !important;
+}
+.emma-reflow-scroll {
+  min-width: 0;
+  max-width: 100%;
+  overflow-x: auto;
+}
+html[data-emma-text-scale]:not([data-emma-text-scale="100"]) :is(button, [role="button"]) {
+  height: auto;
+  min-height: 2.75rem;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+html[data-emma-text-scale]:not([data-emma-text-scale="100"]) :is(input:not([type="checkbox"]):not([type="radio"]), select, textarea) {
+  height: auto;
+  min-height: max(2.75rem, calc(2rem * var(--emma-text-scale)));
+  max-width: 100%;
+  padding-block: 0.5rem;
+}
+html[data-emma-text-scale]:not([data-emma-text-scale="100"]) .emma-topnav {
+  max-width: 100%;
+  max-height: 42dvh;
+  align-content: start;
+  overflow: auto;
+}
+@media (min-width: 768px) {
+  html[data-emma-text-scale]:not([data-emma-text-scale="100"]) .emma-manager-shell > div:first-child > aside {
+    width: min(calc(14rem * var(--emma-text-scale)), 34vw);
   }
 }

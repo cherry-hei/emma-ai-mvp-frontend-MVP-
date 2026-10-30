@@ -6,7 +6,9 @@
     "dev": "dev.cmd",
     "dev:next": "next dev -p 3001",
     "dev:webpack": "next dev -p 3001 --webpack",
-    "build": "next build || true",
+    "typecheck": "tsc --noEmit",
+    "test:ui": "node --experimental-strip-types --test src/components/layout/display-preferences.test.mjs",
+    "build": "npm run typecheck && next build",
     "start": "next start",
     "lint": "next lint"
   },

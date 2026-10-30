@@ -1,5 +1,5 @@
 'use client'
-import { ReactNode, useEffect, useState } from 'react'
+import { ReactNode, useEffect, useRef, useState } from 'react'
 import { usePathname, useRouter } from 'next/navigation'
 import { Sidebar } from './Sidebar'
 import { TopNav } from './TopNav'
@@ -7,6 +7,7 @@ import { useAuth } from './AuthContext'
 import {
   CHROMELESS, canOpenRoute, fallbackRoute, isGuardedRoute, routeFeature,
 } from './navRoutes'
+import { readPageViewPosition, savePageViewPosition } from './display-preferences'
 
 function Splash() {
   return (
@@ -81,12 +82,50 @@ export function AppShell({ children }: { children: ReactNode }) {
 function ResponsiveShell({ children }: { children: ReactNode }) {
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const pathname = usePathname()
+  const mainRef = useRef<HTMLElement>(null)
 
-  // Close sidebar on navigation
+  // Close sidebar on navigation.
   useEffect(() => { setSidebarOpen(false) }, [pathname])
 
+  // Store only validated, numeric UI scroll offsets keyed by route. The helper
+  // deliberately has no knowledge of user/account state or page/API data.
+  useEffect(() => {
+    const main = mainRef.current
+    if (!main || !pathname) return
+
+    const saved = readPageViewPosition(pathname)
+    const restoreFrame = window.requestAnimationFrame(() => {
+      if (!saved) return
+      const maxTop = Math.max(0, main.scrollHeight - main.clientHeight)
+      const maxLeft = Math.max(0, main.scrollWidth - main.clientWidth)
+      if (saved.top <= maxTop && saved.left <= maxLeft) {
+        main.scrollTo({ top: saved.top, left: saved.left, behavior: 'auto' })
+      }
+    })
+
+    let saveTimer: number | undefined
+    const save = () => {
+      saveTimer = undefined
+      savePageViewPosition(pathname, { top: main.scrollTop, left: main.scrollLeft })
+    }
+    const scheduleSave = () => {
+      if (saveTimer !== undefined) return
+      saveTimer = window.setTimeout(save, 120)
+    }
+
+    main.addEventListener('scroll', scheduleSave, { passive: true })
+    window.addEventListener('pagehide', save)
+    return () => {
+      window.cancelAnimationFrame(restoreFrame)
+      if (saveTimer !== undefined) window.clearTimeout(saveTimer)
+      save()
+      main.removeEventListener('scroll', scheduleSave)
+      window.removeEventListener('pagehide', save)
+    }
+  }, [pathname])
+
   return (
-    <div className="flex h-screen overflow-hidden bg-gray-50">
+    <div className="emma-manager-shell flex h-[100dvh] overflow-hidden bg-gray-50">
       {/* Desktop sidebar - hidden on mobile */}
       <div className="hidden md:block">
         <Sidebar />
@@ -106,9 +145,9 @@ function ResponsiveShell({ children }: { children: ReactNode }) {
         </>
       )}
 
-      <div className="flex-1 flex flex-col overflow-hidden min-w-0">
+      <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
         <TopNav onMenuToggle={() => setSidebarOpen(o => !o)} />
-        <main className="flex-1 overflow-y-auto">{children}</main>
+        <main ref={mainRef} className="emma-scroll-main min-h-0 min-w-0 flex-1 overflow-x-auto overflow-y-auto">{children}</main>
       </div>
     </div>
   )
