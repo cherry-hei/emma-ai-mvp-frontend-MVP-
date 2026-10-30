@@ -18,6 +18,7 @@ listed by name - a new one fails the build.
 """
 from __future__ import annotations
 
+from dataclasses import replace
 import pytest
 
 from datetime import date, timedelta
@@ -28,6 +29,7 @@ from emma_core.services.validation import (
     DEFAULT_SEQUENCE_POLICY,
     RosterSnapshot,
     _matches_any,
+    evaluate_naac_hash_day_off_rule,
     evaluate_sequence_rules,
 )
 
@@ -121,6 +123,21 @@ def test_the_duty_supervisor_marker_does_not_change_the_hours():
     assert plain.duty_supervisor is False
     assert (duty.start, duty.end, duty.paid_minutes) == (
         plain.start, plain.end, plain.paid_minutes)
+
+
+def test_naac_parser_preserves_literal_hash_shift_code_without_changing_window():
+    from emma_core.importers.cells import parse_cell
+
+    plain = parse_cell("A7", naac.profile())
+    marked = parse_cell("A7#", naac.profile())
+
+    assert plain.duties[0].shift_code == "A7"
+    assert marked.duties[0].shift_code == "A7#"
+    assert marked.event_markers == ("#",)
+    assert (marked.duties[0].start, marked.duties[0].end) == (
+        plain.duties[0].start,
+        plain.duties[0].end,
+    )
 
 
 def test_a_combined_code_is_two_windows_not_one_long_one():
@@ -392,6 +409,64 @@ def test_kitchen_duty_on_consecutive_days_is_caught():
     violations = evaluate_sequence_rules(_naac_snapshot(shifts, assignments))
     assert _codes(violations) == ["shift_sequence"]
     assert violations[0]["details"]["relation"] == "no_consecutive"
+
+
+def test_hash_shift_requires_next_calendar_day_day_off():
+    shifts, assignments = _roster((0, "A7#"), (1, "O"))
+    shifts[1]["is_working"] = False
+
+    assert evaluate_naac_hash_day_off_rule(_naac_snapshot(shifts, assignments)) == []
+
+
+def test_hash_shift_missing_day_off_is_a_hard_finding():
+    shifts, assignments = _roster((0, "A7#"), (1, "A7"))
+
+    violations = evaluate_naac_hash_day_off_rule(_naac_snapshot(shifts, assignments))
+
+    assert len(violations) == 1
+    finding = violations[0]
+    assert finding["rule_code"] == "naac_hash_day_off"
+    assert finding["severity"] == "hard"
+    assert finding["date"] == "2026-08-03"
+    assert finding["details"] == {
+        "source_shift_type": "A7#",
+        "required_date": "2026-08-04",
+        "required_day_off_codes": ["DO", "O", "OFF"],
+        "actual_shift_types": ["A7"],
+        "reason": "missing_day_off",
+    }
+
+
+def test_non_hash_shift_does_not_trigger_next_day_day_off_rule():
+    shifts, assignments = _roster((0, "A7"), (1, "A7"))
+
+    assert evaluate_naac_hash_day_off_rule(_naac_snapshot(shifts, assignments)) == []
+
+
+def test_hash_shift_day_off_cannot_overlap_a_working_assignment():
+    shifts, assignments = _roster((0, "A7#"), (1, "DO"), (1, "A7"))
+    shifts[1]["is_working"] = False
+
+    violations = evaluate_naac_hash_day_off_rule(_naac_snapshot(shifts, assignments))
+
+    assert len(violations) == 1
+    assert violations[0]["details"]["reason"] == "day_off_overlaps_working_assignment"
+    assert violations[0]["details"]["actual_shift_types"] == ["A7", "DO"]
+
+
+def test_hash_shift_period_boundary_is_a_hard_finding():
+    shifts, assignments = _roster((0, "A7#"))
+    snapshot = replace(
+        _naac_snapshot(shifts, assignments),
+        period_start=date(2026, 8, 3),
+        period_end=date(2026, 8, 3),
+    )
+
+    violations = evaluate_naac_hash_day_off_rule(snapshot)
+
+    assert len(violations) == 1
+    assert violations[0]["details"]["required_date"] == "2026-08-04"
+    assert violations[0]["details"]["reason"] == "next_calendar_day_outside_roster_period"
 
 
 def test_kitchen_duty_with_a_day_between_is_allowed():

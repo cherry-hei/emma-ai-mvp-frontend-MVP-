@@ -159,6 +159,41 @@ def test_cross_midnight_assignment_conflicts_with_next_day_approved_leave():
     assert conflict["details"]["overlap_dates"] == ["2026-07-02"]
 
 
+def test_complete_validation_blocks_naac_hash_without_next_day_day_off(monkeypatch):
+    from emma_core.services import validation as validation_svc
+
+    snapshot = _snapshot(
+        facility={"id": "facility-1", "code": "NAAC"},
+        period_end=date(2026, 7, 2),
+        shifts=(
+            _shift("marked", "2026-07-01", "A7#", "07:00", "15:00"),
+            _shift("work", "2026-07-02", "A7", "07:00", "15:00"),
+        ),
+        assignments=(
+            _assignment("marked-assignment", "marked", "staff-1", "HW"),
+            _assignment("work-assignment", "work", "staff-1", "HW"),
+        ),
+        staff=({"id": "staff-1", "rank": "HW", "employment_type": "local_ft"},),
+    )
+    monkeypatch.setattr(validation_svc, "load_snapshot", lambda *_args: snapshot)
+    monkeypatch.setattr(validation_svc, "evaluate_core_constraints", lambda _snapshot: [])
+    monkeypatch.setattr(validation_svc, "evaluate_swd_ratios", lambda _snapshot: ([], []))
+    monkeypatch.setattr(validation_svc, "evaluate_night_rules", lambda _snapshot: [])
+    monkeypatch.setattr(validation_svc, "evaluate_sequence_rules", lambda _snapshot: [])
+    monkeypatch.setattr(validation_svc, "evaluate_agency_rules", lambda _snapshot: [])
+    monkeypatch.setattr(validation_svc, "evaluate_part_time_rules", lambda _snapshot: [])
+    monkeypatch.setattr(validation_svc, "evaluate_leave_rules", lambda _snapshot: [])
+    monkeypatch.setattr(validation_svc.scheduling, "evaluate_roster_rules", lambda **_kwargs: [])
+
+    result = validation_svc.validate_roster(
+        object(), "facility-1", "version-1", persist=False,
+    )
+
+    assert result["passes"] is False
+    assert result["hard_violation_count"] == 1
+    assert result["violations"][0]["rule_code"] == "naac_hash_day_off"
+
+
 def test_snapshot_digest_is_independent_of_database_row_order():
     first = _snapshot(
         shifts=(

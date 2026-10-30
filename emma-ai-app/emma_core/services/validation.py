@@ -705,6 +705,73 @@ def evaluate_night_rules(snapshot: RosterSnapshot) -> list[dict]:
     return violations
 
 
+def evaluate_naac_hash_day_off_rule(snapshot: RosterSnapshot) -> list[dict]:
+    """Enforce NAAC's literal ``# -> next-calendar-day Day Off`` hard rule.
+
+    The legacy source also used ``#`` as a duty-supervisor marker. The current
+    approved NAAC policy is independent of that historical interpretation: a
+    literal marker on date D requires a non-working O, OFF, or DO assignment on
+    D+1. A period-boundary requirement remains a finding rather than being
+    silently treated as compliant.
+    """
+    if str(snapshot.facility.get("code") or "").upper() != "NAAC":
+        return []
+
+    day_off_codes = {"O", "OFF", "DO"}
+    shifts_by_staff_day: dict[str, dict[Date, list[dict]]] = defaultdict(
+        lambda: defaultdict(list)
+    )
+    for _assignment, shift, staff in _active_assignments(snapshot):
+        if staff:
+            shifts_by_staff_day[staff["id"]][_as_date(shift["date"])].append(shift)
+
+    violations: list[dict] = []
+    for staff_id, by_day in shifts_by_staff_day.items():
+        for day, shifts in by_day.items():
+            for shift in shifts:
+                source_code = str(shift.get("shift_type") or "")
+                if "#" not in source_code:
+                    continue
+
+                next_day = day + timedelta(days=1)
+                successor_shifts = by_day.get(next_day, ())
+                successor_codes = {
+                    str(row.get("shift_type") or "").upper()
+                    for row in successor_shifts
+                }
+                has_day_off = bool(successor_codes & day_off_codes)
+                has_work = any(
+                    row.get("is_working", True) for row in successor_shifts
+                )
+                boundary = next_day > snapshot.period_end
+                if has_day_off and not has_work and not boundary:
+                    continue
+
+                if boundary:
+                    reason = "next_calendar_day_outside_roster_period"
+                elif not has_day_off:
+                    reason = "missing_day_off"
+                else:
+                    reason = "day_off_overlaps_working_assignment"
+                violations.append(_violation(
+                    "naac_hash_day_off",
+                    "NAAC # shift requires a Day Off on the next calendar day.",
+                    shift_id=shift["id"],
+                    staff_id=staff_id,
+                    on_date=day,
+                    unit_id=shift.get("unit_id"),
+                    severity="hard",
+                    details={
+                        "source_shift_type": source_code,
+                        "required_date": next_day.isoformat(),
+                        "required_day_off_codes": sorted(day_off_codes),
+                        "actual_shift_types": sorted(successor_codes),
+                        "reason": reason,
+                    },
+                ))
+    return violations
+
+
 def _matches_any(codes: set[str], patterns: Iterable[str]) -> set[str]:
     """Which of `codes` a rule's pattern list selects.
 
@@ -2224,6 +2291,7 @@ def validate_roster(
     ratio_violations, ratio_rows = evaluate_swd_ratios(snapshot)
     violations.extend(ratio_violations)
     violations.extend(evaluate_night_rules(snapshot))
+    violations.extend(evaluate_naac_hash_day_off_rule(snapshot))
     violations.extend(evaluate_sequence_rules(snapshot))
     violations.extend(evaluate_agency_rules(snapshot))
     violations.extend(evaluate_part_time_rules(snapshot))

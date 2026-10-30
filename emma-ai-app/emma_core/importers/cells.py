@@ -153,9 +153,15 @@ def normalise(raw: object) -> str:
     return text
 
 
-def _strip_markers(text: str) -> tuple[str, tuple[str, ...]]:
+def _strip_markers(
+    text: str,
+    *,
+    preserve: tuple[str, ...] = (),
+) -> tuple[str, tuple[str, ...]]:
     found = tuple(m for m in EVENT_MARKERS if m in text)
     for marker in EVENT_MARKERS:
+        if marker in preserve:
+            continue
         text = text.replace(marker, " ")
     return re.sub(r"\s+", " ", text).strip(" /+,&"), found
 
@@ -272,6 +278,15 @@ def _as_duty(fragment: str, sheet: SheetProfile,
         window = sheet.window(canonical)
         return _duty_from(window, None) if window else None
 
+    # NAAC's source dictionary contains literal duty codes such as A7 and A7#.
+    # The marker is a current auditable roster-rule input, so retain that exact
+    # source code rather than reducing it to generic A plus task 7. Other homes
+    # continue through the generic grammar below.
+    if profile.code == "NAAC":
+        window = sheet.window(key) or sheet.window(fragment)
+        if window:
+            return _duty_from(window, None)
+
     match = _DUTY_RE.match(fragment.replace(" ", "")) or _DUTY_RE.match(key)
     if not match:
         return None
@@ -307,7 +322,10 @@ def parse_cell(raw: object, profile: FacilityProfile,
         return CellIntent(raw="")
     sheet = sheet or profile.sheets[0]
 
-    body, markers = _strip_markers(text)
+    body, markers = _strip_markers(
+        text,
+        preserve=("#",) if profile.code == "NAAC" else (),
+    )
     body, is_request = _strip_request(body)
 
     duties: list[Duty] = []
