@@ -20,12 +20,19 @@ from emma_core.models import (
     JobView, OptimizeRequest, OptimizeResponse, OptionScoreOut, ValidationOut,
     ViolationOut,
 )
+from emma_core.permissions import SystemRole
 from emma_core.services import optimize as opt
 from emma_core.services import validation as validation_svc
 
 router = APIRouter(tags=["optimize"])
-VALIDATION_WRITE_ROLES = {"superintendent", "admin", "scheduler"}
-OPTIMIZE_WRITE_ROLES = {"superintendent", "admin", "scheduler"}
+_GENERATION_ROLES = frozenset({SystemRole.OWNER, SystemRole.SCHEDULER})
+# Validation records existing roster evidence; it is not generation. Keep its
+# historical owner/admin/scheduler persistence boundary during the transition.
+_VALIDATION_PERSIST_ROLES = frozenset({
+    SystemRole.OWNER,
+    SystemRole.ADMIN_CLERK,
+    SystemRole.SCHEDULER,
+})
 
 
 class ValidateRequest(BaseModel):
@@ -59,13 +66,17 @@ def _to_option_score_out(row: dict, *, with_violations: bool = True) -> OptionSc
 # ── generate (async) + poll ──────────────────────────────────────────────────
 def _authorize_optimize(req: OptimizeRequest, ctx: AuthCtx) -> None:
     """Stamp the tenant from the token and authorize caller-supplied ids under RLS
-    before the service-role solver touches them - else a foreign source_version_id
-    would leak another facility's roster."""
-    if str(ctx.profile.role) not in OPTIMIZE_WRITE_ROLES:
+    before the service-role solver touches them.
+
+    Generation is intentionally narrower than manual draft-cell editing:
+    canonical OWNER and SCHEDULER may generate, while an ordinary nursing manager
+    must not gain batch-generation authority from ``ROSTER_AI_DRAFT``.
+    """
+    if ctx.role not in _GENERATION_ROLES:
         raise api_error(
             403,
             "forbidden",
-            "Only a superintendent, admin or scheduler may optimize a roster.",
+            "Only the facility owner or an authorised scheduler may optimize a roster.",
         )
     req.facility_id = ctx.facility_id
     # Identity is always server-derived. A client-supplied UUID must never be
@@ -154,7 +165,7 @@ def option_scores(roster_version_id: str, ctx: AuthCtx = Depends(get_ctx)):
 # ── validate ──────────────────────────────────────────────────────────────────
 @router.post("/validate-roster", response_model=ValidationOut)
 def validate_roster(body: ValidateRequest, ctx: AuthCtx = Depends(get_ctx)):
-    persist = str(ctx.profile.role) in VALIDATION_WRITE_ROLES
+    persist = ctx.role in _VALIDATION_PERSIST_ROLES
     # Authorize the caller-supplied version with the user's RLS client before
     # allowing the service client to persist authoritative audit evidence.
     if not (

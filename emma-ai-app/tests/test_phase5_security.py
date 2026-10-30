@@ -21,7 +21,7 @@ def _ctx(client, *, role: str = "scheduler") -> AuthCtx:
     return AuthCtx(
         token="test-token",
         client=client,
-        profile=Profile(
+        profile=Profile.model_construct(
             id="profile-1",
             facility_id="f1",
             role=role,
@@ -48,6 +48,24 @@ def test_optimize_authorization_rejects_staff_and_overwrites_identity():
     _authorize_optimize(allowed, _ctx(store))
     assert allowed.facility_id == "f1"
     assert allowed.created_by == "profile-1"
+
+
+@pytest.mark.parametrize("role", ["OWNER", "SCHEDULER", "superintendent", "scheduler"])
+def test_optimize_accepts_only_canonical_or_legacy_owner_scheduler(role):
+    """Generation retains the approved OWNER/SCHEDULER boundary during migration."""
+    req = OptimizeRequest(facility_id="spoofed", period_id="p1")
+    _authorize_optimize(req, _ctx(build_store(), role=role))
+    assert req.facility_id == "f1"
+    assert req.created_by == "profile-1"
+
+
+@pytest.mark.parametrize("role", ["NURSE_MGR", "FRONTLINE", "ADMIN_CLERK", "not_a_role"])
+def test_optimize_fails_closed_for_non_generation_roles(role):
+    """Manual draft access never implies batch roster generation."""
+    req = OptimizeRequest(facility_id="spoofed", period_id="p1")
+    with pytest.raises(HTTPException) as exc:
+        _authorize_optimize(req, _ctx(build_store(), role=role))
+    assert exc.value.status_code == 403
 
 
 def test_source_version_must_belong_to_requested_period_at_both_boundaries():
@@ -195,6 +213,7 @@ def test_part_time_policy_maps_to_solver_work_pattern():
 
 def test_saturday_part_time_writeback_uses_earliest_unoccupied_weekday():
     store = FakeSupabase()
+    store.data["facilities"] = [{"id": "f1", "org_id": "org1"}]
     store.data["shift_definitions"] = [{
         "id": "cl-definition",
         "facility_id": "f1",
@@ -266,6 +285,7 @@ def test_saturday_part_time_writeback_uses_earliest_unoccupied_weekday():
 
 def test_saturday_part_time_writeback_defers_boundary_cl_without_definition():
     store = FakeSupabase()
+    store.data["facilities"] = [{"id": "f1", "org_id": "org1"}]
     staff = StaffInput(
         id="pt1",
         rank="CW",

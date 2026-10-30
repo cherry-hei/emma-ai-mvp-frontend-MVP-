@@ -25,19 +25,24 @@ from emma_core.models import (
 )
 from emma_core.services import escort as escort_svc
 from emma_core.services import scheduling as svc
+from emma_core.permissions import SystemRole
 
 router = APIRouter(tags=["task scheduling"])
 
-WRITE_ROLES = {"superintendent", "admin", "scheduler"}
+def _require_existing_scheduling_write(ctx: AuthCtx) -> None:
+    """Preserve the old scheduler/admin/owner write boundary through canonical roles.
 
-
-def _require_write_role(ctx: AuthCtx) -> None:
-    if str(ctx.profile.role) not in WRITE_ROLES:
-        raise api_error(
-            403,
-            "forbidden",
-            "Only a superintendent, admin or scheduler may change scheduling data.",
-        )
+    The current matrix does not provide a more specific approved feature for
+    task assignments, events, qualifications, or floor rules.  Keep these
+    existing routes deliberately narrow until one is approved rather than using
+    a broader related feature to grant new role powers.
+    """
+    if ctx.role not in {
+        SystemRole.OWNER,
+        SystemRole.ADMIN_CLERK,
+        SystemRole.SCHEDULER,
+    }:
+        raise api_error(403, "forbidden", "Your role may not change scheduling data.")
 
 
 @router.get("/task-assignments", response_model=list[TaskAssignmentOut])
@@ -59,7 +64,7 @@ def create_task_assignment(
     body: TaskAssignmentCreate,
     ctx: AuthCtx = Depends(get_ctx),
 ):
-    _require_write_role(ctx)
+    _require_existing_scheduling_write(ctx)
     return svc.create_task_assignment(
         ctx.client,
         ctx.facility_id,
@@ -73,7 +78,7 @@ def update_task_assignment(
     body: TaskAssignmentPatch,
     ctx: AuthCtx = Depends(get_ctx),
 ):
-    _require_write_role(ctx)
+    _require_existing_scheduling_write(ctx)
     return svc.update_task_assignment(
         ctx.client,
         ctx.facility_id,
@@ -87,7 +92,7 @@ def delete_task_assignment(
     task_assignment_id: str,
     ctx: AuthCtx = Depends(get_ctx),
 ):
-    _require_write_role(ctx)
+    _require_existing_scheduling_write(ctx)
     svc.delete_task_assignment(ctx.client, ctx.facility_id, task_assignment_id)
     return Response(status_code=204)
 
@@ -110,7 +115,7 @@ def upsert_escort_location(
     body: EscortLocationRequest,
     ctx: AuthCtx = Depends(get_ctx),
 ):
-    _require_write_role(ctx)
+    _require_existing_scheduling_write(ctx)
     return escort_svc.upsert_location(
         ctx.client, ctx.facility_id, code=body.code, name_en=body.name_en,
         name_zh=body.name_zh, aliases=body.aliases,
@@ -129,7 +134,7 @@ def set_escort_location(
     `escort_location_unknown: true`. The roster cell is the record of what the
     home did; a missing reference row is a gap in our data, not in theirs.
     """
-    _require_write_role(ctx)
+    _require_existing_scheduling_write(ctx)
     try:
         return escort_svc.set_escort_location(
             ctx.client, ctx.facility_id, task_assignment_id,
@@ -179,7 +184,7 @@ def create_facility_event(
     body: FacilityEventCreate,
     ctx: AuthCtx = Depends(get_ctx),
 ):
-    _require_write_role(ctx)
+    _require_existing_scheduling_write(ctx)
     return svc.create_facility_event(
         ctx.client,
         ctx.facility_id,
@@ -193,7 +198,7 @@ def update_facility_event(
     body: FacilityEventPatch,
     ctx: AuthCtx = Depends(get_ctx),
 ):
-    _require_write_role(ctx)
+    _require_existing_scheduling_write(ctx)
     return svc.update_facility_event(
         ctx.client,
         ctx.facility_id,
@@ -207,7 +212,7 @@ def delete_facility_event(
     event_id: str,
     ctx: AuthCtx = Depends(get_ctx),
 ):
-    _require_write_role(ctx)
+    _require_existing_scheduling_write(ctx)
     svc.delete_facility_event(ctx.client, ctx.facility_id, event_id)
     return Response(status_code=204)
 
@@ -229,7 +234,7 @@ def create_staff_qualification(
     body: StaffQualificationCreate,
     ctx: AuthCtx = Depends(get_ctx),
 ):
-    _require_write_role(ctx)
+    _require_existing_scheduling_write(ctx)
     return svc.create_staff_qualification(
         ctx.client, ctx.facility_id, body.model_dump(mode="json"))
 
@@ -241,7 +246,7 @@ def update_staff_qualification(
     body: StaffQualificationPatch,
     ctx: AuthCtx = Depends(get_ctx),
 ):
-    _require_write_role(ctx)
+    _require_existing_scheduling_write(ctx)
     return svc.update_staff_qualification(
         ctx.client, ctx.facility_id, qualification_id,
         body.model_dump(mode="json", exclude_unset=True))
@@ -252,7 +257,7 @@ def delete_staff_qualification(
     qualification_id: str,
     ctx: AuthCtx = Depends(get_ctx),
 ):
-    _require_write_role(ctx)
+    _require_existing_scheduling_write(ctx)
     svc.delete_staff_qualification(ctx.client, ctx.facility_id, qualification_id)
     return Response(status_code=204)
 
@@ -273,7 +278,7 @@ def create_floor_rule(
     body: FloorRuleCreate,
     ctx: AuthCtx = Depends(get_ctx),
 ):
-    _require_write_role(ctx)
+    _require_existing_scheduling_write(ctx)
     return svc.create_floor_rule(
         ctx.client, ctx.facility_id, body.model_dump(mode="json"))
 
@@ -284,7 +289,7 @@ def update_floor_rule(
     body: FloorRulePatch,
     ctx: AuthCtx = Depends(get_ctx),
 ):
-    _require_write_role(ctx)
+    _require_existing_scheduling_write(ctx)
     return svc.update_floor_rule(
         ctx.client, ctx.facility_id, rule_id,
         body.model_dump(mode="json", exclude_unset=True))
@@ -295,6 +300,6 @@ def delete_floor_rule(
     rule_id: str,
     ctx: AuthCtx = Depends(get_ctx),
 ):
-    _require_write_role(ctx)
+    _require_existing_scheduling_write(ctx)
     svc.delete_floor_rule(ctx.client, ctx.facility_id, rule_id)
     return Response(status_code=204)

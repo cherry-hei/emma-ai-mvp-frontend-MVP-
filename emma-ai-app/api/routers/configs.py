@@ -9,19 +9,13 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, Query
 
-from api.deps import AuthCtx, api_error, get_ctx
+from api.deps import AuthCtx, get_ctx, require_write
 from emma_core.models import FacilityConfigRequest, ShiftDefinitionRequest
+from emma_core.permissions import Feature
 from emma_core.services import audit
 from emma_core.services import facility_config as svc
 
 router = APIRouter(tags=["configs"])
-WRITE_ROLES = {"superintendent", "admin"}
-
-
-def _require_write_role(ctx: AuthCtx) -> None:
-    if str(ctx.profile.role) not in WRITE_ROLES:
-        raise api_error(403, "forbidden",
-                        "Only a superintendent or admin may change facility configuration.")
 
 
 @router.get("/facility-configs")
@@ -39,9 +33,11 @@ def config_keys():
 
 
 @router.post("/facility-configs", status_code=201)
-def put_config(body: FacilityConfigRequest, ctx: AuthCtx = Depends(get_ctx)):
+def put_config(
+    body: FacilityConfigRequest,
+    ctx: AuthCtx = Depends(require_write(Feature.FACILITY_SETTINGS)),
+):
     """Publish a new version of one config key, retiring the previous one."""
-    _require_write_role(ctx)
     previous = svc.get_config(ctx.client, ctx.facility_id, body.config_key)
     row = svc.put_config(
         ctx.client, ctx.facility_id, config_key=body.config_key,
@@ -57,10 +53,11 @@ def put_config(body: FacilityConfigRequest, ctx: AuthCtx = Depends(get_ctx)):
 
 
 @router.post("/shift-definitions", status_code=201)
-def upsert_shift_definition(body: ShiftDefinitionRequest,
-                            ctx: AuthCtx = Depends(get_ctx)):
+def upsert_shift_definition(
+    body: ShiftDefinitionRequest,
+    ctx: AuthCtx = Depends(require_write(Feature.FACILITY_SETTINGS)),
+):
     """Create or update one duty code for this facility."""
-    _require_write_role(ctx)
     row = svc.upsert_shift_definition(
         ctx.client, ctx.facility_id, shift_type=body.shift_type, label=body.label,
         start_time=body.start_time, end_time=body.end_time,
