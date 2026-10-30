@@ -4,6 +4,7 @@ import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { useAuth } from '@/components/layout/AuthContext'
 import { useLang } from '@/components/layout/LanguageContext'
+import { isIntegrationPreview } from '@/lib/previewGate'
 
 const PINK = '#E8187A'
 
@@ -23,6 +24,7 @@ const DEV_LOGIN =
   process.env.NEXT_PUBLIC_ENABLE_DEV_LOGIN === 'true'
 const DEV_EMAIL = DEV_LOGIN ? (process.env.NEXT_PUBLIC_DEV_EMAIL || '') : ''
 const DEV_PASSWORD = DEV_LOGIN ? (process.env.NEXT_PUBLIC_DEV_PASSWORD || '') : ''
+const INTEGRATION_PREVIEW = isIntegrationPreview()
 
 export default function LoginPage() {
   const { signIn } = useAuth()
@@ -42,12 +44,19 @@ export default function LoginPage() {
     password: isZH ? '密碼'                : 'Password',
     signin:   isZH ? '登入'                : 'Sign in',
     signing:  isZH ? '登入中…'             : 'Signing in…',
+    previewGate: isZH
+      ? '整合預覽：登入及伺服器連線已停用。'
+      : 'Integration preview: sign-in and server requests are disabled.',
     demo:     isZH ? '示範帳戶（本地）'      : 'Demo accounts (local)',
     demoHint: isZH ? '點擊即以該帳戶登入'    : 'Click to sign in as that account',
     failed:   isZH ? '登入失敗'            : 'Sign-in failed',
   }
 
   async function doSignIn(nextEmail: string, nextPassword: string) {
+    if (INTEGRATION_PREVIEW) {
+      setError(T.previewGate)
+      return
+    }
     setBusy(true)
     setError('')
     try {
@@ -68,7 +77,7 @@ export default function LoginPage() {
         {/* Brand */}
         <div className="text-center mb-6">
           <div className="text-3xl font-bold" style={{ color: PINK, letterSpacing: '-0.5px' }}>Emma AI</div>
-          <div className="text-[9px] tracking-[3px] mt-1 text-gray-400">MEDICAL INTELLIGENCE</div>
+          <div className="text-[9px] tracking-[3px] mt-1 text-gray-400">SCHEDULING &amp; COMPLIANCE INTELLIGENCE</div>
         </div>
 
         <div className="bg-white rounded-2xl shadow-xl border border-gray-100 p-7">
@@ -87,6 +96,12 @@ export default function LoginPage() {
             </button>
           </div>
 
+          {INTEGRATION_PREVIEW && (
+            <div role="status" className="mb-4 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+              {T.previewGate}
+            </div>
+          )}
+
           <form
             onSubmit={(e) => { e.preventDefault(); doSignIn(email, password) }}
             className="space-y-3"
@@ -99,6 +114,7 @@ export default function LoginPage() {
                 onChange={(e) => setEmail(e.target.value)}
                 autoComplete="username"
                 placeholder="you@emma.local"
+                disabled={INTEGRATION_PREVIEW}
                 className="w-full px-3 py-2 rounded-xl border border-gray-200 bg-gray-50 text-sm outline-none focus:border-pink-400"
               />
             </div>
@@ -110,6 +126,7 @@ export default function LoginPage() {
                 onChange={(e) => setPassword(e.target.value)}
                 autoComplete="current-password"
                 placeholder="••••••••"
+                disabled={INTEGRATION_PREVIEW}
                 className="w-full px-3 py-2 rounded-xl border border-gray-200 bg-gray-50 text-sm outline-none focus:border-pink-400"
               />
             </div>
@@ -122,7 +139,7 @@ export default function LoginPage() {
 
             <button
               type="submit"
-              disabled={busy || !email || !password}
+              disabled={INTEGRATION_PREVIEW || busy || !email || !password}
               className="w-full py-2.5 rounded-xl text-white text-sm font-semibold transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
               style={{ background: PINK }}
             >
@@ -140,7 +157,7 @@ export default function LoginPage() {
                 <button
                   key={a.email}
                   type="button"
-                  disabled={busy || !DEV_PASSWORD}
+                  disabled={INTEGRATION_PREVIEW || busy || !DEV_PASSWORD}
                   onClick={() => { setEmail(a.email); setPassword(DEV_PASSWORD); doSignIn(a.email, DEV_PASSWORD) }}
                   className="w-full flex items-center justify-between gap-2 px-3 py-2 rounded-xl border border-gray-200 hover:border-pink-300 hover:bg-pink-50/50 transition-colors text-left disabled:opacity-50 disabled:cursor-not-allowed"
                 >

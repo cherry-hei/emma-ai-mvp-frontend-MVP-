@@ -9,6 +9,11 @@ import { ApiRuleError, api } from '@/lib/api'
 import type { ShiftDef, StaffLite, TaskDefOut } from '@/lib/apiTypes'
 import { canSeeTask, issueLines, taskLabel } from '@/lib/shiftRules'
 import { taskDateTimes, type TaskTimeValidationError } from '@/lib/roster-ui'
+import {
+  hydrateTaskTimingRows,
+  persistTaskTimings,
+  type TaskTimingRow,
+} from '@/lib/task-schedule'
 
 /**
  * Create or edit one roster cell, with a per-task time schedule (spec 3.1).
@@ -26,7 +31,20 @@ import { taskDateTimes, type TaskTimeValidationError } from '@/lib/roster-ui'
  * times, and those are real - they post to `/task-assignments`.
  */
 
-type TaskRow = { id: string; start: string; end: string; taskId: string; note: string }
+type TaskRow = TaskTimingRow & { note: string }
+
+function taskRowsWithNotes(rows: TaskTimingRow[]): TaskRow[] {
+  return rows.map((row) => ({ ...row, note: '' }))
+}
+
+function taskRowSignature(shiftType: string, rows: TaskRow[]): string {
+  return JSON.stringify({
+    shiftType,
+    tasks: rows
+      .filter((row) => row.taskId || row.taskLabel)
+      .map((row) => row.taskLabel),
+  })
+}
 
 export interface CreateShiftModalProps {
   open: boolean
@@ -39,8 +57,12 @@ export interface CreateShiftModalProps {
   shiftDefs: ShiftDef[]
   taskDefs: TaskDefOut[]
   /** Pre-selection when opened from a cell. */
-  initial?: { staffId?: string; date?: string; shiftType?: string; tasks?: string[] } | null
-  /** Called after the cell (and any task rows) are saved. */
+  initial?: {
+    staffId?: string; date?: string; shiftType?: string; tasks?: string[]
+    /** Existing grid assignment for a reopen; never manufactured by the modal. */
+    assignmentId?: string | null
+  } | null
+  /** Called only once the cell and every requested task time are saved. */
   onSaved: (summary: {
     staffName: string; date: string; shiftType: string; wasWorking: boolean
     taskTiming: { requested: number; saved: number; failedLabels: string[] }
@@ -79,7 +101,7 @@ export function CreateShiftModal({
     to: isZH ? '至' : 'to',
     delete_task: isZH ? '刪除' : 'Remove',
     task_ph: isZH ? '選擇工作內容' : 'Select task',
-    note_ph: isZH ? '備註（可選）' : 'Note (optional)',
+    note_ph: isZH ? '工作備註：後端未提供保存合約' : 'Task notes: saving is not supported by the current API',
     add_task: isZH ? '+ 新增工作項目' : '+ Add Task',
     add_task_manual: isZH ? '+ 手動新增工作項目' : '+ Add Task Manually',
     manual_warning: isZH ? '手動模式：顯示所有工作項目；伺服器儲存前仍會核對資格。' : 'Manual mode shows all tasks; the server still validates eligibility before saving.',
@@ -90,6 +112,12 @@ export function CreateShiftModal({
     save: isZH ? '儲存更改' : 'Save Changes',
     rejected: isZH ? '此更次不可指派以下任務' : 'These tasks are not allowed on this shift',
     readonly: isZH ? '此版本不可編輯' : 'This version is not editable',
+    loading_times: isZH ? '正在讀取已儲存的工作時間…' : 'Loading saved task times…',
+    time_saved: isZH ? '時間已儲存' : 'Time saved',
+    time_failed: isZH ? '時間未儲存' : 'Time not saved',
+    time_not_recorded: isZH ? '尚未記錄工作時間；此工作可維持為無時間安排。' : 'No task time is recorded; this task may remain label-only.',
+    time_incomplete: isZH ? '請先修正所有未儲存的工作時間，然後重試。' : 'Fix each unsaved task time, then retry.',
+    retry_failed: isZH ? '重試未儲存時間' : 'Retry unsaved time(s)',
   }
 
   const [rank, setRank] = useState('ALL')
@@ -98,9 +126,15 @@ export function CreateShiftModal({
   const [shiftType, setShiftType] = useState('')
   const [rows, setRows] = useState<TaskRow[]>([])
   const [busy, setBusy] = useState(false)
+  const [loadingTimes, setLoadingTimes] = useState(false)
+  const [hydrationFailed, setHydrationFailed] = useState(false)
   const [err, setErr] = useState('')
   const [issues, setIssues] = useState<string[]>([])
   const [manualMode, setManualMode] = useState(false)
+  // Once a cell succeeds this ID is retained for task-only retries. It ensures a
+  // retry never writes the roster cell a second time.
+  const [shiftAssignmentId, setShiftAssignmentId] = useState<string | null>(null)
+  const [savedCellSignature, setSavedCellSignature] = useState('')
 
   const ranks = useMemo(
     () => ['ALL', ...Array.from(new Set(staff.map((s) => s.rank))).sort()],
@@ -112,6 +146,7 @@ export function CreateShiftModal({
   )
   const selected = staff.find((s) => s.id === staffId) ?? null
   const def = shiftDefs.find((d) => d.shift_type === shiftType) ?? null
+  const hasFailedTiming = rows.some((row) => row.timingStatus === 'failed')
 
   // Only tasks this rank may do on this shift - the same rule the server applies,
   // so the picker cannot offer something the write would refuse.
@@ -128,12 +163,52 @@ export function CreateShiftModal({
 
   useEffect(() => {
     if (!open) return
-    setErr(''); setIssues([]); setRows([]); setManualMode(false)
+    let active = true
+    const initialTasks = initial?.tasks ?? []
+    const initialRows: TaskRow[] = initialTasks.map((label, index) => {
+      const definition = taskDefs.find((task) => taskLabel(task) === label)
+      return {
+        id: `task-label-${index}-${label}`,
+        taskId: definition?.id || '',
+        taskLabel: label,
+        start: '', end: '', note: '', timingStatus: 'idle',
+      }
+    })
+    setErr(''); setIssues([]); setRows(initialRows); setManualMode(false); setHydrationFailed(false)
     setRank('ALL')
     setStaffId(initial?.staffId || staff[0]?.id || '')
     setDate(initial?.date || dates[0] || '')
     setShiftType(initial?.shiftType || '')
-  }, [open, initial, staff, dates])
+    setShiftAssignmentId(initial?.assignmentId || null)
+    setSavedCellSignature(taskRowSignature(initial?.shiftType || '', initialRows))
+
+    if (!initial?.assignmentId) {
+      setLoadingTimes(false)
+      return () => { active = false }
+    }
+
+    setLoadingTimes(true)
+    // This is a read-only reopen hydration. It never retries or creates a task.
+    api.taskAssignments({ shiftAssignmentId: initial.assignmentId })
+      .then((assignments) => {
+        if (!active) return
+        const hydrated = taskRowsWithNotes(hydrateTaskTimingRows(
+          initialTasks,
+          taskDefs.map((task) => ({ id: task.id, label: taskLabel(task) })),
+          assignments,
+        ))
+        setRows(hydrated)
+        setSavedCellSignature(taskRowSignature(initial?.shiftType || '', hydrated))
+      })
+      .catch((error) => {
+        if (active) {
+          setHydrationFailed(true)
+          setErr(error instanceof Error ? error.message : 'Failed to load saved task times')
+        }
+      })
+      .finally(() => { if (active) setLoadingTimes(false) })
+    return () => { active = false }
+  }, [open, initial?.assignmentId, initial?.date, initial?.shiftType, initial?.staffId, initial?.tasks, staff, dates, taskDefs])
 
   // A rank filter that hides the selected person would leave the form pointing
   // at somebody the list no longer shows.
@@ -148,7 +223,10 @@ export function CreateShiftModal({
   useEffect(() => {
     if (!manualMode) {
       const allowed = new Set(availableTasks.map((t) => t.id))
-      setRows((prev) => prev.filter((r) => !r.taskId || allowed.has(r.taskId)))
+      // A persisted or failed row remains visible even if eligibility changed
+      // since it was saved. Hiding it would conceal a task time that needs
+      // recovery; the server remains the authority on any later write.
+      setRows((prev) => prev.filter((r) => !r.taskId || allowed.has(r.taskId) || r.timingStatus !== 'idle'))
     }
   }, [availableTasks, manualMode])
 
@@ -156,11 +234,38 @@ export function CreateShiftModal({
     id: `${prev.length}-${Date.now()}`,
     start: hhmm(def?.start_time) === '--:--' ? '' : hhmm(def?.start_time),
     end: hhmm(def?.end_time) === '--:--' ? '' : hhmm(def?.end_time),
-    taskId: '', note: '',
+    taskId: '', taskLabel: '', note: '', timingStatus: 'idle',
   }])
   const updateRow = (id: string, patch: Partial<TaskRow>) =>
-    setRows((prev) => prev.map((r) => (r.id === id ? { ...r, ...patch } : r)))
+    setRows((prev) => prev.map((row) => {
+      if (row.id !== id) return row
+      const changesTiming = (patch.start !== undefined && patch.start !== row.start)
+        || (patch.end !== undefined && patch.end !== row.end)
+        || (patch.taskId !== undefined && patch.taskId !== row.taskId)
+        || (patch.taskLabel !== undefined && patch.taskLabel !== row.taskLabel)
+      // A changed clock must be written again; a stale saved marker would make
+      // the recovery helper skip the new value. Persisted task identities stay
+      // locked in the UI because renaming them safely needs backend deletion.
+      return changesTiming
+        ? { ...row, ...patch, timingStatus: 'idle', timingError: undefined, timingAdvisory: undefined }
+        : { ...row, ...patch }
+    }))
   const removeRow = (id: string) => setRows((prev) => prev.filter((r) => r.id !== id))
+
+  const chooseStaff = (nextStaffId: string) => {
+    if (nextStaffId !== staffId) {
+      // Switching cell in the form is an explicit new target. The old assignment
+      // ID must not be used to write times against a different staff/date cell.
+      setShiftAssignmentId(null); setSavedCellSignature(''); setRows([])
+    }
+    setStaffId(nextStaffId)
+  }
+  const chooseDate = (nextDate: string) => {
+    if (nextDate !== date) {
+      setShiftAssignmentId(null); setSavedCellSignature(''); setRows([])
+    }
+    setDate(nextDate)
+  }
 
   const timeError = (error: TaskTimeValidationError): string => {
     if (error === 'incomplete_time') return isZH ? '工作開始及結束時間必須一併填寫。' : 'Task start and end times must be entered together.'
@@ -171,53 +276,69 @@ export function CreateShiftModal({
   async function handleSave() {
     if (!versionId) { setErr(L.readonly); return }
     if (!selected || !date || !shiftType) return
+    // A GET error is not evidence of an empty schedule. Do not overwrite a
+    // recoverable existing assignment until its task state can be read.
+    if (hydrationFailed) return
     setBusy(true); setErr(''); setIssues([])
-    const chosen = rows.filter((r) => r.taskId)
-    const timed = chosen.map((row) => ({
-      row,
-      timing: taskDateTimes(date, row.start, row.end),
-    }))
-    const invalid = timed.find((item) => !item.timing.ok)
-    if (invalid && !invalid.timing.ok) {
-      setErr(timeError(invalid.timing.error))
-      setBusy(false)
-      return
+    const chosen = rows.filter((row) => row.taskId || row.taskLabel)
+    const invalid = chosen.find((row) => {
+      const timing = taskDateTimes(date, row.start, row.end)
+      return !timing.ok
+    })
+    if (invalid) {
+      const timing = taskDateTimes(date, invalid.start, invalid.end)
+      if (!timing.ok) {
+        setRows((current) => current.map((row) => row.id === invalid.id
+          ? { ...row, timingStatus: 'failed', timingError: timeError(timing.error) }
+          : row))
+        setErr(timeError(timing.error))
+        setBusy(false)
+        return
+      }
     }
     try {
-      const { assignment_id } = await api.upsertCell({
-        roster_version_id: versionId, staff_id: selected.id, date,
-        shift_type: shiftType,
-        tasks: chosen.map((r) => {
-          const td = taskDefs.find((t) => t.id === r.taskId)!
-          return taskLabel(td)
-        }),
+      const signature = taskRowSignature(shiftType, chosen)
+      let assignmentId = shiftAssignmentId
+      // The initial cell write must happen before time rows, but a retained ID
+      // prevents a partial-time retry from writing it again. A changed cell is an
+      // explicit new edit, not a hidden retry, and therefore legitimately upserts.
+      if (!assignmentId || signature !== savedCellSignature) {
+        const result = await api.upsertCell({
+          roster_version_id: versionId, staff_id: selected.id, date,
+          shift_type: shiftType, tasks: chosen.map((row) => row.taskLabel),
+        })
+        assignmentId = result.assignment_id
+        setShiftAssignmentId(assignmentId)
+        setSavedCellSignature(signature)
+      }
+
+      // `set_cell` deletes and recreates the underlying assignment. If a cell
+      // label change required that API call, every prior timing belongs to the
+      // removed assignment and must be written to its replacement as well.
+      const rowsForTiming = signature !== savedCellSignature
+        ? rows.map((row) => row.timingStatus === 'saved'
+          ? { ...row, timingStatus: 'idle' as const, timingError: undefined }
+          : row)
+        : rows
+      const result = await persistTaskTimings({
+        shiftAssignmentId: assignmentId,
+        rows: rowsForTiming,
+        timeFor: (row) => taskDateTimes(date, row.start, row.end),
+        upsert: api.createTaskAssignment,
       })
-      // Times are the reason this dialog exists rather than the inline editor:
-      // the cell write records *which* tasks, these record *when*. Sent after the
-      // cell so a refused assignment never leaves orphan task rows behind.
-      const failedLabels: string[] = []
-      let taskTimesSaved = 0
-      for (const { row, timing } of timed) {
-        if (!timing.ok || !timing.startAt || !timing.endAt) continue
-        try {
-          await api.createTaskAssignment({
-            shift_assignment_id: assignment_id,
-            task_id: row.taskId,
-            start_at: timing.startAt,
-            end_at: timing.endAt,
-          })
-          taskTimesSaved += 1
-        } catch {
-          // The cell write already saved the task label. Report the missing clock
-          // time explicitly rather than treating this as a complete task save.
-          const task = taskDefs.find((item) => item.id === row.taskId)
-          failedLabels.push(task ? taskLabel(task) : row.taskId)
-        }
+      const nextRows = result.rows.map((row) => ({
+        ...row,
+        note: rows.find((existing) => existing.id === row.id)?.note || '',
+      }))
+      setRows(nextRows)
+      if (!result.complete) {
+        setErr(L.time_incomplete)
+        return
       }
       onSaved({
         staffName: selected.name_en || selected.name, date, shiftType,
         wasWorking: !!initial?.shiftType,
-        taskTiming: { requested: timed.filter((item) => item.timing.ok && !!item.timing.startAt).length, saved: taskTimesSaved, failedLabels },
+        taskTiming: { requested: result.attempted, saved: result.saved, failedLabels: [] },
       })
       onClose()
     } catch (e) {
@@ -243,14 +364,16 @@ export function CreateShiftModal({
   const isEditMode = mode === 'edit'
 
   return (
-    <Dialog open={open} onOpenChange={onClose}>
+    // Busy-close guard remains: if (!next && !busy) onClose() applies when no
+    // partial task-time recovery must stay visible.
+    <Dialog open={open} onOpenChange={(next) => { if (!next && !busy && !hasFailedTiming) onClose() }}>
       <DialogContent className="w-[min(96vw,860px)] max-w-none rounded-2xl max-h-[90vh] overflow-hidden p-0">
         <div className="flex min-w-0 flex-col max-h-[90vh]">
           <DialogHeader className="px-6 pt-6 pb-3 border-b border-gray-100">
             <div className="flex min-w-0 items-center gap-3">
               <div className="w-11 h-11 rounded-xl flex items-center justify-center text-xl shrink-0" style={{ background: '#fce8f3' }}>✨</div>
               <div className="min-w-0">
-                <DialogTitle className="text-lg font-bold truncate">
+                <DialogTitle className="text-lg font-bold break-words">
                   {isEditMode ? L.title_edit : L.title_create}
                 </DialogTitle>
                 <p className="text-xs font-semibold mt-0.5" style={{ color: PINK }}>{L.ai_sub}</p>
@@ -263,7 +386,7 @@ export function CreateShiftModal({
               {/* Date - constrained to the period being edited */}
               <div>
                 <label className="text-[9px] font-bold text-gray-500 uppercase tracking-wider">{L.date}</label>
-                <Select value={date} onValueChange={setDate}>
+                <Select value={date} onValueChange={chooseDate} disabled={busy || loadingTimes || hasFailedTiming}>
                   <SelectTrigger className="mt-1.5 rounded-xl bg-gray-50 border-gray-200 w-full">
                     <SelectValue />
                   </SelectTrigger>
@@ -277,7 +400,7 @@ export function CreateShiftModal({
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 min-w-0">
                 <div className="min-w-0">
                   <label className="text-[9px] font-bold text-gray-500 uppercase tracking-wider">{L.position}</label>
-                  <Select value={rank} onValueChange={setRank}>
+                  <Select value={rank} onValueChange={setRank} disabled={busy || loadingTimes || hasFailedTiming}>
                     <SelectTrigger className="mt-1.5 rounded-xl bg-gray-50 border-gray-200 w-full">
                       <SelectValue />
                     </SelectTrigger>
@@ -290,7 +413,7 @@ export function CreateShiftModal({
                 </div>
                 <div className="min-w-0">
                   <label className="text-[9px] font-bold text-gray-500 uppercase tracking-wider">{L.employee}</label>
-                  <Select value={staffId} onValueChange={setStaffId}>
+                  <Select value={staffId} onValueChange={chooseStaff} disabled={busy || loadingTimes || hasFailedTiming}>
                     <SelectTrigger className="mt-1.5 rounded-xl bg-gray-50 border-gray-200 w-full">
                       <SelectValue />
                     </SelectTrigger>
@@ -311,7 +434,7 @@ export function CreateShiftModal({
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 min-w-0">
                 <div className="min-w-0">
                   <label className="text-[9px] font-bold text-gray-500 uppercase tracking-wider">{L.shift_type}</label>
-                  <Select value={shiftType} onValueChange={setShiftType}>
+                  <Select value={shiftType} onValueChange={setShiftType} disabled={busy || loadingTimes || hasFailedTiming}>
                     <SelectTrigger className="mt-1.5 rounded-xl bg-gray-50 border-gray-200 w-full">
                       <SelectValue placeholder={L.pick_shift} />
                     </SelectTrigger>
@@ -345,7 +468,7 @@ export function CreateShiftModal({
                    </span>
                  </div>
 
-                  {availableTasks.length === 0 && !manualMode ? (
+                  {availableTasks.length === 0 && !manualMode && rows.length === 0 ? (
                     <div className="text-[11px] text-gray-400 border border-dashed border-gray-200 rounded-xl p-3 text-center space-y-2">
                       {L.no_tasks}
                       {allTasks.length > 0 && (
@@ -367,18 +490,24 @@ export function CreateShiftModal({
                         {rows.map((row, index) => (
                           <div key={row.id} className="border border-gray-200 rounded-xl p-3 bg-gray-50 min-w-0">
                             <div className="grid grid-cols-1 gap-2 sm:grid-cols-[1fr_auto_1fr_auto] sm:items-center min-w-0">
-                              <input type="time" value={row.start} onChange={(e) => updateRow(row.id, { start: e.target.value })}
-                                className="min-w-0 w-full px-3 py-2 border border-gray-200 rounded-xl text-sm bg-white" />
+                              <input type="time" value={row.start} disabled={busy} onChange={(e) => updateRow(row.id, { start: e.target.value })}
+                                className="min-w-0 w-full px-3 py-2 border border-gray-200 rounded-xl text-sm bg-white disabled:bg-gray-100" />
                               <span className="text-xs text-gray-400 shrink-0">{L.to}</span>
-                              <input type="time" value={row.end} onChange={(e) => updateRow(row.id, { end: e.target.value })}
-                                className="min-w-0 w-full px-3 py-2 border border-gray-200 rounded-xl text-sm bg-white" />
-                              <button type="button" onClick={() => removeRow(row.id)}
-                                className="text-xs font-semibold text-red-500">
+                              <input type="time" value={row.end} disabled={busy} onChange={(e) => updateRow(row.id, { end: e.target.value })}
+                                className="min-w-0 w-full px-3 py-2 border border-gray-200 rounded-xl text-sm bg-white disabled:bg-gray-100" />
+                              <button type="button" onClick={() => removeRow(row.id)} disabled={busy || row.taskIdentityLocked || row.timingStatus !== 'idle'}
+                                className="text-xs font-semibold text-red-500 disabled:opacity-40">
                                 {L.delete_task}
                               </button>
                             </div>
                             <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2 min-w-0">
-                              <Select value={row.taskId} onValueChange={(value: string) => updateRow(row.id, { taskId: value })}>
+                              <Select value={row.taskId} onValueChange={(value: string) => {
+                                const task = taskDefs.find((item) => item.id === value)
+                                updateRow(row.id, {
+                                  taskId: value, taskLabel: task ? taskLabel(task) : '',
+                                  timingStatus: 'idle', timingError: undefined, timingAdvisory: undefined,
+                                })
+                              }} disabled={busy || row.taskIdentityLocked}>
                                 <SelectTrigger className="rounded-xl bg-white border-gray-200 w-full min-w-0">
                                   <SelectValue placeholder={L.task_ph} />
                                 </SelectTrigger>
@@ -388,21 +517,34 @@ export function CreateShiftModal({
                                   ))}
                                 </SelectContent>
                               </Select>
-                              <input type="text" value={row.note}
+                              <input type="text" value={row.note} disabled
+                                title={L.note_ph}
                                 onChange={(e) => updateRow(row.id, { note: e.target.value })}
                                 placeholder={L.note_ph}
                                 className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm bg-white min-w-0" />
                             </div>
                             <div className="mt-2 text-[11px] text-gray-500 break-words">
                               {L.item} {index + 1}：{row.start || '--:--'} - {row.end || '--:--'} ／
-                              {taskDefs.find((t) => t.id === row.taskId)
-                                ? taskLabel(taskDefs.find((t) => t.id === row.taskId)!)
-                                : '—'}
+                              {row.taskLabel || (taskDefs.find((t) => t.id === row.taskId)
+                                ? taskLabel(taskDefs.find((t) => t.id === row.taskId)!) : '—')}
                             </div>
+                            {row.timingStatus === 'saved' && (
+                              <div className="mt-1 text-[10px] font-semibold text-emerald-700">{L.time_saved}</div>
+                            )}
+                            {row.timingStatus === 'failed' && (
+                              <div className="mt-1 text-[10px] font-semibold text-rose-600">
+                                {L.time_failed}{row.timingError ? `: ${row.timingError}` : ''}
+                              </div>
+                            )}
+                            {row.timingStatus === 'idle' && row.timingAdvisory && (
+                              <div className="mt-1 text-[10px] font-semibold text-amber-700">
+                                {L.time_not_recorded}
+                              </div>
+                            )}
                           </div>
                         ))}
                       </div>
-                      <button type="button" onClick={addRow}
+                      <button type="button" onClick={addRow} disabled={busy}
                         className="mt-3 text-xs font-semibold" style={{ color: PINK }}>
                         {L.add_task}
                       </button>
@@ -424,6 +566,7 @@ export function CreateShiftModal({
                 </div>
               )}
               {err && <div className="text-xs text-rose-600">{err}</div>}
+              {loadingTimes && <div className="text-xs text-gray-500">{L.loading_times}</div>}
             </div>
           </div>
 
@@ -431,26 +574,26 @@ export function CreateShiftModal({
           <div className="px-6 py-4 border-t border-gray-100 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
             <div className="w-full sm:w-auto">
               {isEditMode && onDeleted ? (
-                <Button variant="outline" onClick={handleDelete} disabled={busy}
+                <Button variant="outline" onClick={handleDelete} disabled={busy || hasFailedTiming}
                   className="w-full sm:w-auto rounded-xl text-xs text-red-500 border-red-200 hover:bg-red-50">
                   {L.delete_shift}
                 </Button>
               ) : (
-                <Button variant="outline" onClick={onClose} className="w-full sm:w-auto rounded-xl text-xs">
+                <Button variant="outline" onClick={onClose} disabled={busy || hasFailedTiming} className="w-full sm:w-auto rounded-xl text-xs">
                   {L.cancel}
                 </Button>
               )}
             </div>
             <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:items-center">
               {isEditMode && (
-                <Button variant="outline" onClick={onClose} className="w-full sm:w-auto rounded-xl text-xs">
+                <Button variant="outline" onClick={onClose} disabled={busy || hasFailedTiming} className="w-full sm:w-auto rounded-xl text-xs">
                   {L.cancel}
                 </Button>
               )}
-              <Button onClick={handleSave} disabled={busy || !staffId || !date || !shiftType}
+              <Button onClick={handleSave} disabled={busy || loadingTimes || hydrationFailed || !staffId || !date || !shiftType}
                 className="w-full sm:w-auto rounded-xl text-xs text-white"
                 style={{ background: PINK }}>
-                {busy ? '…' : L.save}
+                {busy ? '…' : rows.some((row) => row.timingStatus === 'failed') ? L.retry_failed : L.save}
               </Button>
             </div>
           </div>

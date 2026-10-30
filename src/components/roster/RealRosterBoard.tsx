@@ -12,7 +12,7 @@ import type {
 import { useLang } from '@/components/layout/LanguageContext'
 import { CreateShiftModal } from '@/components/modals/CreateShiftModal'
 import { canSeeTask, reasonText } from '@/lib/shiftRules'
-import { addUtcDays, datesForRosterView, exactPaidMinutes, formatExactMinutes, type RosterViewMode } from '@/lib/roster-ui'
+import { moveRosterViewAnchor, datesForRosterView, exactPaidMinutes, formatExactMinutes, type RosterViewMode } from '@/lib/roster-ui'
 import { AiOptionsModal } from './AiOptionsModal'
 import { CreateEventModal } from './CreateEventModal'
 import { BatchCreateShiftModal } from '@/components/modals/BatchCreateShiftModal'
@@ -176,6 +176,7 @@ export function RealRosterBoard() {
   const [filterSearch, setFilterSearch] = useState('')
   const gridRequestRef = useRef(0)
   const validationRequestRef = useRef(0)
+  const versionsRequestRef = useRef(0)
   // Which period's logs are currently in state, so the writer below never saves
   // an empty initial state over a stored list before the reader has run.
   const logsHydrated = useRef('')
@@ -236,6 +237,7 @@ export function RealRosterBoard() {
   useEffect(() => () => {
     gridRequestRef.current += 1
     validationRequestRef.current += 1
+    versionsRequestRef.current += 1
   }, [])
 
   useEffect(() => {
@@ -278,19 +280,23 @@ export function RealRosterBoard() {
   }, [periodId, pendingLog, publishedLog])
 
   const loadVersions = useCallback(async (pid: string) => {
+    const requestId = ++versionsRequestRef.current
     const vs = await api.rosterVersions(pid)
+    if (requestId !== versionsRequestRef.current) return
     setVersions(vs)
     try {
       const cmp = await api.compareOptions(pid)
       const map: Record<string, OptionScoreOut> = {}
       cmp.options.forEach((o) => { map[o.roster_version_id] = o })
-      setScores(map)
-    } catch { setScores({}) }
+      if (requestId === versionsRequestRef.current) setScores(map)
+    } catch { if (requestId === versionsRequestRef.current) setScores({}) }
   }, [])
 
   useEffect(() => {
     if (!periodId) return
     setVersionId('')
+    setVersions([])
+    setScores({})
     loadVersions(periodId).catch(() => {})
   }, [periodId, loadVersions])
 
@@ -311,7 +317,7 @@ export function RealRosterBoard() {
     const requestId = ++gridRequestRef.current
     // The next grid owns the validation strip; invalidate any older response.
     validationRequestRef.current += 1
-    setLoading(true); setError(''); setValidation(null)
+    setLoading(true); setError(''); setValidation(null); setGrid(null)
     try {
       const nextGrid = await api.rosterGrid(pid, vid ? { versionId: vid } : undefined)
       if (requestId !== gridRequestRef.current) return
@@ -339,13 +345,13 @@ export function RealRosterBoard() {
 
   // ── derived ──────────────────────────────────────────────────────────────
   const currentVersion = useMemo(
-    () => (versionId ? versions.find((v) => v.id === versionId) : versions.find((v) => v.version_type === 'manual')) ?? null,
-    [versions, versionId],
+    () => versions.find((v) => v.id === (versionId || grid?.version_id)) ?? null,
+    [versions, versionId, grid?.version_id],
   )
   const activeVersionId = grid?.version_id ?? currentVersion?.id ?? ''
   // Only the manual draft is hand-editable; A/B/C solver options are read-only
   // results you publish, and published/archived versions are locked.
-  const editable = currentVersion?.version_type === 'manual' && currentVersion?.status === 'draft'
+  const editable = !loading && !error && grid?.period_id === periodId && grid?.version_id === currentVersion?.id && currentVersion?.version_type === 'manual' && currentVersion?.status === 'draft'
 
   const blockingViolations = useMemo(
     () => (validation?.violations ?? []).filter((item) => !item.resolved && item.severity.toLowerCase() === 'hard'),
@@ -404,15 +410,7 @@ export function RealRosterBoard() {
   }, [grid?.rows, periodColumns])
 
   function moveView(direction: -1 | 1) {
-    if (!periodColumns.length) return
-    const base = focusDate || periodColumns[0]
-    const offset = direction * (viewMode === 'month' ? 31 : 7)
-    const candidate = addUtcDays(base, offset)
-    if (!candidate) return
-    const next = direction > 0
-      ? periodColumns.find((date) => date >= candidate) ?? periodColumns[periodColumns.length - 1]
-      : [...periodColumns].reverse().find((date) => date <= candidate) ?? periodColumns[0]
-    setFocusDate(next)
+    setFocusDate(moveRosterViewAnchor(periodColumns, focusDate, viewMode, direction))
   }
 
   // staffId → (date → cell)
@@ -433,6 +431,21 @@ export function RealRosterBoard() {
     })
     return grouped
   }, [grid])
+
+  // The full shift modal reopens an existing grid cell by its actual assignment
+  // ID. That lets it read saved task times without inferring an ID or writing.
+  const createShiftInitial = useMemo(() => {
+    const cell = selectedStaffId && focusDate
+      ? cellLookup.get(selectedStaffId)?.get(focusDate)
+      : undefined
+    return {
+      staffId: selectedStaffId,
+      date: focusDate || columns[0],
+      shiftType: cell?.shift_type || undefined,
+      tasks: cell?.tasks || [],
+      assignmentId: cell?.assignment_id || null,
+    }
+  }, [cellLookup, columns, focusDate, selectedStaffId])
 
   // ── actions ──────────────────────────────────────────────────────────────
   const refresh = useCallback(async () => {
@@ -556,6 +569,8 @@ export function RealRosterBoard() {
       setFilterFloor('ALL')
       setFilterSearch(row.staff.name_en || row.staff.name || row.staff.rank)
     }
+    setSelectedStaffId(staffId)
+    setFocusDate(date)
     setFocusedCell({ staffId, date })
     setRuleReviewOpen(false)
     window.setTimeout(() => document.getElementById(`roster-cell-${staffId}-${date}`)?.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'center' }), 80)
@@ -1190,7 +1205,8 @@ export function RealRosterBoard() {
           dates={periodColumns}
           shiftDefs={shiftDefs}
           taskDefs={taskDefs}
-          initial={{ staffId: selectedStaffId, date: focusDate || columns[0] }}
+          mode={createShiftInitial.shiftType ? 'edit' : 'create'}
+          initial={createShiftInitial}
           onSaved={({ staffName, date, shiftType, wasWorking, taskTiming }) => {
             logChange(wasWorking ? 'edit' : 'create',
                       wasWorking ? T.actionEdit : T.actionCreate,

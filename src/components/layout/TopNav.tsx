@@ -100,8 +100,8 @@ export function TopNav({ onMenuToggle }: { onMenuToggle?: () => void } = {}) {
           id="emma-text-scale"
           value={textScale}
           onChange={event => changeTextScale(event.target.value)}
-          className="min-h-10 max-w-[8.5rem] cursor-pointer rounded-md border-0 bg-white px-2 py-1 text-sm font-semibold outline-none focus:ring-1"
-          style={{ color: PINK }}
+          className="min-h-10 cursor-pointer rounded-md border-0 bg-white px-2 py-1 text-sm font-semibold outline-none focus:ring-1"
+          style={{ color: PINK, width: 'calc(8.5rem * var(--emma-text-scale, 1))', maxWidth: 'calc(100vw - 2rem)' }}
           aria-label={textScaleLabel}
         >
           {DISPLAY_TEXT_SCALES.map(scale => (
@@ -171,11 +171,11 @@ export function TopNav({ onMenuToggle }: { onMenuToggle?: () => void } = {}) {
               aria-hidden
               onClick={() => setMenuOpen(false)}
             />
-            <div className="absolute right-0 top-full z-50 mt-1 w-64 rounded-xl border border-gray-200 bg-white p-1 shadow-lg" role="menu">
+            <div className="absolute right-0 top-full z-50 mt-1 w-[min(24rem,calc(100vw-1.5rem))] max-h-[70dvh] overflow-y-auto rounded-xl border border-gray-200 bg-white p-1 shadow-lg" role="menu">
               <div className="px-3 py-2">
                 <div className="text-[10px] text-gray-400">{isZH ? '已登入帳戶' : 'Signed-in account'}</div>
-                <div className="truncate text-xs font-semibold text-gray-800">{user?.email ?? '-'}</div>
-                <div className="mt-0.5 truncate text-[10px] text-gray-500">
+                <div className="break-words text-xs font-semibold text-gray-800">{user?.email ?? '-'}</div>
+                <div className="mt-0.5 break-words text-[10px] text-gray-500">
                   {user?.facilityName}{user?.role ? ` · ${roleLabel(user.role, isZH)}` : ''}
                 </div>
               </div>

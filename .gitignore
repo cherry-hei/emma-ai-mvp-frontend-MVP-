@@ -73,6 +73,9 @@ __pycache__/
 !/docs/naac/
 /docs/naac/*
 !/docs/naac/*.md
+!/docs/nov04-integration/
+/docs/nov04-integration/*
+!/docs/nov04-integration/*.md
 !/docs/ZH_REVIEW.md
 !/docs/ZH_REVIEW.csv
 /.claude/launch.json

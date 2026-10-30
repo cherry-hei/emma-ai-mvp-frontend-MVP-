@@ -1,5 +1,5 @@
 'use client'
-import { createContext, useCallback, useContext, useEffect, useState, ReactNode } from 'react'
+import { createContext, useCallback, useContext, useEffect, useRef, useState, ReactNode } from 'react'
 import { useRouter } from 'next/navigation'
 import { api, login as apiLogin, logout as apiLogout, getToken, getSession, onUnauthorized } from '@/lib/api'
 import { normaliseRole } from '@/lib/permissions'
@@ -31,12 +31,14 @@ const Ctx = createContext<AuthCtx>({
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [status, setStatus] = useState<Status>('loading')
   const [user, setUser] = useState<AuthUser | null>(null)
+  const actionGeneration = useRef(0)
   const router = useRouter()
 
   // Let the API layer hard-drop us to /login when a session dies mid-use (a 401 that
   // even a token refresh can't rescue), from any page, not just on the next mount.
   useEffect(() => {
     onUnauthorized(() => {
+      actionGeneration.current += 1
       setUser(null)
       setStatus('anon')
       router.replace('/login')
@@ -49,6 +51,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // expired token clears itself and drops us to the signed-out state.
   useEffect(() => {
     let cancelled = false
+    const hydrateGeneration = actionGeneration.current
 
     async function hydrate() {
       const token = getToken()
@@ -58,7 +61,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
       // Optimistic paint from the cached snapshot while /auth/me verifies.
       const snap = getSession()
-      if (snap && !cancelled) {
+      if (snap && !cancelled && actionGeneration.current === hydrateGeneration) {
         setUser({
           userId: snap.user_id, email: snap.email, role: snap.role,
           facilityId: snap.facility_id, facilityName: snap.facility_name,
@@ -66,7 +69,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
       try {
         const p = await api.me()
-        if (cancelled) return
+        if (cancelled || actionGeneration.current !== hydrateGeneration) return
         setUser({
           userId: p.auth_user_id ?? p.id,
           email: p.email ?? null,
@@ -76,7 +79,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         })
         setStatus('authed')
       } catch {
-        if (cancelled) return
+        if (cancelled || actionGeneration.current !== hydrateGeneration) return
         apiLogout()
         setUser(null)
         setStatus('anon')
@@ -88,7 +91,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [])
 
   const signIn = useCallback(async (email: string, password: string) => {
+    const signInGeneration = ++actionGeneration.current
     const s = await apiLogin(email, password)
+    if (actionGeneration.current !== signInGeneration) {
+      throw new Error('Sign-in was superseded by a newer session action.')
+    }
     setUser({
       userId: s.user_id, email: s.email ?? null, role: s.role ?? null,
       facilityId: s.facility_id ?? null, facilityName: s.facility_name ?? null,
@@ -97,6 +104,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [])
 
   const signOut = useCallback(() => {
+    actionGeneration.current += 1
     apiLogout()
     setUser(null)
     setStatus('anon')

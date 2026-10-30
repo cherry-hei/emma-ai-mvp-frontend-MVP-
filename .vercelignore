@@ -1,0 +1,12 @@
+.env*
+.vercel/
+.git/
+node_modules/
+.next/
+emma-ai-app/
+reports/
+private/
+*.log
+*.xlsx
+*.docx
+*.pdf

@@ -102,3 +102,20 @@ export function taskDateTimes(date: string, start: string, end: string): TaskDat
     crossesMidnight: nextDate !== date,
   }
 }
+
+export function moveRosterViewAnchor(periodDates: string[], anchor: string, mode: RosterViewMode, direction: -1 | 1): string {
+  const dates = [...new Set(periodDates)].filter((date) => utcDate(date) !== null).sort()
+  if (!dates.length) return ''
+  const current = dates.includes(anchor) ? anchor : dates[0]
+  if (mode === 'month') {
+    const months = [...new Set(dates.map((date) => date.slice(0, 7)))]
+    const index = months.indexOf(current.slice(0, 7))
+    const target = months[Math.max(0, Math.min(months.length - 1, index + direction))]
+    return dates.find((date) => date.startsWith(target)) || current
+  }
+  const candidate = addUtcDays(current, direction * 7)
+  if (!candidate) return current
+  return direction > 0
+    ? dates.find((date) => date >= candidate) || dates[dates.length - 1]
+    : [...dates].reverse().find((date) => date <= candidate) || dates[0]
+}

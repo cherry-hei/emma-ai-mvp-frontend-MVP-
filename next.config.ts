@@ -1,6 +1,6 @@
 import type { NextConfig } from "next";
 const nextConfig: NextConfig = {
-  typescript: { ignoreBuildErrors: true },
+  typescript: { ignoreBuildErrors: false },
   // Use standalone output for Amplify SSR hosting
   output: 'standalone',
   // Disable static page generation for pages that use client context

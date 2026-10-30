@@ -1,0 +1,49 @@
+name: Verify manager UI (no deployment)
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'src/**'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'next.config.*'
+      - 'tsconfig.json'
+      - '.github/workflows/verify-nov04-ui.yml'
+  push:
+    branches: ['agent/nov04-*']
+    paths:
+      - 'src/**'
+      - 'package.json'
+      - 'package-lock.json'
+      - '.github/workflows/verify-nov04-ui.yml'
+permissions:
+  contents: read
+concurrency:
+  group: verify-ui-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  manager:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      NEXT_TELEMETRY_DISABLED: '1'
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: TypeScript (fail on errors)
+        run: npx tsc --noEmit
+      - name: Focused UI and roster tests
+        run: npm run test:ui
+      - name: Next.js build (never swallow errors)
+        run: npx next build
+      - name: Verification summary
+        if: always()
+        run: |
+          echo '## Manager UI verification' >> "$GITHUB_STEP_SUMMARY"
+          echo 'Commit: `${{ github.sha }}`' >> "$GITHUB_STEP_SUMMARY"
+          echo 'Status: `${{ job.status }}`' >> "$GITHUB_STEP_SUMMARY"
+          echo 'No production deployment, database migration or customer-data access was performed.' >> "$GITHUB_STEP_SUMMARY"

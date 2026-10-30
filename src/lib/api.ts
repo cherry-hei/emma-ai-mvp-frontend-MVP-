@@ -21,6 +21,7 @@ import type {
   StaffNotification, StaffQualification, TaskAssignment, TaskDefOut,
   ThresholdMonitor, Unit, ValidationOut, VersionOut,
 } from './apiTypes'
+import { assertPreviewNetworkAllowed } from './previewGate.js'
 
 const BASE = (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000').replace(/\/+$/, '')
 const TOKEN_KEY = 'emma_token'
@@ -39,6 +40,13 @@ export interface StoredSession {
 }
 
 let cachedToken: string | null = null
+let credentialsGeneration = 0
+
+interface CredentialSnapshot {
+  generation: number
+  token: string | null
+  refresh: string | null
+}
 
 function readToken(): string | null {
   if (cachedToken) return cachedToken
@@ -77,6 +85,27 @@ function writeSession(s: SessionOut | null): void {
   }
 }
 
+/** Update all persisted credentials as one replacement identity generation. */
+function storeSession(session: SessionOut | null): void {
+  credentialsGeneration += 1
+  writeToken(session?.access_token ?? null)
+  writeSession(session)
+  writeRefresh(session?.refresh_token ?? null)
+}
+
+function credentialsSnapshot(): CredentialSnapshot {
+  return {
+    generation: credentialsGeneration,
+    token: readToken(),
+    refresh: readRefresh(),
+  }
+}
+
+function isCurrentCredentials(snapshot: CredentialSnapshot): boolean {
+  return credentialsGeneration === snapshot.generation &&
+    readToken() === snapshot.token && readRefresh() === snapshot.refresh
+}
+
 export function getSession(): StoredSession | null {
   if (typeof window === 'undefined') return null
   try {
@@ -92,9 +121,7 @@ export function getToken(): string | null {
 }
 
 export function logout(): void {
-  writeToken(null)
-  writeSession(null)
-  writeRefresh(null)
+  storeSession(null)
 }
 
 /**
@@ -131,6 +158,11 @@ async function toError(res: Response): Promise<Error> {
 }
 
 export async function login(email: string, password: string): Promise<SessionOut> {
+  assertPreviewNetworkAllowed()
+  // A later sign-in intent supersedes this one even before either network response
+  // arrives, so an earlier response cannot install the wrong account.
+  credentialsGeneration += 1
+  const beforeLogin = credentialsSnapshot()
   const res = await fetch(`${BASE}/auth/login`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -138,17 +170,11 @@ export async function login(email: string, password: string): Promise<SessionOut
   })
   if (!res.ok) throw await toError(res)
   const session = (await res.json()) as SessionOut
-  writeToken(session.access_token)
-  writeSession(session)
-  writeRefresh(session.refresh_token ?? null)
+  if (!isCurrentCredentials(beforeLogin)) {
+    throw new Error('Sign-in was superseded by a newer session action.')
+  }
+  storeSession(session)
   return session
-}
-
-// The bearer token for the current user, or null when signed out. Sign-in is owned
-// by the /login screen (see AuthContext) - there is no implicit env auto-login, so
-// switching facility means signing out and back in as a different account.
-async function ensureToken(): Promise<string | null> {
-  return readToken()
 }
 
 // AuthContext registers a callback here so a dead session (refresh exhausted) can
@@ -161,35 +187,57 @@ export function onUnauthorized(fn: (() => void) | null): void {
 // Swap the stored refresh token for a fresh session. De-duplicated so a burst of
 // parallel 401s triggers only one refresh. Resolves to the new access token, or
 // null when there is no refresh token or it has expired.
-let refreshInFlight: Promise<string | null> | null = null
-function refreshAccessToken(): Promise<string | null> {
-  if (refreshInFlight) return refreshInFlight
-  refreshInFlight = (async (): Promise<string | null> => {
-    const rt = readRefresh()
-    if (!rt) return null
+type RefreshResult = { token: string; snapshot: CredentialSnapshot }
+const refreshInFlight = new Map<string, Promise<RefreshResult | null>>()
+
+function refreshAccessToken(snapshot: CredentialSnapshot): Promise<RefreshResult | null> {
+  assertPreviewNetworkAllowed()
+  if (!snapshot.refresh || !isCurrentCredentials(snapshot)) return Promise.resolve(null)
+  // Only requests that received their 401 under the exact same credentials share
+  // a refresh. A later login/logout never joins an older session's refresh.
+  const key = JSON.stringify([snapshot.generation, snapshot.token, snapshot.refresh])
+  const existing = refreshInFlight.get(key)
+  if (existing) return existing
+
+  let request: Promise<RefreshResult | null>
+  request = (async (): Promise<RefreshResult | null> => {
     try {
       const res = await fetch(`${BASE}/auth/refresh`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ refresh_token: rt }),
+        body: JSON.stringify({ refresh_token: snapshot.refresh }),
       })
       if (!res.ok) throw new Error('refresh failed')
       const session = (await res.json()) as SessionOut
-      writeToken(session.access_token)
-      writeSession(session)
-      writeRefresh(session.refresh_token ?? null)
-      return session.access_token
+      // A late refresh must not restore credentials after sign-out or replace a
+      // newer identity that has signed in while this request was pending.
+      if (!isCurrentCredentials(snapshot)) return null
+      storeSession(session)
+      return { token: session.access_token, snapshot: credentialsSnapshot() }
     } catch {
       return null
     }
-  })().finally(() => { refreshInFlight = null })
-  return refreshInFlight
+  })().finally(() => {
+    if (refreshInFlight.get(key) === request) refreshInFlight.delete(key)
+  })
+  refreshInFlight.set(key, request)
+  return request
 }
 
 export async function apiFetch<T>(path: string, opts: RequestInit = {}, retry = true): Promise<T> {
-  const token = await ensureToken()
+  assertPreviewNetworkAllowed()
+  return apiFetchForCredentials<T>(path, opts, retry, credentialsSnapshot())
+}
+
+async function apiFetchForCredentials<T>(
+  path: string,
+  opts: RequestInit,
+  retry: boolean,
+  snapshot: CredentialSnapshot,
+): Promise<T> {
+  assertPreviewNetworkAllowed()
   const headers = new Headers(opts.headers)
-  if (token) headers.set('Authorization', `Bearer ${token}`)
+  if (snapshot.token) headers.set('Authorization', `Bearer ${snapshot.token}`)
   if (opts.body && !headers.has('Content-Type') &&
       (typeof FormData === 'undefined' || !(opts.body instanceof FormData))) {
     headers.set('Content-Type', 'application/json')
@@ -199,12 +247,19 @@ export async function apiFetch<T>(path: string, opts: RequestInit = {}, retry = 
 
   if (res.status === 401) {
     // One silent refresh attempt; if it yields a new token, replay the request once.
-    if (retry) {
-      const fresh = await refreshAccessToken()
-      if (fresh) return apiFetch<T>(path, opts, false)
+    if (retry && isCurrentCredentials(snapshot)) {
+      const fresh = await refreshAccessToken(snapshot)
+      // Replay only for the identity whose refresh wrote this exact snapshot;
+      // an old tenant's 401 must never replay as a newer signed-in user.
+      if (fresh && isCurrentCredentials(fresh.snapshot)) {
+        return apiFetchForCredentials<T>(path, opts, false, fresh.snapshot)
+      }
     }
-    logout()
-    unauthorizedHandler?.()
+    // A stale request must not log out a person who signed in after it started.
+    if (isCurrentCredentials(snapshot)) {
+      logout()
+      unauthorizedHandler?.()
+    }
     throw await toError(res)
   }
 
@@ -605,6 +660,7 @@ export const api = {
 
 /** Download a generated report as CSV without leaving the page. */
 export async function downloadReportCsv(reportType: string): Promise<void> {
+  assertPreviewNetworkAllowed()
   const token = getToken()
   const res = await fetch(`${BASE}/reports/download/${reportType}.csv`, {
     headers: token ? { Authorization: `Bearer ${token}` } : {},
@@ -624,6 +680,7 @@ export async function downloadReportFile(
   fmt: 'csv' | 'xlsx' | 'pdf',
   periodId?: string,
 ): Promise<void> {
+  assertPreviewNetworkAllowed()
   const token = getToken()
   const q = periodId ? `?period_id=${encodeURIComponent(periodId)}` : ''
   const res = await fetch(`${BASE}/reports/download/${reportType}.${fmt}${q}`, {
