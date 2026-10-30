@@ -12,6 +12,7 @@ import type {
 import { useLang } from '@/components/layout/LanguageContext'
 import { CreateShiftModal } from '@/components/modals/CreateShiftModal'
 import { canSeeTask, reasonText } from '@/lib/shiftRules'
+import { addUtcDays, datesForRosterView, exactPaidMinutes, formatExactMinutes, type RosterViewMode } from '@/lib/roster-ui'
 import { AiOptionsModal } from './AiOptionsModal'
 import { CreateEventModal } from './CreateEventModal'
 import { BatchCreateShiftModal } from '@/components/modals/BatchCreateShiftModal'
@@ -64,21 +65,6 @@ const SHIFT_STYLE: Record<string, { bg: string; fg: string }> = {
   OFF: { bg: '#F1F5F9', fg: '#64748B' }, DO: { bg: '#F1F5F9', fg: '#64748B' },
 }
 const DEFAULT_STYLE = { bg: '#F1F5F9', fg: '#475569' }
-
-// UTC-based to stay timezone-agnostic: parsing a bare date as local time and then
-// calling toISOString() would roll the day back on UTC+ machines.
-function eachDate(start: string, end: string): string[] {
-  const out: string[] = []
-  const [ys, ms, ds] = start.split('-').map(Number)
-  const [ye, me, de] = end.split('-').map(Number)
-  let t = Date.UTC(ys, ms - 1, ds)
-  const last = Date.UTC(ye, me - 1, de)
-  for (let i = 0; t <= last && i < 400; i++) {
-    out.push(new Date(t).toISOString().slice(0, 10))
-    t += 86_400_000
-  }
-  return out
-}
 
 function dayLabel(iso: string, isZH: boolean) {
   const d = new Date(`${iso}T00:00:00Z`)
@@ -182,6 +168,9 @@ export function RealRosterBoard() {
   const [publishedLog, setPublishedLog] = useState<SaveItem[]>([])
   const [showSaveList, setShowSaveList] = useState(false)
   const [showPublishList, setShowPublishList] = useState(false)
+  const [viewMode, setViewMode] = useState<RosterViewMode>('week')
+  const [focusDate, setFocusDate] = useState('')
+  const [selectedStaffId, setSelectedStaffId] = useState('')
   const [filterRank, setFilterRank] = useState('ALL')
   const [filterFloor, setFilterFloor] = useState('ALL')
   const [filterSearch, setFilterSearch] = useState('')
@@ -200,6 +189,14 @@ export function RealRosterBoard() {
     filterRank: isZH ? '職級' : 'Rank',
     filterFloor: isZH ? '樓層/單位' : 'Floor/Unit',
     filterSearch: isZH ? '搜尋員工…' : 'Search staff…',
+    weekView: isZH ? '全體週表' : 'All-staff week',
+    monthView: isZH ? '全體月表' : 'All-staff month',
+    staffView: isZH ? '單一員工' : 'Single staff',
+    selectStaff: isZH ? '選擇員工' : 'Select staff',
+    previous: isZH ? '上一段' : 'Previous range',
+    next: isZH ? '下一段' : 'Next range',
+    unknownHours: isZH ? '部分時數未由更別定義提供' : 'Some hours are not supplied by shift definitions',
+    staffViewHint: isZH ? '已顯示此員工；按日期格可編輯草稿。' : 'Showing this staff member; select a day cell to edit the draft.',
     allRanks: isZH ? '所有職級' : 'All Ranks',
     allFloors: isZH ? '所有樓層' : 'All Floors',
     totalHrs: isZH ? '總時數' : 'Total Hrs',
@@ -380,10 +377,43 @@ export function RealRosterBoard() {
     return counts
   }, [validation])
 
-  const columns = useMemo(() => {
-    if (grid?.period_start && grid?.period_end) return eachDate(grid.period_start, grid.period_end)
-    return grid?.dates ?? []
-  }, [grid])
+  // The API provides the authenticated period's actual dates. Never manufacture
+  // calendar columns outside that response: a 42-day NAAC period stays intact,
+  // while the controls merely choose a safe slice of it.
+  const periodColumns = useMemo(() => grid?.dates ?? [], [grid])
+  const columns = useMemo(
+    () => datesForRosterView(periodColumns, focusDate || periodColumns[0] || '', viewMode),
+    [focusDate, periodColumns, viewMode],
+  )
+  const shownRows = useMemo(() => {
+    const rows = grid?.rows ?? []
+    return viewMode === 'staff' ? rows.filter((row) => row.staff.id === selectedStaffId) : rows
+  }, [grid?.rows, selectedStaffId, viewMode])
+  const currentDateRange = columns.length ? `${columns[0]} → ${columns[columns.length - 1]}` : ''
+
+  useEffect(() => {
+    if (!periodColumns.length) {
+      setFocusDate('')
+      setSelectedStaffId('')
+      return
+    }
+    setFocusDate((current) => periodColumns.includes(current) ? current : periodColumns[0])
+    setSelectedStaffId((current) => grid?.rows.some((row) => row.staff.id === current)
+      ? current
+      : grid?.rows[0]?.staff.id || '')
+  }, [grid?.rows, periodColumns])
+
+  function moveView(direction: -1 | 1) {
+    if (!periodColumns.length) return
+    const base = focusDate || periodColumns[0]
+    const offset = direction * (viewMode === 'month' ? 31 : 7)
+    const candidate = addUtcDays(base, offset)
+    if (!candidate) return
+    const next = direction > 0
+      ? periodColumns.find((date) => date >= candidate) ?? periodColumns[periodColumns.length - 1]
+      : [...periodColumns].reverse().find((date) => date <= candidate) ?? periodColumns[0]
+    setFocusDate(next)
+  }
 
   // staffId → (date → cell)
   const cellLookup = useMemo(() => {
@@ -428,6 +458,9 @@ export function RealRosterBoard() {
         `${editing.staffName} · ${editing.date}${editing.shiftType ? ` · ${editing.shiftType}` : ''}`,
       )
       setEditing(null)
+      flash(isZH
+        ? (!editing.shiftType ? '更次已清除' : '更次已儲存')
+        : (!editing.shiftType ? 'Shift cleared' : 'Shift saved'))
       await loadGrid(periodId, versionId)
     } catch (e) {
       // An eligibility refusal is a list of fixable reasons, so keep the dialog
@@ -592,6 +625,44 @@ export function RealRosterBoard() {
             </div>
           ))}
         </div>
+
+        {grid && periodColumns.length > 0 && (
+          <div className="flex flex-col gap-2 border-t border-gray-100 pt-2 lg:flex-row lg:items-center lg:justify-between">
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="flex rounded-lg bg-gray-100 p-1" aria-label={isZH ? '更表顯示方式' : 'Roster display mode'}>
+                {([
+                  ['week', T.weekView],
+                  ['month', T.monthView],
+                  ['staff', T.staffView],
+                ] as Array<[RosterViewMode, string]>).map(([mode, label]) => (
+                  <button key={mode} type="button" onClick={() => setViewMode(mode)}
+                    className={`rounded-md px-2.5 py-1 text-[10px] font-bold ${viewMode === mode ? 'bg-white text-pink-700 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}>
+                    {label}
+                  </button>
+                ))}
+              </div>
+              <button type="button" onClick={() => moveView(-1)} aria-label={T.previous}
+                className="rounded-lg border border-gray-200 px-2 py-1 text-xs text-gray-600 hover:bg-gray-50">‹</button>
+              <input type="date" value={focusDate} min={periodColumns[0]} max={periodColumns[periodColumns.length - 1]}
+                onChange={(event) => setFocusDate(event.target.value)}
+                className="rounded-lg border border-gray-200 bg-white px-2 py-1 text-[11px]" />
+              <button type="button" onClick={() => moveView(1)} aria-label={T.next}
+                className="rounded-lg border border-gray-200 px-2 py-1 text-xs text-gray-600 hover:bg-gray-50">›</button>
+              <span className="text-[10px] font-semibold text-gray-500">{currentDateRange}</span>
+            </div>
+            {viewMode === 'staff' && (
+              <div className="flex min-w-0 items-center gap-2">
+                <label htmlFor="roster-selected-staff" className="text-[10px] font-semibold text-gray-500">{T.staff}</label>
+                <select id="roster-selected-staff" value={selectedStaffId} onChange={(event) => setSelectedStaffId(event.target.value)}
+                  className="min-w-0 max-w-[280px] rounded-lg border border-gray-200 bg-white px-2.5 py-1.5 text-[11px] font-semibold text-gray-700">
+                  <option value="">{T.selectStaff}</option>
+                  {grid.rows.map((row) => <option key={row.staff.id} value={row.staff.id}>{row.staff.name_en || row.staff.name} · {row.staff.rank}</option>)}
+                </select>
+                <span className="hidden text-[10px] text-gray-400 xl:inline">{T.staffViewHint}</span>
+              </div>
+            )}
+          </div>
+        )}
 
         {/* Version tabs + actions */}
         <div className="flex items-center gap-2 flex-wrap">
@@ -867,7 +938,7 @@ export function RealRosterBoard() {
               </tr>
             </thead>
             <tbody>
-              {grid.rows
+              {shownRows
                 .filter((row) => {
                   if (filterRank !== 'ALL' && row.staff.rank !== filterRank) return false
                   if (filterFloor !== 'ALL' && row.staff.unit_name !== filterFloor) return false
@@ -879,24 +950,33 @@ export function RealRosterBoard() {
                   return true
                 })
                 .map((row) => {
-                const workedHrs = columns.reduce((sum, iso) => {
+                const minutes = columns.map((iso) => {
                   const cell = cellLookup.get(row.staff.id)?.get(iso)
-                  if (!cell?.shift_type) return sum
-                  const sDef = shiftDefs.find((d) => d.shift_type === cell.shift_type)
-                  if (!sDef?.is_working) return sum
-                  return sum + (sDef.paid_minutes ?? 480) / 60
-                }, 0)
+                  return exactPaidMinutes(cell, shiftDefs)
+                })
+                const unknownHours = minutes.some((value) => value === null)
+                const workedMinutes = minutes.reduce<number>((sum, value) => sum + (value ?? 0), 0)
                 return (
                 <tr key={row.staff.id} className="border-t border-gray-100">
                   <td className="px-3 py-2 border-r border-gray-200 sticky left-0 bg-white z-10 w-44 min-w-44">
-                    <div className="text-[12px] font-semibold text-gray-900 truncate">{row.staff.name_en || row.staff.name}</div>
+                    <button type="button" onClick={() => {
+                      setSelectedStaffId(row.staff.id)
+                      setViewMode('staff')
+                      if (editable) setCreateShiftOpen(true)
+                    }}
+                      title={editable ? (isZH ? '開啟此員工的更次編輯器' : 'Open this staff member in the shift editor') : T.readonly}
+                      className="block max-w-full truncate text-left text-[12px] font-semibold text-gray-900 hover:text-[#E8187A] hover:underline">
+                      {row.staff.name_en || row.staff.name}
+                    </button>
                     <div className="flex items-center gap-1.5 text-[10px] text-gray-400">
                       <span className="font-bold text-gray-500">{row.staff.rank}</span>
                       {row.staff.unit_name && <span className="truncate">· {row.staff.unit_name}</span>}
                     </div>
                   </td>
                   <td className="px-1 py-2 border-r border-gray-200 text-center">
-                    <div className="text-[10px] font-bold text-gray-600">{workedHrs.toFixed(1)}</div>
+                    <div className="text-[10px] font-bold text-gray-600" title={unknownHours ? T.unknownHours : undefined}>
+                      {unknownHours ? '—' : formatExactMinutes(workedMinutes)}
+                    </div>
                   </td>
                   {columns.map((iso) => {
                     const cell = cellLookup.get(row.staff.id)?.get(iso)
@@ -1096,7 +1176,7 @@ export function RealRosterBoard() {
           onClose={() => setBatchShiftOpen(false)}
           staff={grid.rows.map((r) => r.staff)}
           shiftDefs={shiftDefs}
-          dates={columns}
+          dates={periodColumns}
           onBatchCreated={(count) => { flash(`${count} shifts created`); void loadGrid(periodId, versionId) }}
         />
       )}
@@ -1107,13 +1187,23 @@ export function RealRosterBoard() {
           onClose={() => setCreateShiftOpen(false)}
           versionId={activeVersionId}
           staff={grid.rows.map((r) => r.staff)}
-          dates={columns}
+          dates={periodColumns}
           shiftDefs={shiftDefs}
           taskDefs={taskDefs}
-          onSaved={({ staffName, date, shiftType, wasWorking }) => {
+          initial={{ staffId: selectedStaffId, date: focusDate || columns[0] }}
+          onSaved={({ staffName, date, shiftType, wasWorking, taskTiming }) => {
             logChange(wasWorking ? 'edit' : 'create',
                       wasWorking ? T.actionEdit : T.actionCreate,
                       `${staffName} · ${date} · ${shiftType}`)
+            if (taskTiming.failedLabels.length > 0) {
+              setError(isZH
+                ? `更次已儲存；以下工作時間未能儲存：${taskTiming.failedLabels.join('、')}`
+                : `Shift saved; task times were not saved for: ${taskTiming.failedLabels.join(', ')}`)
+            } else if (taskTiming.requested > 0) {
+              flash(isZH ? `已儲存更次及${taskTiming.saved}項工作時間` : `Shift and ${taskTiming.saved} task time(s) saved`)
+            } else {
+              flash(isZH ? '更次已儲存' : 'Shift saved')
+            }
             loadGrid(periodId, versionId)
           }}
         />

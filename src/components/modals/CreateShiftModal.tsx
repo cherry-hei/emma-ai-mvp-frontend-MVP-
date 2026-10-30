@@ -8,6 +8,7 @@ import { useLang } from '@/components/layout/LanguageContext'
 import { ApiRuleError, api } from '@/lib/api'
 import type { ShiftDef, StaffLite, TaskDefOut } from '@/lib/apiTypes'
 import { canSeeTask, issueLines, taskLabel } from '@/lib/shiftRules'
+import { taskDateTimes, type TaskTimeValidationError } from '@/lib/roster-ui'
 
 /**
  * Create or edit one roster cell, with a per-task time schedule (spec 3.1).
@@ -40,7 +41,10 @@ export interface CreateShiftModalProps {
   /** Pre-selection when opened from a cell. */
   initial?: { staffId?: string; date?: string; shiftType?: string; tasks?: string[] } | null
   /** Called after the cell (and any task rows) are saved. */
-  onSaved: (summary: { staffName: string; date: string; shiftType: string; wasWorking: boolean }) => void
+  onSaved: (summary: {
+    staffName: string; date: string; shiftType: string; wasWorking: boolean
+    taskTiming: { requested: number; saved: number; failedLabels: string[] }
+  }) => void
   onDeleted?: (summary: { staffName: string; date: string }) => void
 }
 
@@ -78,7 +82,7 @@ export function CreateShiftModal({
     note_ph: isZH ? '備註（可選）' : 'Note (optional)',
     add_task: isZH ? '+ 新增工作項目' : '+ Add Task',
     add_task_manual: isZH ? '+ 手動新增工作項目' : '+ Add Task Manually',
-    manual_warning: isZH ? '⚠ 手動模式：顯示所有工作項目（未經資格篩選）' : '⚠ Manual mode: showing all tasks (eligibility check bypassed)',
+    manual_warning: isZH ? '手動模式：顯示所有工作項目；伺服器儲存前仍會核對資格。' : 'Manual mode shows all tasks; the server still validates eligibility before saving.',
     item: isZH ? '項目' : 'Item',
     no_tasks: isZH ? '此更別／職級沒有可指派的任務' : 'No tasks this rank may do on this shift',
     delete_shift: isZH ? '刪除更期' : 'Delete Shift',
@@ -158,11 +162,27 @@ export function CreateShiftModal({
     setRows((prev) => prev.map((r) => (r.id === id ? { ...r, ...patch } : r)))
   const removeRow = (id: string) => setRows((prev) => prev.filter((r) => r.id !== id))
 
+  const timeError = (error: TaskTimeValidationError): string => {
+    if (error === 'incomplete_time') return isZH ? '工作開始及結束時間必須一併填寫。' : 'Task start and end times must be entered together.'
+    if (error === 'invalid_time') return isZH ? '工作時間必須是有效的24小時制時間。' : 'Task times must use valid 24-hour times.'
+    return isZH ? '工作日期無效。' : 'The task date is invalid.'
+  }
+
   async function handleSave() {
     if (!versionId) { setErr(L.readonly); return }
     if (!selected || !date || !shiftType) return
     setBusy(true); setErr(''); setIssues([])
     const chosen = rows.filter((r) => r.taskId)
+    const timed = chosen.map((row) => ({
+      row,
+      timing: taskDateTimes(date, row.start, row.end),
+    }))
+    const invalid = timed.find((item) => !item.timing.ok)
+    if (invalid && !invalid.timing.ok) {
+      setErr(timeError(invalid.timing.error))
+      setBusy(false)
+      return
+    }
     try {
       const { assignment_id } = await api.upsertCell({
         roster_version_id: versionId, staff_id: selected.id, date,
@@ -175,18 +195,29 @@ export function CreateShiftModal({
       // Times are the reason this dialog exists rather than the inline editor:
       // the cell write records *which* tasks, these record *when*. Sent after the
       // cell so a refused assignment never leaves orphan task rows behind.
-      for (const row of chosen) {
-        if (!row.start && !row.end) continue
-        await api.createTaskAssignment({
-          shift_assignment_id: assignment_id,
-          task_id: row.taskId,
-          start_at: row.start ? `${date}T${row.start}:00` : undefined,
-          end_at: row.end ? `${date}T${row.end}:00` : undefined,
-        }).catch(() => { /* the task is assigned; only its clock time is missing */ })
+      const failedLabels: string[] = []
+      let taskTimesSaved = 0
+      for (const { row, timing } of timed) {
+        if (!timing.ok || !timing.startAt || !timing.endAt) continue
+        try {
+          await api.createTaskAssignment({
+            shift_assignment_id: assignment_id,
+            task_id: row.taskId,
+            start_at: timing.startAt,
+            end_at: timing.endAt,
+          })
+          taskTimesSaved += 1
+        } catch {
+          // The cell write already saved the task label. Report the missing clock
+          // time explicitly rather than treating this as a complete task save.
+          const task = taskDefs.find((item) => item.id === row.taskId)
+          failedLabels.push(task ? taskLabel(task) : row.taskId)
+        }
       }
       onSaved({
         staffName: selected.name_en || selected.name, date, shiftType,
         wasWorking: !!initial?.shiftType,
+        taskTiming: { requested: timed.filter((item) => item.timing.ok && !!item.timing.startAt).length, saved: taskTimesSaved, failedLabels },
       })
       onClose()
     } catch (e) {
