@@ -11,6 +11,7 @@ from .inputs import (
     PlanWeights,
     RatioRuleInput,
     ResidentCountInput,
+    RosterCellLock,
     SolverInputs,
     SolverLimits,
     StaffInput,
@@ -23,7 +24,7 @@ from .solve import build_and_solve, solve_plan
 
 __all__ = [
     "StaffInput", "WorkPatternInput", "DemandSlot", "RatioRuleInput", "ResidentCountInput",
-    "BaselineCell", "LockedAssignment", "SolverLimits", "PlanWeights", "SolverInputs",
+    "BaselineCell", "LockedAssignment", "RosterCellLock", "SolverLimits", "PlanWeights", "SolverInputs",
     "SolvedAssignment", "Violation", "SolverKpi", "SolverResult",
     "PLAN_WEIGHTS", "PLAN_LABELS", "build_and_solve", "solve_plan",
     "solve_pareto", "weight_grid",

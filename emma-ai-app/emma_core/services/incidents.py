@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from datetime import date as Date, datetime, timedelta, timezone
 
 from ..constants import can_cover_rank
-from . import notifications as notify, validation
+from . import notifications as notify, roster_locks, validation
 from ._common import (
     LEAVE_CODES, as_date, iso, month_bounds, now_iso, operative_version,
     assignments_for_shifts,
@@ -980,6 +980,13 @@ def _materialize_night_recovery(
         if existing:
             continue
         definition = target.definition
+        # Recovery creates a new roster cell outside the regular editor.  It is
+        # non-working, so it is compatible with a DO forbid but must never
+        # silently replace an active duty pin on the recovery date.
+        roster_locks.assert_cell_write_permitted(
+            client, facility_id, staff_id=staff["id"], on=target.day,
+            shift_type=target.code, is_working=False,
+        )
         recovery_shift = (
             client.table("shifts")
             .insert({
@@ -1175,6 +1182,17 @@ def resolve_incident(client, facility_id: str, incident_id: str, *,
         raise ValueError("absent staff no longer owns the incident shift")
 
     if shift_id:
+        # Emergency cover changes two cells just as a manual editor does: the
+        # absent person's duty disappears and the replacement gains it.  An
+        # operational incident is not authority to silently break an approved
+        # duty pin or a DO forbid; release/reconcile that promise first.
+        roster_locks.assert_cell_clear_permitted(
+            client, facility_id, staff_id=incident["staff_id"], on=shift["date"])
+        roster_locks.assert_cell_write_permitted(
+            client, facility_id, staff_id=replacement_staff_id, on=shift["date"],
+            shift_type=shift.get("shift_type"),
+            is_working=bool(shift.get("is_working", True)),
+        )
         # Keep the absent person's row for audit and add cover before cancelling
         # it, so a failed intermediate write cannot create an uncovered shift.
         # SQL: insert into shift_assignments

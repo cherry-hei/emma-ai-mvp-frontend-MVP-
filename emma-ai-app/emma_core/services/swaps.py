@@ -193,6 +193,28 @@ def _exchange_cells(client, facility_id: str, swap: dict,
         client, facility_id, swap["requester_shift_id"], swap["requester_staff_id"])
     counterparty_assignment = _live_assignment(
         client, facility_id, swap["counterparty_shift_id"], swap["counterparty_staff_id"])
+    requester_shift = _shift(client, facility_id, swap["requester_shift_id"])
+    counterparty_shift = _shift(client, facility_id, swap["counterparty_shift_id"])
+
+    # An approved swap is itself made durable below, but it may have sat pending
+    # while a different approval pinned either existing cell or forbade either
+    # destination. Validate every removal and addition before the first owner
+    # update so no REST swap route can bypass a live promise.
+    for staff_id, shift in (
+        (swap["requester_staff_id"], requester_shift),
+        (swap["counterparty_staff_id"], counterparty_shift),
+    ):
+        roster_locks.assert_cell_clear_permitted(
+            client, facility_id, staff_id=staff_id, on=shift["date"])
+    for staff_id, shift in (
+        (swap["counterparty_staff_id"], requester_shift),
+        (swap["requester_staff_id"], counterparty_shift),
+    ):
+        roster_locks.assert_cell_write_permitted(
+            client, facility_id, staff_id=staff_id, on=shift["date"],
+            shift_type=shift.get("shift_type"),
+            is_working=bool(shift.get("is_working", True)),
+        )
 
     # SQL: update shift_assignments set staff_id = :counterparty_staff_id
     #      where facility_id = :facility_id and id = :requester_assignment_id
@@ -209,7 +231,7 @@ def _exchange_cells(client, facility_id: str, swap: dict,
         (swap["requester_shift_id"], swap["counterparty_staff_id"]),
         (swap["counterparty_shift_id"], swap["requester_staff_id"]),
     ):
-        shift = _shift(client, facility_id, shift_id)
+        shift = requester_shift if shift_id == requester_shift["id"] else counterparty_shift
         roster_locks.pin_cell(
             client, facility_id, staff_id=staff_id, on=shift["date"],
             shift_type=shift["shift_type"], source_table="swap_requests",

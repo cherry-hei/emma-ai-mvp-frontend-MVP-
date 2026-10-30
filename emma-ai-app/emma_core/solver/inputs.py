@@ -138,6 +138,23 @@ class LockedAssignment:
 
 
 @dataclass(frozen=True, slots=True)
+class RosterCellLock:
+    """A durable cell promise projected from ``roster_cell_locks``.
+
+    The database contract identifies the promised cell by staff, calendar date,
+    and shift type rather than a source shift UUID, because the approval can be
+    made before a future roster has been drawn. ``pin`` means exactly one
+    matching demand slot must be assigned; a false value forbids every working
+    demand slot for that staff/date.
+    """
+
+    staff_id: str
+    date: Date
+    shift_type: str | None = None
+    pin: bool = True
+
+
+@dataclass(frozen=True, slots=True)
 class SolverLimits:
     max_seconds: float = 10.0
     workers: int = 8                             # tests use 1 for determinism
@@ -167,9 +184,11 @@ class SolverInputs:
     preferences: tuple[PreferenceInput, ...] = ()
     leave_unavailable: frozenset[tuple[str, Date]] = frozenset()   # (staff_id, date)
     locks: tuple[LockedAssignment, ...] = ()
+    cell_locks: tuple[RosterCellLock, ...] = ()
     include_staff_ids: frozenset[str] = frozenset()   # empty => all staff
     exclude_staff_ids: frozenset[str] = frozenset()
     night_shift_types: frozenset[str] = frozenset()
+    naac_hash_next_day_off: bool = False
     agency_limits: AgencyLimitsInput = AgencyLimitsInput()
 
     @property

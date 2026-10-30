@@ -5,7 +5,10 @@ fake implements only the chained calls load_inputs / writeback / job-lifecycle u
 """
 from __future__ import annotations
 
+from copy import deepcopy
 import uuid
+
+import pytest
 
 from emma_core.constants import JobStatus, PlanMode
 from emma_core.models import OptimizeRequest, WritebackOptions
@@ -52,6 +55,9 @@ class _Query:
     def lte(self, col, val):
         self._filters.append(("lte", col, val)); return self
 
+    def is_(self, col, val):
+        self._filters.append(("is", col, val)); return self
+
     def or_(self, expr):
         terms = []
         for t in expr.split(","):
@@ -75,6 +81,8 @@ class _Query:
             if f[0] == "gte" and not (str(row.get(f[1])) >= str(f[2])):
                 return False
             if f[0] == "lte" and not (str(row.get(f[1])) <= str(f[2])):
+                return False
+            if f[0] == "is" and f[2] == "null" and row.get(f[1]) is not None:
                 return False
             if f[0] == "or":
                 ok = False
@@ -190,6 +198,31 @@ def _shifts_of(store, version_id):
     return [s for s in store.data["shifts"] if s["roster_version_id"] == version_id]
 
 
+def _configure_naac_hash_source(store, *, shift_type="A7#"):
+    """Replace the two-day source roster with a deterministic NAAC hash case."""
+    d = store.data
+    d["facilities"][0]["code"] = "NAAC"
+    d["roster_periods"][0].update({
+        "period_start": "2026-07-31", "period_end": "2026-08-01",
+    })
+    d["shifts"] = [
+        {"id": "hash", "facility_id": "f1", "roster_version_id": "mv1",
+         "date": "2026-07-31", "shift_type": shift_type, "start_time": "07:00:00",
+         "end_time": "15:00:00", "cross_midnight": False, "unit_id": None,
+         "required_rank": "CW", "required_count": 1, "is_working": True},
+        {"id": "next", "facility_id": "f1", "roster_version_id": "mv1",
+         "date": "2026-08-01", "shift_type": "A7", "start_time": "07:00:00",
+         "end_time": "15:00:00", "cross_midnight": False, "unit_id": None,
+         "required_rank": "CW", "required_count": 1, "is_working": True},
+    ]
+    d["shift_assignments"] = [
+        {"id": "a_hash", "facility_id": "f1", "shift_id": "hash", "staff_id": "cw1",
+         "role": "CW", "status": "assigned", "is_agency": False},
+        {"id": "a_next", "facility_id": "f1", "shift_id": "next", "staff_id": "cw2",
+         "role": "CW", "status": "assigned", "is_agency": False},
+    ]
+
+
 def test_run_optimization_persists_three_versions():
     store = build_store()
     resp = optimize.run_optimization(store, OptimizeRequest(facility_id="f1", period_id="p1"))
@@ -273,3 +306,133 @@ def test_additive_facility_event_becomes_solver_demand():
     ]
     assert len(event_shifts) == 1
     assert event_assignments[0]["role"] in {"CW", "HCA"}
+
+
+def test_load_inputs_honours_live_approved_duty_and_day_off_locks():
+    store = build_store()
+    store.data["roster_cell_locks"] = [
+        {"id": "lock-pin", "facility_id": "f1", "staff_id": "cw1",
+         "date": "2026-07-01", "lock_type": "pin", "shift_type": "P",
+         "released_at": None},
+        {"id": "lock-forbid", "facility_id": "f1", "staff_id": "cw2",
+         "date": "2026-07-02", "lock_type": "forbid", "shift_type": None,
+         "released_at": None},
+        {"id": "lock-released", "facility_id": "f1", "staff_id": "cw2",
+         "date": "2026-07-01", "lock_type": "forbid", "shift_type": None,
+         "released_at": "2026-06-01T00:00:00Z"},
+    ]
+
+    inputs = optimize.load_inputs(store, "f1", "p1")
+    response = optimize.run_optimization(
+        store,
+        OptimizeRequest(facility_id="f1", period_id="p1", plan_mode=PlanMode.C),
+        persist=False,
+    )
+
+    assert {(lock.staff_id, str(lock.date), lock.shift_type, lock.pin)
+            for lock in inputs.cell_locks} == {
+        ("cw1", "2026-07-01", "P", True),
+        ("cw2", "2026-07-02", None, False),
+    }
+    option = response.roster_options[0]
+    assert option.status in {"optimal", "feasible"}
+
+
+def test_naac_hash_writeback_creates_next_calendar_day_do_across_month_boundary():
+    store = build_store()
+    d = store.data
+    _configure_naac_hash_source(store)
+    d["shift_definitions"] = [{
+        "id": "def-do", "org_id": "org-1", "shift_type": "DO",
+        "start_time": None, "end_time": None, "cross_midnight": False,
+        "paid_minutes": 0,
+    }]
+
+    response = optimize.run_optimization(
+        store, OptimizeRequest(facility_id="f1", period_id="p1", plan_mode=PlanMode.C),
+    )
+
+    option = response.roster_options[0]
+    assert option.status in {"optimal", "feasible"}
+    rows = _shifts_of(store, option.roster_version_id)
+    do = next(shift for shift in rows
+              if shift["date"] == "2026-08-01" and shift["shift_type"] == "DO")
+    assignment = next(row for row in store.data["shift_assignments"]
+                      if row["shift_id"] == do["id"])
+    assert assignment["staff_id"] == "cw1"
+
+
+def test_naac_without_solved_hash_assignment_needs_no_do_definition():
+    store = build_store()
+    store.data["facilities"][0]["code"] = "NAAC"
+
+    response = optimize.run_optimization(
+        store, OptimizeRequest(facility_id="f1", period_id="p1", plan_mode=PlanMode.C),
+    )
+
+    assert response.status == JobStatus.COMPLETED
+    assert response.roster_options[0].roster_version_id is not None
+    assert not [
+        shift for shift in _shifts_of(store, response.roster_options[0].roster_version_id)
+        if shift["shift_type"] == "DO"
+    ]
+
+
+def test_missing_naac_do_preflight_preserves_existing_drafts_and_emits_no_roster_writes():
+    store = build_store()
+    _configure_naac_hash_source(store)
+    store.data["roster_versions"].extend([
+        {"id": "old-a", "facility_id": "f1", "period_id": "p1",
+         "version_type": "A", "status": "draft", "created_at": "2026-07-21T00:00:00"},
+        {"id": "old-b", "facility_id": "f1", "period_id": "p1",
+         "version_type": "B", "status": "draft", "created_at": "2026-07-21T00:00:00"},
+        {"id": "old-c", "facility_id": "f1", "period_id": "p1",
+         "version_type": "C", "status": "draft", "created_at": "2026-07-21T00:00:00"},
+    ])
+    before_versions = deepcopy(store.data["roster_versions"])
+    before_shifts = deepcopy(store.data["shifts"])
+    before_assignments = deepcopy(store.data["shift_assignments"])
+
+    with pytest.raises(ValueError, match="NAAC # shift requires a DO shift definition"):
+        optimize.run_optimization(
+            store,
+            OptimizeRequest(facility_id="f1", period_id="p1", plan_mode=PlanMode.C),
+        )
+
+    assert store.data["roster_versions"] == before_versions
+    assert store.data["shifts"] == before_shifts
+    assert store.data["shift_assignments"] == before_assignments
+    assert store.data.get("roster_option_scores", []) == []
+    assert store.data["optimization_jobs"][0]["status"] == JobStatus.FAILED
+
+
+def test_generated_naac_and_night_recovery_collision_fails_before_archival():
+    store = build_store()
+    _configure_naac_hash_source(store, shift_type="N#")
+    store.data["rule_definitions"] = [{
+        "id": "night-policy", "facility_id": "f1", "rule_code": "night_chain",
+        "active": True, "config_version": 1, "effective_from": "2026-01-01",
+        "config_json": {"night_shift_types": ["N#"]},
+    }]
+    store.data["shift_definitions"] = [
+        {"id": "def-sleep", "org_id": "org-1", "shift_type": "SLEEP",
+         "start_time": None, "end_time": None, "cross_midnight": False,
+         "paid_minutes": 0},
+        {"id": "def-do", "org_id": "org-1", "shift_type": "DO",
+         "start_time": None, "end_time": None, "cross_midnight": False,
+         "paid_minutes": 0},
+    ]
+    store.data["roster_versions"].append({
+        "id": "old-a", "facility_id": "f1", "period_id": "p1",
+        "version_type": "A", "status": "draft", "created_at": "2026-07-21T00:00:00",
+    })
+    before_versions = deepcopy(store.data["roster_versions"])
+
+    with pytest.raises(ValueError, match="recovery writeback collision"):
+        optimize.run_optimization(
+            store,
+            OptimizeRequest(facility_id="f1", period_id="p1", plan_mode=PlanMode.C),
+        )
+
+    assert store.data["roster_versions"] == before_versions
+    assert not store.data.get("roster_option_scores", [])

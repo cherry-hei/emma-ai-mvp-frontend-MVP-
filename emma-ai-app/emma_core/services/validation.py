@@ -19,7 +19,7 @@ from typing import Iterable, Mapping
 
 from ..constants import can_cover_rank
 from ..shifttime import envelope, paid_minutes, to_minutes
-from . import compliance, scheduling
+from . import compliance, roster_locks, scheduling
 from ._common import assignments_for_shifts
 from .organisations import org_id_for
 
@@ -122,6 +122,7 @@ class RosterSnapshot:
     floor_min_staffing_rules: tuple[dict, ...] = ()
     contracts: tuple[dict, ...] = ()
     leave_requests: tuple[dict, ...] = ()
+    cell_locks: tuple[dict, ...] = ()
     leave_balances: tuple[dict, ...] = ()
     calendar_days: tuple[dict, ...] = ()
     resident_counts: tuple[dict, ...] = ()
@@ -489,6 +490,54 @@ def evaluate_core_constraints(snapshot: RosterSnapshot) -> list[dict]:
                         "period_days": snapshot.period_days,
                     },
                 ))
+    return violations
+
+
+def evaluate_persisted_cell_locks(snapshot: RosterSnapshot) -> list[dict]:
+    """Make live approval promises hard publish-time findings.
+
+    Leave validation intentionally excludes approved duty requests and swaps:
+    they are positive commitments, not unavailability.  Their independent
+    durable lock rows are therefore evaluated here, alongside DO forbids.  The
+    service-level editor uses the same ``roster_locks`` evaluator before it
+    mutates a cell; this second check makes publication fail closed if any other
+    mutation path ever regresses.
+    """
+    violations: list[dict] = []
+    for finding in roster_locks.evaluate_assignments(
+        snapshot.cell_locks, snapshot.shifts, snapshot.assignments,
+    ):
+        lock = finding["lock"]
+        lock_type = str(lock.get("lock_type") or "")
+        staff_id = lock.get("staff_id")
+        day = lock.get("date")
+        expected = lock.get("shift_type")
+        if lock_type == "pin":
+            message = (
+                "Approved duty pin is not assigned exactly once to its requested shift."
+            )
+        elif lock_type == "forbid":
+            message = "Approved day-off lock has a working assignment."
+        else:
+            message = "Roster has an unrecognised persisted cell lock."
+        violations.append(_violation(
+            "persisted_cell_lock",
+            message,
+            staff_id=staff_id,
+            on_date=day,
+            severity="hard",
+            details={
+                "lock_id": lock.get("id"),
+                "lock_type": lock_type,
+                "expected_shift_type": expected,
+                "source_table": lock.get("source_table"),
+                "source_id": lock.get("source_id"),
+                "reason": finding["reason"],
+                "actual_shift_types": finding.get("actual_shift_types", []),
+                "matching_assignment_ids": finding.get("matching_assignment_ids", []),
+                "conflicting_assignment_ids": finding.get("conflicting_assignment_ids", []),
+            },
+        ))
     return violations
 
 
@@ -2088,6 +2137,11 @@ def load_snapshot(client, facility_id: str, roster_version_id: str) -> RosterSna
         .execute()
         .data
     )
+    # Persisted approvals are live promises; released rows must not constrain
+    # a validation run.  Reuse the exact loader used by the solver rather than
+    # recreating its release/facility/date predicates here.
+    cell_locks = roster_locks.live_for_period(
+        client, facility_id, period_start, period_end)
     leave_balances = []
     if version.get("period_id"):
         leave_balances = (
@@ -2167,6 +2221,7 @@ def load_snapshot(client, facility_id: str, roster_version_id: str) -> RosterSna
         floor_min_staffing_rules=tuple(floor_min_staffing_rules),
         contracts=tuple(contracts),
         leave_requests=tuple(leave_requests),
+        cell_locks=tuple(cell_locks),
         leave_balances=tuple(leave_balances),
         calendar_days=tuple(calendar_days),
         resident_counts=tuple(resident_counts),
@@ -2282,6 +2337,7 @@ def validate_roster(
     """Run the complete fresh Phase 4+5 ruleset for one roster version."""
     snapshot = load_snapshot(client, facility_id, roster_version_id)
     violations = evaluate_core_constraints(snapshot)
+    violations.extend(evaluate_persisted_cell_locks(snapshot))
     if not any(row.get("is_working", True) for row in snapshot.shifts):
         violations.append(_violation(
             "required_coverage",

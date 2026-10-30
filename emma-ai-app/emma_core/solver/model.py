@@ -257,9 +257,10 @@ def build_model(inputs: SolverInputs) -> SolverModel:
         for s in eligible_by_slot[sl.id]:
             x[(s.id, sl.id)] = model.NewBoolVar(f"x_{s.id}_{sl.id}")
 
-    # locks: a pin can force an otherwise-ineligible pair; also detect contradictions
+    # Locks: a request-scoped lock names a demand slot, while a durable cell lock
+    # names a person/date/(optional) shift type. Both are hard promises. A pin
+    # can force an otherwise-ineligible pair only when its source slot is known.
     lock_errors: list[str] = []
-    seen_pins: dict[str, str] = {}      # slot_id -> pinned staff
     for lock in inputs.locks:
         sl = slot_by_id.get(lock.slot_id)
         if sl is None:
@@ -274,6 +275,28 @@ def build_model(inputs: SolverInputs) -> SolverModel:
         if key in x:
             model.Add(x[key] == (1 if lock.pin else 0))
     _detect_lock_conflicts(inputs, slot_by_id, lock_errors)
+
+    for lock in inputs.cell_locks:
+        staff_slots = [
+            sl for sl in inputs.demand
+            if sl.date == lock.date and (lock.staff_id, sl.id) in x
+        ]
+        if not lock.pin:
+            for sl in staff_slots:
+                model.Add(x[(lock.staff_id, sl.id)] == 0)
+            continue
+
+        matching = [
+            sl for sl in staff_slots
+            if sl.shift_type.upper() == str(lock.shift_type or "").upper()
+        ]
+        if not matching:
+            lock_errors.append(
+                "Locked cell cannot be assigned: "
+                f"staff {lock.staff_id}, {lock.date}, shift {lock.shift_type}."
+            )
+            continue
+        model.Add(sum(x[(lock.staff_id, sl.id)] for sl in matching) == 1)
 
     # ── #3 required coverage (elastic: staff + agency + gap slack) ───────────
     agency: dict[str, object] = {}
@@ -374,6 +397,26 @@ def build_model(inputs: SolverInputs) -> SolverModel:
             else:
                 model.Add(w == 0)
             works[(s.id, d)] = w
+
+    # The deterministic validator's NAAC rule is literal: a source code
+    # containing '#' requires no working assignment on the next *calendar* day.
+    # A final-period hash cannot be made compliant by this solve because there is
+    # no following roster date to materialise as DO, so return an explicit
+    # infeasible result instead of silently emitting an invalid draft.
+    if inputs.naac_hash_next_day_off:
+        for s in inputs.staff:
+            for sl in inputs.demand:
+                if "#" not in sl.shift_type or (s.id, sl.id) not in x:
+                    continue
+                next_day = sl.date + timedelta(days=1)
+                recovery = works.get((s.id, next_day))
+                if recovery is None:
+                    lock_errors.append(
+                        f"NAAC # shift {sl.id} on {sl.date} requires a Day Off on "
+                        f"{next_day}, outside this roster period."
+                    )
+                    continue
+                model.Add(x[(s.id, sl.id)] + recovery <= 1)
 
     # Facility-specific PT patterns are hard constraints. Weekly windows are
     # calendar-aligned; fortnight windows follow the roster-cycle boundary.

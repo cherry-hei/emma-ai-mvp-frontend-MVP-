@@ -9,6 +9,7 @@ from ..constants import AssignmentStatus, OverrideAction, PublishEvent, RosterSt
 from ..models import RosterCell, RosterGrid, RosterRow, ShiftDef, StaffLite
 from ._common import as_date, assignments_for_shifts
 from .organisations import org_id_for
+from . import roster_locks
 
 
 def _now() -> str:
@@ -214,6 +215,13 @@ def set_cell(client, *, facility_id, roster_version_id, staff_id, date, shift_ty
              shift_def: ShiftDef, tasks=None, changed_by=None):
     """Upsert one staff/day cell (create/replace shift + assignment) and log to manual_override_log."""
     tasks = tasks or []
+    # Check before deleting a prior assignment. A durable pin is a hard promise
+    # to the staff member, not a solver-only preference, and a DO forbid cannot
+    # be replaced by a working cell through the manual REST write path.
+    roster_locks.assert_cell_write_permitted(
+        client, facility_id, staff_id=staff_id, on=date,
+        shift_type=shift_type, is_working=shift_def.is_working,
+    )
     staff_rows = (client.table("staff").select("id,rank,primary_unit_id")
                   .eq("facility_id", facility_id).eq("id", staff_id)
                   .execute().data)
@@ -296,6 +304,11 @@ def set_cell(client, *, facility_id, roster_version_id, staff_id, date, shift_ty
 
 
 def clear_cell(client, *, facility_id, roster_version_id, staff_id, date, changed_by=None):
+    # A pin cannot disappear through the DELETE endpoint. Clearing an assignment
+    # from a forbidden day is allowed as remediation of an already-invalid cell.
+    roster_locks.assert_cell_clear_permitted(
+        client, facility_id, staff_id=staff_id, on=date,
+    )
     # SQL: select id from shifts
     #      where roster_version_id = :roster_version_id and date = :date
     existing_shifts = (client.table("shifts").select("id")
