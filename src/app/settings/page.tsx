@@ -115,7 +115,7 @@ export default function SettingsPage() {
   const { lang } = useLang()
   const { user } = useAuth()
   const isZH = lang === 'zh'
-  const editable = canWrite(user?.role, 'settings')
+  const editable = canWrite(user?.role, 'facility.settings')
 
   const [tab, setTab] = useState<Tab>('facility')
   const [facility, setFacility] = useState<FacilityConfig>(DEMO_FACILITY)

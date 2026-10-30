@@ -52,3 +52,15 @@ The separate Vercel manager project uses NEXT_PUBLIC_INTEGRATION_PREVIEW=1 in bo
 ## GitHub authorization limit
 
 The configured GitHub App refused a new Actions workflow because it lacks `workflows` permission. The read-only test/build workflow is delivered as `verify-nov04-ui.workflow-example` for an authorised maintainer to install. It is NOT active CI; no workflow permission, branch protection or paid plan was changed. Local 21-test/build/UI evidence above is separate from GitHub check results. The unpublished parent-created integration commit was amended to remove the blocked workflow path; no shared history was rewritten.
+
+## 31 October CEO scope update — supersedes earlier trial residency notes
+
+- Non-HK real-data internal trial is now authorised for 4 November. December is NGO staff rollout. Old HK-only and no-trial-data wording above is historical, not the current acceptance rule.
+- Connected Supabase account returns no visible projects; actual Kien project ID/access remains unresolved. Do not create a substitute database.
+- New Manager/Staff Vercel origins both fail live public CORS preflight (400). Effective backend CORS configuration, not frontend styling, blocks connection. No hosted login was attempted.
+- Existing PR7/PR8 are the successor candidates; PR6 is reference only. A main push still deploys API and runs migrations.
+- Manager successor: escort_location contract support, 22 offline UI/API tests, tsc and Next build passed.
+- PWA successor: auth/me identity hydration, strict HTTPS API origin, 14 offline tests and type/build passed.
+- Solver successor: persistent live pin/forbid locks and literal NAAC # next-calendar-day no-work/DO, 16 solver/service and 149 related offline tests passed; full rule completeness and real month writeback remain unverified.
+- Accounts audit: existing provision scripts are not safe real-staff invite workflows; canonical role/RLS mismatch and missing unit/deputy/nurse scopes require implementation and hosted acceptance.
+- GitHub event workflow configured enabled/synced for new PR review and verified CEO Emma: commands; first executed event not yet evidenced. No automatic merge/deploy/migration, Lark/WhatsApp bot, paid always-on host or shared-chat service running.

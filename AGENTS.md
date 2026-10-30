@@ -4,7 +4,7 @@ Use this file in both Codex and Manus. Chat history is not automatically shared.
 
 ## Current baseline and release boundary
 
-Current source/API baseline reported by Kien: main 698b9810003ead2e1cc48e53c33626bb134a185e. Amplify manager build SHA is not yet verified. The current API hostname is ap-southeast-1 Singapore; use synthetic fixtures only until Hong Kong production gates are evidenced.
+Current source/API baseline reported by Kien: main 698b9810003ead2e1cc48e53c33626bb134a185e. Amplify manager build SHA is not yet verified. The current API hostname is ap-southeast-1 Singapore. On 31 October 2026 the CEO authorised non-HK hosting and real-data internal trial for 4 November; NGO staff launch remains December. Residency is not a trial blocker. Developer tests still use disposable fixtures; only the selected live project with reviewed tenant/RBAC and backup controls may hold authorised trial data.
 
 IMPORTANT: .github/workflows/deploy-api.yml currently deploys on pushes to main and applies database migrations. A frontend-only merge can therefore affect API and database deployment. Do not push or merge main, invoke that workflow, or assume a UI release is harmless. Require reviewed exact-SHA release approval and a migration impact/rollback manifest first. Keep PR6 Draft until independently accepted.
 
@@ -18,7 +18,7 @@ One task branch/worktree and one owner per editable file. No simultaneous backen
 
 Adopt Pokoi presentation and using-flow only. Never import Pokoi/Haven Blob, shared password, demo roster, staff, staffing/minute rules or chat state into MVP. Preserve NAAC/SA organisation/facility/unit isolation, authentic user identities and backend/RLS feature guards.
 
-Keep manager and Staff PWA on the same approved FastAPI contract. A common data project does not share tokens across domains or waive user-bound permissions. Never put service-role/secret keys in source, NEXT_PUBLIC_*, VITE_*, browser bundles, logs or reports. No production database, real-user provisioning, real NGO data import, authentication replacement or DNS switch without separate approval and Hong Kong residency evidence.
+Keep manager and Staff PWA on the same approved FastAPI contract. A common data project does not share tokens across domains or waive user-bound permissions. Never put service-role/secret keys in source, NEXT_PUBLIC_*, VITE_*, browser bundles, logs or reports. Real-data internal trial, provisioning and domain setup are within the CEO's current requested scope, but do not guess the database, accounts or owned domain. Record the exact target, reviewed migration/data/auth effects and rollback before high-impact execution. Do not require Hong Kong residency for this trial. Real NGO data must never enter the public source repository or AI engineering prompts.
 
 ## Required correctness
 
@@ -33,3 +33,7 @@ Build/typecheck commands must fail on errors; never use `next build || true`. PR
 For decisions from a phone, use the authenticated Manus task or GitHub PR identity and bind approval to the exact action/commit/target. A notification, unauthenticated callback, stale approval, silence, ambiguous chat message or generic code-review approval does not authorise migration/deployment. Changed commit invalidates prior release approval. No automated merge/deployment is provided by this file.
 
 For a task to be ready, supply its commit, exact test counts, preview/runtime evidence where available, no-secret check, feature gates, rollback and open blockers. Dates are targets; never claim zero bugs, no lag or complete production readiness without evidence.
+
+## Active event-based engineering queue — 31 October 2026
+
+The Manus GitHub event workflow is enabled for this repository: new PRs receive bounded review; only verified CEO GitHub comments by cherry-hei beginning `Emma:` dispatch one scoped code task. Every task has one file owner, exact SHA, offline/live distinction, reviewer and next action. No automatic main merges, production deploys, migrations or external messaging. Full private chats are not copied between platforms; versioned decisions and work summaries are shared instead. Codex execution requires separately authenticated runner; never claim it ran when Manus performed the task.
