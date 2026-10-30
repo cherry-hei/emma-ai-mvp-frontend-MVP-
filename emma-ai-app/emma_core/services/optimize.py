@@ -11,7 +11,10 @@ from __future__ import annotations
 import json
 import math
 from collections import Counter
+from dataclasses import dataclass
 from datetime import date as Date, datetime, timedelta, timezone
+from types import MappingProxyType
+from typing import Mapping
 
 from ..constants import JobStatus, PlanMode, RosterStatus, SolveStatus
 from ..models import KpiSummary, OptimizeRequest, OptimizeResponse, RosterOption
@@ -21,6 +24,7 @@ from ..solver import (
     LockedAssignment,
     RatioRuleInput,
     ResidentCountInput,
+    RosterCellLock,
     SolverInputs,
     SolverLimits,
     StaffInput,
@@ -31,7 +35,7 @@ from ..solver import (
 from ..solver.inputs import AgencyLimitsInput, PreferenceInput
 from ..shifttime import duty_segments, envelope, paid_minutes
 from ..solver.timeutils import to_minutes
-from . import compliance, validation
+from . import compliance, roster_locks, validation
 from ._common import assignments_for_shifts
 from .organisations import org_id_for
 
@@ -49,6 +53,38 @@ _AGENCY_SHIFT_COST = {
     "PCW": 957.0,
     "AW": 957.0,
 }
+
+
+@dataclass(frozen=True, slots=True)
+class _RecoveryRequirement:
+    """A non-working recovery cell derived from immutable solver output."""
+
+    staff: StaffInput
+    day: Date
+    code: str
+    unit_id: str | None
+    source_date: Date
+    source_slot_id: str
+
+
+@dataclass(frozen=True, slots=True)
+class _RecoveryCell:
+    """A fully preflighted recovery cell, including a read-only definition."""
+
+    staff: StaffInput
+    day: Date
+    code: str
+    definition: Mapping[str, object]
+    unit_id: str | None
+    source_date: Date
+    source_slot_id: str
+
+
+@dataclass(frozen=True, slots=True)
+class _RecoveryPlan:
+    """Immutable non-working cells that are safe to materialise during writeback."""
+
+    cells: tuple[_RecoveryCell, ...] = ()
 
 
 def _now() -> str:
@@ -390,6 +426,12 @@ def load_inputs(client, facility_id: str, period_id: str, *, source_version_id=N
         .gte("date_end", str(period_start))
         .execute().data
     )
+    # A live lock is an approved promise which survives every re-solve. Unlike
+    # request payload locks, it is date/shift based because a future roster may
+    # not yet have source shift IDs when the approval is made.
+    cell_lock_rows = roster_locks.live_for_period(
+        client, facility_id, period_start, period_end
+    )
     future_debts = (
         client.table("future_debt_ledger").select("*")
         .eq("facility_id", facility_id)
@@ -681,6 +723,15 @@ def load_inputs(client, facility_id: str, period_id: str, *, source_version_id=N
     locks = tuple(LockedAssignment(staff_id=lk["staff_id"], slot_id=lk["slot_id"],
                                    pin=bool(lk.get("pin", True)))
                   for lk in (locked_assignments or []))
+    cell_locks = tuple(
+        RosterCellLock(
+            staff_id=row["staff_id"],
+            date=_as_date(row["date"]),
+            shift_type=row.get("shift_type"),
+            pin=row.get("lock_type") == "pin",
+        )
+        for row in cell_lock_rows
+    )
 
     return SolverInputs(
         facility_id=facility_id, period_id=period_id,
@@ -688,10 +739,11 @@ def load_inputs(client, facility_id: str, period_id: str, *, source_version_id=N
         staff=tuple(staff), demand=tuple(demand), ratio_rules=tuple(ratio_rules),
         resident_counts=tuple(resident_counts), baseline=tuple(baseline),
         preferences=tuple(preferences),
-        leave_unavailable=frozenset(leave), locks=locks,
+        leave_unavailable=frozenset(leave), locks=locks, cell_locks=cell_locks,
         include_staff_ids=frozenset(include_staff_ids or []),
         exclude_staff_ids=frozenset(exclude_staff_ids or []),
         night_shift_types=frozenset(night_types),
+        naac_hash_next_day_off=facility_code.upper() == "NAAC",
         agency_limits=agency_limits,
     )
 
@@ -721,9 +773,6 @@ def run_optimization(client, request: OptimizeRequest, *, persist: bool = True,
         limits = SolverLimits(max_seconds=request.solver_limits.max_seconds,
                               workers=request.solver_limits.workers,
                               seed=request.solver_limits.seed)
-        if persist and request.writeback.archive_previous_auto:
-            _archive_previous(client, request.facility_id, request.period_id)
-
         meta: dict | None = None
         if pareto:
             solved, meta = solve_pareto(inputs, limits)
@@ -732,11 +781,31 @@ def run_optimization(client, request: OptimizeRequest, *, persist: bool = True,
                      else [PlanMode.A, PlanMode.B, PlanMode.C])
             solved = build_and_solve(inputs, modes, limits)
 
+        # Resolve every recovery cell and its display definition before changing
+        # roster_versions. In particular, a missing NAAC DO definition now fails
+        # before draft archival or creation. This is deliberately a preflight,
+        # not a transaction: ordinary table writes below remain individual calls.
+        recovery_plans: list[_RecoveryPlan] = []
+        if persist:
+            for res in solved:
+                recovery_plans.append(
+                    _RecoveryPlan() if res.status == SolveStatus.INFEASIBLE else
+                    _preflight_recovery_plan(
+                        client, request.facility_id, inputs, res.assignments
+                    )
+                )
+            if request.writeback.archive_previous_auto:
+                _archive_previous(client, request.facility_id, request.period_id)
+        else:
+            recovery_plans = [_RecoveryPlan()] * len(solved)
+
         options: list[RosterOption] = []
-        for res in solved:
+        for res, recovery_plan in zip(solved, recovery_plans):
             version_id = None
             if persist and res.status != SolveStatus.INFEASIBLE:
-                version_id = _writeback_version(client, request, inputs, res)
+                version_id = _writeback_version(
+                    client, request, inputs, res, recovery_plan
+                )
             options.append(_to_option(res, version_id))
 
         _complete_job(client, job_id, options, meta=meta)
@@ -780,7 +849,7 @@ def _archive_previous(client, facility_id, period_id) -> None:
 
 
 def _insert_nonworking_cell(client, *, facility_id: str, version_id: str,
-                            day: Date, code: str, definition: dict,
+                            day: Date, code: str, definition: Mapping[str, object],
                             unit_id: str | None, staff: StaffInput) -> None:
     shift = (
         client.table("shifts").insert({
@@ -809,26 +878,62 @@ def _insert_nonworking_cell(client, *, facility_id: str, version_id: str,
     }).execute()
 
 
-def _writeback_night_recovery(client, facility_id: str, version_id: str,
-                              inputs: SolverInputs, assignments) -> None:
-    definitions = (
-        client.table("shift_definitions").select("*")
-        .eq("org_id", org_id_for(client, facility_id))
-        .in_("shift_type", ["SLEEP", "DO"])
-        .execute().data
-    )
-    definition_by_code = {row["shift_type"]: row for row in definitions}
-    if "SLEEP" not in definition_by_code or "DO" not in definition_by_code:
-        return
-
-    staff_by_id = {staff.id: staff for staff in inputs.staff}
+def _solved_occupancy(inputs: SolverInputs, assignments) -> set[tuple[str, Date]]:
+    """Return staff/date occupancy from solved working assignments only."""
     slot_by_id = {slot.id: slot for slot in inputs.demand}
-    occupied = {
+    return {
         (assignment.staff_id, slot_by_id[assignment.slot_id].date)
         for assignment in assignments
         if assignment.staff_id and assignment.slot_id in slot_by_id
     }
-    recovery: list[tuple[Date, str, object, StaffInput]] = []
+
+
+def _naac_hash_recovery_requirements(
+        inputs: SolverInputs, assignments) -> tuple[_RecoveryRequirement, ...]:
+    """Derive NAAC hash recovery without looking up a shift definition.
+
+    The empty return is intentional: a NAAC result with no solved ``#`` duty
+    must not require a DO definition just because the facility has NAAC policy.
+    """
+    if not inputs.naac_hash_next_day_off:
+        return ()
+    staff_by_id = {staff.id: staff for staff in inputs.staff}
+    slot_by_id = {slot.id: slot for slot in inputs.demand}
+    requirements: list[_RecoveryRequirement] = []
+    for assignment in assignments:
+        if not assignment.staff_id:
+            continue
+        slot = slot_by_id.get(assignment.slot_id)
+        if not slot or "#" not in slot.shift_type:
+            continue
+        staff = staff_by_id.get(assignment.staff_id)
+        if staff is None:
+            raise ValueError(
+                f"NAAC # shift {slot.id} has an unknown assigned staff member"
+            )
+        day = slot.date + timedelta(days=1)
+        if day < inputs.period_start or day > inputs.period_end:
+            # The model reports this boundary as infeasible, so a writeback here
+            # means caller/output drift rather than a safe deferral.
+            raise ValueError(
+                f"NAAC # shift on {slot.date} requires DO outside the roster period"
+            )
+        requirements.append(_RecoveryRequirement(
+            staff=staff, day=day, code="DO", unit_id=slot.unit_id,
+            source_date=slot.date, source_slot_id=slot.id,
+        ))
+    return tuple(sorted(
+        requirements,
+        key=lambda item: (item.day, item.staff.id, item.code, item.source_slot_id),
+    ))
+
+
+def _night_recovery_requirements(
+        inputs: SolverInputs, assignments) -> tuple[_RecoveryRequirement, ...]:
+    """Derive the existing local-FT night chain as non-working requirements."""
+    staff_by_id = {staff.id: staff for staff in inputs.staff}
+    slot_by_id = {slot.id: slot for slot in inputs.demand}
+    requirements: list[_RecoveryRequirement] = []
     for assignment in assignments:
         if not assignment.staff_id:
             continue
@@ -839,37 +944,128 @@ def _writeback_night_recovery(client, facility_id: str, version_id: str,
             or slot.shift_type.upper() not in inputs.night_shift_types
         ):
             continue
-        recovery.extend([
-            (slot.date + timedelta(days=1), "SLEEP", slot, staff),
-            (slot.date + timedelta(days=2), "DO", slot, staff),
-        ])
+        requirements.extend((
+            _RecoveryRequirement(
+                staff=staff, day=slot.date + timedelta(days=1), code="SLEEP",
+                unit_id=slot.unit_id, source_date=slot.date, source_slot_id=slot.id,
+            ),
+            _RecoveryRequirement(
+                staff=staff, day=slot.date + timedelta(days=2), code="DO",
+                unit_id=slot.unit_id, source_date=slot.date, source_slot_id=slot.id,
+            ),
+        ))
+    return tuple(sorted(
+        requirements,
+        key=lambda item: (item.day, item.staff.id, item.code, item.source_slot_id),
+    ))
 
-    for day, code, source_slot, staff in sorted(
-        recovery, key=lambda item: (item[0], item[3].id, item[1])
-    ):
-        key = (staff.id, day)
-        if day < inputs.period_start or day > inputs.period_end or key in occupied:
-            continue
-        definition = definition_by_code[code]
+
+def _load_recovery_definitions(client, facility_id: str, codes: set[str]) -> dict[str, Mapping[str, object]]:
+    """Read and freeze only the definitions needed by an already-derived plan."""
+    if not codes:
+        return {}
+    rows = (
+        client.table("shift_definitions").select("*")
+        .eq("org_id", org_id_for(client, facility_id))
+        .in_("shift_type", sorted(codes)).execute().data
+    )
+    return {
+        str(row["shift_type"]): MappingProxyType(dict(row))
+        for row in rows
+        if row.get("shift_type") in codes
+    }
+
+
+def _preflight_recovery_plan(client, facility_id: str, inputs: SolverInputs,
+                             assignments) -> _RecoveryPlan:
+    """Build an immutable, collision-checked recovery plan before writeback.
+
+    Hash recoveries are derived before a DO lookup. A generated matching DO is
+    reused, while a distinct generated non-working code on the same staff/date
+    is a clear error instead of silently creating duplicate cells.
+    """
+    hash_requirements = _naac_hash_recovery_requirements(inputs, assignments)
+    definitions = _load_recovery_definitions(
+        client, facility_id, {"DO"} if hash_requirements else set()
+    )
+    if hash_requirements and "DO" not in definitions:
+        raise ValueError("NAAC # shift requires a DO shift definition for writeback")
+
+    night_requirements = _night_recovery_requirements(inputs, assignments)
+    if night_requirements:
+        definitions.update(_load_recovery_definitions(
+            client, facility_id, {"SLEEP", "DO"} - set(definitions)
+        ))
+        # Preserve the existing night-chain behaviour for tenants which have not
+        # configured both display definitions: no optional cells are materialised.
+        if not {"SLEEP", "DO"}.issubset(definitions):
+            night_requirements = ()
+
+    occupied = _solved_occupancy(inputs, assignments)
+    generated: dict[tuple[str, Date], _RecoveryCell] = {}
+
+    def add(requirement: _RecoveryRequirement, *, required: bool) -> None:
+        key = (requirement.staff.id, requirement.day)
+        prior = generated.get(key)
+        if prior:
+            if prior.code == requirement.code:
+                return                              # one qualifying DO is enough
+            raise ValueError(
+                "recovery writeback collision for "
+                f"{requirement.staff.id} on {requirement.day}: "
+                f"{prior.code} from {prior.source_slot_id} conflicts with "
+                f"{requirement.code} from {requirement.source_slot_id}"
+            )
+        if key in occupied:
+            if required:
+                raise ValueError(
+                    f"NAAC # shift on {requirement.source_date} has no free "
+                    "next-day DO cell"
+                )
+            return                                  # existing night behaviour
+        generated[key] = _RecoveryCell(
+            staff=requirement.staff, day=requirement.day,
+            code=requirement.code, definition=definitions[requirement.code],
+            unit_id=requirement.unit_id, source_date=requirement.source_date,
+            source_slot_id=requirement.source_slot_id,
+        )
+
+    for requirement in hash_requirements:
+        add(requirement, required=True)
+    for requirement in night_requirements:
+        # Dates outside this roster have always been ignored for night display
+        # cells, whereas an in-period conflicting generated cell must surface.
+        if inputs.period_start <= requirement.day <= inputs.period_end:
+            add(requirement, required=False)
+
+    return _RecoveryPlan(cells=tuple(sorted(
+        generated.values(), key=lambda item: (item.day, item.staff.id, item.code)
+    )))
+
+
+def _writeback_recovery_plan(client, facility_id: str, version_id: str,
+                             plan: _RecoveryPlan) -> None:
+    """Materialise a recovery plan whose definitions and collisions were preflighted."""
+    for cell in plan.cells:
         _insert_nonworking_cell(
             client,
             facility_id=facility_id,
             version_id=version_id,
-            day=day,
-            code=code,
-            definition=definition,
-            unit_id=source_slot.unit_id,
-            staff=staff,
+            day=cell.day,
+            code=cell.code,
+            definition=cell.definition,
+            unit_id=cell.unit_id,
+            staff=cell.staff,
         )
-        occupied.add(key)
 
 
 def _writeback_part_time_cl(client, facility_id: str, version_id: str,
-                            inputs: SolverInputs, assignments) -> None:
+                            inputs: SolverInputs, assignments, *,
+                            occupied: set[tuple[str, Date]] | None = None) -> None:
     """Materialise or defer the Home-A CL earned by Saturday PT duty."""
     staff_by_id = {staff.id: staff for staff in inputs.staff}
     slot_by_id = {slot.id: slot for slot in inputs.demand}
-    occupied = {
+    occupied = set(occupied or ()) | {
         (assignment.staff_id, slot_by_id[assignment.slot_id].date)
         for assignment in assignments
         if assignment.staff_id and assignment.slot_id in slot_by_id
@@ -974,7 +1170,8 @@ def _writeback_part_time_cl(client, facility_id: str, version_id: str,
         occupied.add((staff.id, recovery_day))
 
 
-def _writeback_version(client, request, inputs, res) -> str:
+def _writeback_version(client, request, inputs, res,
+                       recovery_plan: _RecoveryPlan) -> str:
     # SQL: insert into roster_versions
     #        (facility_id, period_id, version_type, label, status, created_by)
     #      values (:facility_id, :period_id, :plan_mode, :label, 'draft', :created_by)
@@ -1065,11 +1262,15 @@ def _writeback_version(client, request, inputs, res) -> str:
     if agency_rows:
         client.table("agency_assignments").insert(agency_rows).execute()
 
-    _writeback_night_recovery(
-        client, request.facility_id, version_id, inputs, solved_assignments
+    _writeback_recovery_plan(
+        client, request.facility_id, version_id, recovery_plan
     )
     _writeback_part_time_cl(
-        client, request.facility_id, version_id, inputs, solved_assignments
+        client, request.facility_id, version_id, inputs, solved_assignments,
+        occupied={
+            (cell.staff.id, cell.day)
+            for cell in recovery_plan.cells
+        },
     )
 
     # SQL: insert into roster_option_scores

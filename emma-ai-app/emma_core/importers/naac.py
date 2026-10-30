@@ -398,17 +398,25 @@ def location_required_task_codes() -> frozenset[str]:
 
 # ── the profile ──────────────────────────────────────────────────────────────
 def _window(spec: NaacShiftCode) -> ShiftWindow:
+    # The home's 時數 column is payroll authority even when its prose time range
+    # cannot be parsed into a clock window (notably P1C#). Preserve it separately
+    # from the footprint so the generic loader never converts it into zero hours.
+    source_minutes = spec.paid_minutes
     segments = tuple({"start": s, "end": e} for s, e in spec.windows)
     label = spec.category_zh or spec.code
     if len(segments) > 1:
         return ShiftWindow(code=spec.code, label=label,
                            start=segments[0]["start"], end=segments[-1]["end"],
-                           segments=segments, is_working=spec.is_working)
+                           segments=segments, paid_minutes_override=source_minutes,
+                           is_working=spec.is_working)
     if segments:
         return ShiftWindow(code=spec.code, label=label,
                            start=segments[0]["start"], end=segments[0]["end"],
+                           paid_minutes_override=source_minutes,
                            is_working=spec.is_working)
-    return ShiftWindow(code=spec.code, label=label, is_working=spec.is_working)
+    return ShiftWindow(code=spec.code, label=label,
+                       paid_minutes_override=source_minutes,
+                       is_working=spec.is_working)
 
 
 @functools.lru_cache(maxsize=1)

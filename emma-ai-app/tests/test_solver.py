@@ -12,6 +12,7 @@ from emma_core.solver import (
     BaselineCell,
     DemandSlot,
     LockedAssignment,
+    RosterCellLock,
     SolverInputs,
     SolverLimits,
     StaffInput,
@@ -141,6 +142,66 @@ def test_locked_conflict_is_infeasible():
     res = solve_plan(inputs(staff, demand, days=1, locks=locks), PlanMode.C, LIM)
     assert res.status == SolveStatus.INFEASIBLE
     assert any("Locked" in r or "lock" in r for r in res.infeasible_reasons)
+
+
+def test_persisted_pin_and_day_off_forbid_control_assignments():
+    staff = [person("cw1", "CW"), person("cw2", "CW")]
+    demand = [slot("pin", 0, "P", P, "CW"), slot("forbidden", 1, "A", A, "CW")]
+    cell_locks = (
+        RosterCellLock("cw1", date(2026, 7, 1), "P", pin=True),
+        RosterCellLock("cw1", date(2026, 7, 2), pin=False),
+    )
+
+    res = solve_plan(
+        inputs(staff, demand, cell_locks=cell_locks), PlanMode.C, LIM,
+    )
+
+    assert res.status in (SolveStatus.OPTIMAL, SolveStatus.FEASIBLE)
+    assigned = {assignment.slot_id: assignment.staff_id for assignment in res.assignments}
+    assert assigned["pin"] == "cw1"
+    assert assigned["forbidden"] == "cw2"
+
+
+def test_naac_hash_blocks_work_on_next_calendar_day_across_month_boundary():
+    staff = [person("cw1", "CW")]
+    july_31 = date(2026, 7, 31)
+    august_1 = date(2026, 8, 1)
+    demand = [
+        DemandSlot("hash", july_31, 0, "A7#", *A, 480, required_rank="CW",
+                   agency_allowed=False),
+        DemandSlot("next", august_1, 1, "A7", *A, 480, required_rank="CW"),
+    ]
+    inp = SolverInputs(
+        facility_id="naac", period_id="p", period_start=july_31, period_end=august_1,
+        staff=tuple(staff), demand=tuple(demand), naac_hash_next_day_off=True,
+    )
+
+    res = solve_plan(inp, PlanMode.C, LIM)
+
+    assert res.status in (SolveStatus.OPTIMAL, SolveStatus.FEASIBLE)
+    assert res.hard_violation_count == 0
+    assigned = {assignment.slot_id: assignment.staff_id for assignment in res.assignments}
+    assert assigned["hash"] == "cw1"
+    assert assigned["next"] is None
+
+
+def test_naac_hash_on_final_period_day_is_explicitly_infeasible():
+    july_31 = date(2026, 7, 31)
+    demand = [
+        DemandSlot("hash", july_31, 0, "A7#", *A, 480, required_rank="CW",
+                   agency_allowed=False),
+    ]
+    inp = SolverInputs(
+        facility_id="naac", period_id="p", period_start=july_31, period_end=july_31,
+        staff=(person("cw1", "CW"),), demand=tuple(demand),
+        naac_hash_next_day_off=True,
+    )
+
+    res = solve_plan(inp, PlanMode.C, LIM)
+
+    assert res.status == SolveStatus.INFEASIBLE
+    assert any("NAAC # shift" in reason and "outside" in reason
+               for reason in res.infeasible_reasons)
 
 
 def test_empty_demand_scores_100():

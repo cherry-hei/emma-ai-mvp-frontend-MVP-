@@ -19,7 +19,7 @@ from typing import Iterable, Mapping
 
 from ..constants import can_cover_rank
 from ..shifttime import envelope, paid_minutes, to_minutes
-from . import compliance, scheduling
+from . import compliance, roster_locks, scheduling
 from ._common import assignments_for_shifts
 from .organisations import org_id_for
 
@@ -122,6 +122,7 @@ class RosterSnapshot:
     floor_min_staffing_rules: tuple[dict, ...] = ()
     contracts: tuple[dict, ...] = ()
     leave_requests: tuple[dict, ...] = ()
+    cell_locks: tuple[dict, ...] = ()
     leave_balances: tuple[dict, ...] = ()
     calendar_days: tuple[dict, ...] = ()
     resident_counts: tuple[dict, ...] = ()
@@ -492,6 +493,54 @@ def evaluate_core_constraints(snapshot: RosterSnapshot) -> list[dict]:
     return violations
 
 
+def evaluate_persisted_cell_locks(snapshot: RosterSnapshot) -> list[dict]:
+    """Make live approval promises hard publish-time findings.
+
+    Leave validation intentionally excludes approved duty requests and swaps:
+    they are positive commitments, not unavailability.  Their independent
+    durable lock rows are therefore evaluated here, alongside DO forbids.  The
+    service-level editor uses the same ``roster_locks`` evaluator before it
+    mutates a cell; this second check makes publication fail closed if any other
+    mutation path ever regresses.
+    """
+    violations: list[dict] = []
+    for finding in roster_locks.evaluate_assignments(
+        snapshot.cell_locks, snapshot.shifts, snapshot.assignments,
+    ):
+        lock = finding["lock"]
+        lock_type = str(lock.get("lock_type") or "")
+        staff_id = lock.get("staff_id")
+        day = lock.get("date")
+        expected = lock.get("shift_type")
+        if lock_type == "pin":
+            message = (
+                "Approved duty pin is not assigned exactly once to its requested shift."
+            )
+        elif lock_type == "forbid":
+            message = "Approved day-off lock has a working assignment."
+        else:
+            message = "Roster has an unrecognised persisted cell lock."
+        violations.append(_violation(
+            "persisted_cell_lock",
+            message,
+            staff_id=staff_id,
+            on_date=day,
+            severity="hard",
+            details={
+                "lock_id": lock.get("id"),
+                "lock_type": lock_type,
+                "expected_shift_type": expected,
+                "source_table": lock.get("source_table"),
+                "source_id": lock.get("source_id"),
+                "reason": finding["reason"],
+                "actual_shift_types": finding.get("actual_shift_types", []),
+                "matching_assignment_ids": finding.get("matching_assignment_ids", []),
+                "conflicting_assignment_ids": finding.get("conflicting_assignment_ids", []),
+            },
+        ))
+    return violations
+
+
 def _resident_rows_by_date(snapshot: RosterSnapshot) -> dict[str, list[dict]]:
     by_date: dict[str, list[dict]] = defaultdict(list)
     for row in snapshot.resident_counts:
@@ -702,6 +751,73 @@ def evaluate_night_rules(snapshot: RosterSnapshot) -> list[dict]:
                 severity=severity,
                 details={"source": "prior_roster_or_debt"},
             ))
+    return violations
+
+
+def evaluate_naac_hash_day_off_rule(snapshot: RosterSnapshot) -> list[dict]:
+    """Enforce NAAC's literal ``# -> next-calendar-day Day Off`` hard rule.
+
+    The legacy source also used ``#`` as a duty-supervisor marker. The current
+    approved NAAC policy is independent of that historical interpretation: a
+    literal marker on date D requires a non-working O, OFF, or DO assignment on
+    D+1. A period-boundary requirement remains a finding rather than being
+    silently treated as compliant.
+    """
+    if str(snapshot.facility.get("code") or "").upper() != "NAAC":
+        return []
+
+    day_off_codes = {"O", "OFF", "DO"}
+    shifts_by_staff_day: dict[str, dict[Date, list[dict]]] = defaultdict(
+        lambda: defaultdict(list)
+    )
+    for _assignment, shift, staff in _active_assignments(snapshot):
+        if staff:
+            shifts_by_staff_day[staff["id"]][_as_date(shift["date"])].append(shift)
+
+    violations: list[dict] = []
+    for staff_id, by_day in shifts_by_staff_day.items():
+        for day, shifts in by_day.items():
+            for shift in shifts:
+                source_code = str(shift.get("shift_type") or "")
+                if "#" not in source_code:
+                    continue
+
+                next_day = day + timedelta(days=1)
+                successor_shifts = by_day.get(next_day, ())
+                successor_codes = {
+                    str(row.get("shift_type") or "").upper()
+                    for row in successor_shifts
+                }
+                has_day_off = bool(successor_codes & day_off_codes)
+                has_work = any(
+                    row.get("is_working", True) for row in successor_shifts
+                )
+                boundary = next_day > snapshot.period_end
+                if has_day_off and not has_work and not boundary:
+                    continue
+
+                if boundary:
+                    reason = "next_calendar_day_outside_roster_period"
+                elif not has_day_off:
+                    reason = "missing_day_off"
+                else:
+                    reason = "day_off_overlaps_working_assignment"
+                violations.append(_violation(
+                    "naac_hash_day_off",
+                    "NAAC # shift requires a Day Off on the next calendar day.",
+                    shift_id=shift["id"],
+                    staff_id=staff_id,
+                    on_date=day,
+                    unit_id=shift.get("unit_id"),
+                    severity="hard",
+                    details={
+                        "source_shift_type": source_code,
+                        "required_date": next_day.isoformat(),
+                        "required_day_off_codes": sorted(day_off_codes),
+                        "actual_shift_types": sorted(successor_codes),
+                        "reason": reason,
+                    },
+                ))
     return violations
 
 
@@ -2021,6 +2137,11 @@ def load_snapshot(client, facility_id: str, roster_version_id: str) -> RosterSna
         .execute()
         .data
     )
+    # Persisted approvals are live promises; released rows must not constrain
+    # a validation run.  Reuse the exact loader used by the solver rather than
+    # recreating its release/facility/date predicates here.
+    cell_locks = roster_locks.live_for_period(
+        client, facility_id, period_start, period_end)
     leave_balances = []
     if version.get("period_id"):
         leave_balances = (
@@ -2100,6 +2221,7 @@ def load_snapshot(client, facility_id: str, roster_version_id: str) -> RosterSna
         floor_min_staffing_rules=tuple(floor_min_staffing_rules),
         contracts=tuple(contracts),
         leave_requests=tuple(leave_requests),
+        cell_locks=tuple(cell_locks),
         leave_balances=tuple(leave_balances),
         calendar_days=tuple(calendar_days),
         resident_counts=tuple(resident_counts),
@@ -2215,6 +2337,7 @@ def validate_roster(
     """Run the complete fresh Phase 4+5 ruleset for one roster version."""
     snapshot = load_snapshot(client, facility_id, roster_version_id)
     violations = evaluate_core_constraints(snapshot)
+    violations.extend(evaluate_persisted_cell_locks(snapshot))
     if not any(row.get("is_working", True) for row in snapshot.shifts):
         violations.append(_violation(
             "required_coverage",
@@ -2224,6 +2347,7 @@ def validate_roster(
     ratio_violations, ratio_rows = evaluate_swd_ratios(snapshot)
     violations.extend(ratio_violations)
     violations.extend(evaluate_night_rules(snapshot))
+    violations.extend(evaluate_naac_hash_day_off_rule(snapshot))
     violations.extend(evaluate_sequence_rules(snapshot))
     violations.extend(evaluate_agency_rules(snapshot))
     violations.extend(evaluate_part_time_rules(snapshot))

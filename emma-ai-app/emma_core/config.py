@@ -76,7 +76,9 @@ class Settings(BaseSettings):
     # every other site deployed there.
     cors_origins: str = ("http://localhost:3000,http://127.0.0.1:3000,"
                          "http://localhost:3001,http://127.0.0.1:3001,"
-                         "https://emmastaff-7p8bhd5l.manus.space")
+                         "https://emmastaff-7p8bhd5l.manus.space,"
+                         "https://emma-ai-staff-pwa.vercel.app,"
+                         "https://emma-ai-manager-mvp.vercel.app")
 
     # Amplify hands every branch its own hostname, so match them instead of listing them.
     cors_origin_regex: str = r"https://[a-z0-9-]+(?:\.[a-z0-9-]+)*\.amplifyapp\.com"

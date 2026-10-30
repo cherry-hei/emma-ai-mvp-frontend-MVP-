@@ -144,6 +144,166 @@ def _live_locks(client, facility_id: str, staff_id: str,
             .is_("released_at", "null").execute().data)
 
 
+def live_for_cell(client, facility_id: str, staff_id: str,
+                  on: Date | str) -> list[dict]:
+    """Return the unreleased promises for exactly one staff/date cell.
+
+    The database's partial unique index normally means this is zero or one row,
+    but callers deliberately evaluate every returned row.  That keeps an
+    inconsistent legacy/imported dataset fail-closed rather than silently
+    choosing one approval to ignore.
+    """
+    day = iso(on)
+    query = (client.table("roster_cell_locks").select("*")
+             .eq("facility_id", facility_id).eq("staff_id", staff_id)
+             .eq("date", day))
+    # Some deliberately small offline adapters do not implement PostgREST's
+    # `is_`; retain the final Python filter so their tests exercise the same
+    # released-lock semantics as production.
+    is_null = getattr(query, "is_", None)
+    if callable(is_null):
+        query = is_null("released_at", "null")
+    return [
+        row for row in query.execute().data
+        if row.get("released_at") is None and iso(row.get("date")) == day
+    ]
+
+
+def _code(value: object) -> str:
+    return str(value or "").strip().upper()
+
+
+def cell_conflict(lock: dict, *, shift_type: str | None,
+                  is_working: bool) -> str | None:
+    """Return the hard-rule reason if a prospective cell conflicts with ``lock``.
+
+    A pin is a promise to work one specific duty, so a non-working cell or an
+    alternate code cannot replace it.  A forbid is an approved day off: it
+    rejects a working duty but still permits an explicit non-working cell such
+    as ``DO``.  This mirrors the solver, whose ``forbid`` eliminates working
+    demand slots and whose ``pin`` requires one matching slot.
+    """
+    lock_type = str(lock.get("lock_type") or "")
+    if lock_type == "pin":
+        if not is_working:
+            return "pin_requires_working_shift"
+        if _code(shift_type) != _code(lock.get("shift_type")):
+            return "pin_shift_type_mismatch"
+        return None
+    if lock_type == "forbid":
+        return "forbid_rejects_working_shift" if is_working else None
+    # An unknown lock type cannot be honoured safely.  Schema constraints should
+    # prevent it, but a direct/imported row must not create a bypass.
+    return "unknown_lock_type"
+
+
+def assert_cell_write_permitted(client, facility_id: str, *, staff_id: str,
+                                on: Date | str, shift_type: str | None,
+                                is_working: bool) -> None:
+    """Reject a manual cell write that would break a current durable promise."""
+    day = iso(on)
+    for lock in live_for_cell(client, facility_id, staff_id, day):
+        reason = cell_conflict(lock, shift_type=shift_type, is_working=is_working)
+        if reason:
+            raise ValueError(
+                f"roster cell is locked ({reason}): staff {staff_id}, {day}, "
+                f"required {lock.get('lock_type')} {lock.get('shift_type') or ''}".strip()
+            )
+
+
+def assert_cell_clear_permitted(client, facility_id: str, *, staff_id: str,
+                                on: Date | str) -> None:
+    """Reject deletion of a pinned duty; clearing an already-forbidden day is safe."""
+    day = iso(on)
+    for lock in live_for_cell(client, facility_id, staff_id, day):
+        if str(lock.get("lock_type") or "") != "forbid":
+            raise ValueError(
+                f"roster cell is locked (pin_requires_working_shift): staff {staff_id}, "
+                f"{day}, required pin {lock.get('shift_type') or ''}".strip()
+            )
+
+
+def evaluate_assignments(locks, shifts, assignments) -> list[dict]:
+    """Evaluate live locks against a roster version without making database calls.
+
+    Returned rows are deliberately service-neutral so validation can turn them
+    into its normal auditable hard findings.  Pins require *exactly one*
+    matching active working assignment; forbids reject every active working
+    assignment for the promised staff/date.  Shift codes compare case
+    insensitively, as solver demand does.
+    """
+    shifts_by_id = {row.get("id"): row for row in shifts if row.get("id")}
+    assignments_by_staff_day: dict[tuple[str, str], list[tuple[dict, dict]]] = {}
+    for assignment in assignments:
+        if assignment.get("status") == "cancelled":
+            continue
+        shift = shifts_by_id.get(assignment.get("shift_id"))
+        staff_id = assignment.get("staff_id")
+        if not shift or not staff_id or not shift.get("date"):
+            continue
+        key = (str(staff_id), iso(shift["date"]))
+        assignments_by_staff_day.setdefault(key, []).append((assignment, shift))
+
+    findings: list[dict] = []
+    ordered_locks = sorted(
+        (row for row in locks if row.get("released_at") is None),
+        key=lambda row: (
+            iso(row.get("date")), str(row.get("staff_id") or ""),
+            str(row.get("id") or ""),
+        ),
+    )
+    for lock in ordered_locks:
+        staff_id = str(lock.get("staff_id") or "")
+        day = iso(lock.get("date"))
+        cells = assignments_by_staff_day.get((staff_id, day), [])
+        working = [
+            (assignment, shift) for assignment, shift in cells
+            if shift.get("is_working", True)
+        ]
+        actual_codes = sorted(_code(shift.get("shift_type")) for _, shift in working)
+        lock_type = str(lock.get("lock_type") or "")
+        if lock_type == "pin":
+            matches = [
+                (assignment, shift) for assignment, shift in working
+                if cell_conflict(lock, shift_type=shift.get("shift_type"),
+                                 is_working=True) is None
+            ]
+            if len(matches) == 1:
+                continue
+            findings.append({
+                "lock": lock,
+                "reason": "pin_missing_or_mismatched" if not matches else "pin_not_exactly_once",
+                "actual_shift_types": actual_codes,
+                "matching_assignment_ids": sorted(
+                    str(assignment.get("id") or "") for assignment, _ in matches
+                ),
+            })
+            continue
+        if lock_type == "forbid":
+            conflicts = [
+                (assignment, shift) for assignment, shift in working
+                if cell_conflict(lock, shift_type=shift.get("shift_type"),
+                                 is_working=True)
+            ]
+            if not conflicts:
+                continue
+            findings.append({
+                "lock": lock,
+                "reason": "forbid_has_working_assignment",
+                "actual_shift_types": actual_codes,
+                "conflicting_assignment_ids": sorted(
+                    str(assignment.get("id") or "") for assignment, _ in conflicts
+                ),
+            })
+            continue
+        findings.append({
+            "lock": lock,
+            "reason": "unknown_lock_type",
+            "actual_shift_types": actual_codes,
+        })
+    return findings
+
+
 def live_for_period(client, facility_id: str, start: Date | str,
                     end: Date | str) -> list[dict]:
     """Every live lock in a date range - what a solve has to honour."""

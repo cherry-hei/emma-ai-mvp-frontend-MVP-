@@ -180,12 +180,17 @@ def _ensure_shift_definitions(client, facility_id: str, parsed: ParsedRoster,
         if window.code in existing:
             continue
         segments = [dict(s) for s in window.segments] or None
+        payable_minutes = (
+            window.paid_minutes_override
+            if window.paid_minutes_override is not None
+            else (paid_minutes({"segments": segments}) if segments else None)
+        )
         rows.append({
             "facility_id": facility_id, "shift_type": window.code,
             "label": window.label, "start_time": window.start,
             "end_time": window.end, "cross_midnight": window.cross_midnight,
             "is_working": window.is_working, "segments": segments,
-            "paid_minutes": paid_minutes({"segments": segments}) if segments else None,
+            "paid_minutes": payable_minutes,
             "weighting_factor": window.weighting_factor,
             "source_note": f"imported from {parsed.source_name}",
         })
@@ -493,6 +498,11 @@ def _write_cells(client, facility_id: str, parsed: ParsedRoster, version_id: str
             continue
         duty = cell.intent.duties[0] if cell.intent.duties else None
         segments = [dict(s) for s in (duty.segments if duty else ())] or None
+        payable_minutes = (
+            duty.paid_minutes_override
+            if duty and duty.paid_minutes_override is not None
+            else (paid_minutes({"segments": segments}) if segments else None)
+        )
         shift_rows.append({
             "facility_id": facility_id, "roster_version_id": version_id,
             "date": cell.date.isoformat(), "shift_type": code,
@@ -505,7 +515,7 @@ def _write_cells(client, facility_id: str, parsed: ParsedRoster, version_id: str
             "required_count": 1,
             "is_working": cell.intent.is_working,
             "segments": segments,
-            "paid_minutes": paid_minutes({"segments": segments}) if segments else None,
+            "paid_minutes": payable_minutes,
         })
         meta.append((cell, staff_id))
 

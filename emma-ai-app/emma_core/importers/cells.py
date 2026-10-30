@@ -88,6 +88,8 @@ class Duty:
     start: str | None = None
     end: str | None = None
     segments: tuple[dict[str, str], ...] = ()
+    # A source-defined payable duration, distinct from the duty's clock footprint.
+    paid_minutes_override: int | None = None
 
 
 @dataclass(frozen=True)
@@ -153,9 +155,15 @@ def normalise(raw: object) -> str:
     return text
 
 
-def _strip_markers(text: str) -> tuple[str, tuple[str, ...]]:
+def _strip_markers(
+    text: str,
+    *,
+    preserve: tuple[str, ...] = (),
+) -> tuple[str, tuple[str, ...]]:
     found = tuple(m for m in EVENT_MARKERS if m in text)
     for marker in EVENT_MARKERS:
+        if marker in preserve:
+            continue
         text = text.replace(marker, " ")
     return re.sub(r"\s+", " ", text).strip(" /+,&"), found
 
@@ -272,6 +280,15 @@ def _as_duty(fragment: str, sheet: SheetProfile,
         window = sheet.window(canonical)
         return _duty_from(window, None) if window else None
 
+    # NAAC's source dictionary contains literal duty codes such as A7 and A7#.
+    # The marker is a current auditable roster-rule input, so retain that exact
+    # source code rather than reducing it to generic A plus task 7. Other homes
+    # continue through the generic grammar below.
+    if profile.code == "NAAC":
+        window = sheet.window(key) or sheet.window(fragment)
+        if window:
+            return _duty_from(window, None)
+
     match = _DUTY_RE.match(fragment.replace(" ", "")) or _DUTY_RE.match(key)
     if not match:
         return None
@@ -295,7 +312,8 @@ def _as_duty(fragment: str, sheet: SheetProfile,
 
 def _duty_from(window: ShiftWindow, task_code: str | None) -> Duty:
     return Duty(shift_code=window.code, task_code=task_code,
-                start=window.start, end=window.end, segments=window.segments)
+                start=window.start, end=window.end, segments=window.segments,
+                paid_minutes_override=window.paid_minutes_override)
 
 
 # ── the parser ───────────────────────────────────────────────────────────────
@@ -307,7 +325,10 @@ def parse_cell(raw: object, profile: FacilityProfile,
         return CellIntent(raw="")
     sheet = sheet or profile.sheets[0]
 
-    body, markers = _strip_markers(text)
+    body, markers = _strip_markers(
+        text,
+        preserve=("#",) if profile.code == "NAAC" else (),
+    )
     body, is_request = _strip_request(body)
 
     duties: list[Duty] = []
@@ -406,7 +427,8 @@ def _merge_duties(duties: list[Duty], windows: list[tuple[str, str]],
     if len(duties) == 1 and windows and not duties[0].segments:
         # An explicit time window overrides the legend's hours for that day.
         start, end = windows[0]
-        duties = [Duty(duties[0].shift_code, duties[0].task_code, start, end)]
+        duties = [Duty(duties[0].shift_code, duties[0].task_code, start, end,
+                       paid_minutes_override=duties[0].paid_minutes_override)]
     if not duties and windows and not leave:
         ad_hoc = profile.ad_hoc
         duties = [Duty(ad_hoc.code, None, windows[0][0], windows[0][1])]
