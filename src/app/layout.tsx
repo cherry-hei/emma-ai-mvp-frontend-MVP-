@@ -6,7 +6,7 @@ import { Providers } from './providers'
 const inter = Inter({ subsets: ['latin'] })
 
 export const metadata: Metadata = {
-  title: 'Emma AI – Medical Intelligence',
+  title: 'Emma AI – Scheduling & Compliance Intelligence',
   description: 'AI-powered roster management for RCHE',
   manifest: '/manifest.json',
   appleWebApp: { capable: true, title: 'Emma AI', statusBarStyle: 'default' },

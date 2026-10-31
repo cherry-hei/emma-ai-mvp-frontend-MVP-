@@ -2,23 +2,23 @@
 import { usePathname, useRouter } from 'next/navigation'
 import { useLang } from '@/components/layout/LanguageContext'
 import { useAuth, roleLabel } from '@/components/layout/AuthContext'
-import { ROUTES, ROUTE_FEATURE, canOpenRoute, isActiveRoute } from '@/components/layout/navRoutes'
+import { ROUTES, ROUTE_FEATURE, canOpenRoute, isActiveRoute, type RoutePath } from '@/components/layout/navRoutes'
 
 const PINK = '#E8187A'
 
-const NAV = [
+const NAV: { key: string; icon: string; path: RoutePath }[] = [
   { key: 'nav_dashboard',   icon: '🏠',  path: ROUTES.dashboard  },
   { key: 'nav_roster',      icon: '📅',  path: ROUTES.roster     },
-  { key: 'nav_scheduling',  icon: '🧩',  path: ROUTES.scheduling },
+  // Scheduling rules and codes are settings subpages, not duplicate navigation.
   { key: 'nav_compliance',  icon: '✅',  path: ROUTES.compliance },
   { key: 'nav_approval',    icon: '👥✓', path: ROUTES.approval   },
   { key: 'nav_personnel',   icon: '👤',  path: ROUTES.staff      },
   // HIDDEN for MVP — Phase 5-8
   // { key: 'nav_roi',         icon: '📈',  path: ROUTES.roi        },
   { key: 'nav_reports',     icon: '📊',  path: ROUTES.reports    },
-  { key: 'nav_alert',       icon: '🔔',  path: ROUTES.alert, badge: '3' },
+  { key: 'nav_alert',       icon: '🔔',  path: ROUTES.alert },
   { key: 'nav_messages',   icon: '💬',  path: ROUTES.messages   },
-  { key: 'nav_shiftcodes', icon: '📖',  path: '/shift-codes'    },
+
   { key: 'nav_settings',    icon: '⚙️',  path: ROUTES.settings   },
 ]
 
@@ -32,6 +32,11 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void } = {}) {
   // all eight items, so a care worker saw the superintendent's sidebar including
   // ROI and could open /roi with the home's financials.
   const nav = NAV.filter(({ path }) => canOpenRoute(user?.role, ROUTE_FEATURE[path]))
+  // The owner uses the settings hub. Other permitted roles must not lose their
+  // pre-existing task-rule access merely because they cannot open facility settings.
+  if (!canOpenRoute(user?.role, 'facility.settings') && canOpenRoute(user?.role, 'task_codes')) {
+    nav.push({ key: 'nav_scheduling', icon: '⚙️', path: ROUTES.scheduling })
+  }
 
   const FALLBACK: Record<string, { zh: string; en: string }> = {
     nav_dashboard:  { zh: '主頁',       en: 'Dashboard'     },
@@ -85,7 +90,7 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void } = {}) {
 
       {/* Nav */}
       <nav className="min-h-0 flex-1 space-y-1 overflow-y-auto px-3 py-3" aria-label={lang === 'zh' ? '主要導覽' : 'Primary navigation'}>
-        {nav.map(({ key, icon, path, badge }) => {
+        {nav.map(({ key, icon, path }) => {
           const active = isActiveRoute(pathname, path)
           return (
             <button
@@ -98,14 +103,6 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void } = {}) {
             >
               <span className="shrink-0 text-base opacity-70" aria-hidden>{icon}</span>
               <span className="emma-reflow-text min-w-0 flex-1 break-words">{label(key)}</span>
-              {badge && (
-                <span
-                  className="flex min-h-5 min-w-5 items-center justify-center rounded-full px-1.5 text-xs font-semibold text-white"
-                  style={{ background: PINK }}
-                >
-                  {badge}
-                </span>
-              )}
             </button>
           )
         })}

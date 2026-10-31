@@ -1,828 +1,408 @@
 'use client'
 
-import { useCallback, useEffect, useMemo, useState } from 'react'
-import type { Staff } from '@/lib/types'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { api } from '@/lib/api'
-import type { ApiStaff, StaffAiAnalysis, StaffDetail } from '@/lib/apiTypes'
-import { useLang } from '@/components/layout/LanguageContext'
+import type { ApiStaff, StaffDetail, StaffQualification } from '@/lib/apiTypes'
 import { useAuth } from '@/components/layout/AuthContext'
+import { useLang } from '@/components/layout/LanguageContext'
 import { canWrite } from '@/lib/permissions'
 import { AddStaffModal } from '@/components/staff/AddStaffModal'
+import {
+  knownStatusLabel,
+  matchesStaffDirectoryFilter,
+  sourceHours,
+  staffInitials,
+  toStaffDirectoryCard,
+  type StaffDirectoryCard,
+} from '@/components/staff/staff-view-model'
 
-// UI staff = demo shape + optional links to the real API record.
-type StaffType = Staff & { apiId?: string; apiStatus?: string }
+const PINK = '#E87891'
 
-// Map a backend /staff row to the card shape using REAL fields: certs, rostered
-// hours (scheduled vs contracted-for-period), unit, and derived status. id is the
-// 1-based index so the demo AVATARS/EXTRA maps still line up as a visual fallback.
-function mapApiStaff(rows: ApiStaff[]): StaffType[] {
-  return rows.map((s, i) => ({
-    id: i + 1,
-    apiId: s.id,
-    apiStatus: s.status || undefined,
-    name: s.name,
-    nameEn: s.name_en || s.name,
-    role: s.rank,
-    ward: s.unit_name || '-',
-    floor: '-',
-    certs: s.certs ?? [],
-    hoursWorked: Math.round(s.scheduled_hours ?? 0),
-    hoursTotal: Math.round(s.contracted_period_hours || 160),
-    avatar: (s.name_en || s.name).charAt(0),
-  }))
+type Copy = {
+  title: string
+  people: string
+  facility: string
+  add: string
+  refresh: string
+  search: string
+  allRoles: string
+  role: string
+  roleCode: string
+  employment: string
+  unit: string
+  status: string
+  notProvided: string
+  loading: string
+  loadError: string
+  retry: string
+  empty: string
+  certificates: string
+  noCertificates: string
+  scheduled: string
+  contracted: string
+  view: string
+  close: string
+  profile: string
+  profileLoading: string
+  profileLoadError: string
+  sourceId: string
+  periodInformation: string
+  capabilities: string
+  medicationAudited: string
+  mentor: string
+  yes: string
+  no: string
+  qualificationRecords: string
+  noQualifications: string
+  qualificationsUnavailable: string
+  active: string
+  inactive: string
+  effective: string
+  expires: string
+  noDate: string
+  rosterHistory: string
+  noHistory: string
+  historyUnavailable: string
+  shift: string
+  time: string
+  tasks: string
+  skillsTitle: string
+  skillsUnavailable: string
+  skillsHint: string
 }
 
-const API_STATUS: Record<string, { labelZH: string; labelEN: string; color: string; bg: string }> = {
-  scheduled: { labelZH: '已排更', labelEN: 'Scheduled', color: '#1d4ed8', bg: '#eff6ff' },
-  on_leave:  { labelZH: '休假',   labelEN: 'On Leave',  color: '#be123c', bg: '#fff1f2' },
-  available: { labelZH: '可調配', labelEN: 'Available', color: '#15803d', bg: '#f0fdf4' },
+function copyFor(isZH: boolean): Copy {
+  return isZH ? {
+    title: '員工檔案', people: '位員工', facility: '院舍', add: '新增員工', refresh: '重新整理',
+    search: '搜尋姓名、職級、單位或聘用類型…', allRoles: '所有職級', role: '職級', roleCode: '職級代碼',
+    employment: '聘用類型', unit: '所屬單位', status: '狀態', notProvided: '未提供',
+    loading: '正在載入員工檔案…', loadError: '未能載入員工檔案。不會以示範資料代替缺失資料。', retry: '重試',
+    empty: '沒有符合條件的員工。', certificates: '證書記錄', noCertificates: '未有證書記錄。',
+    scheduled: '本期已排工時', contracted: '本期合約工時', view: '查看檔案', close: '關閉',
+    profile: '員工檔案', profileLoading: '正在重新整理員工檔案…',
+    profileLoadError: '未能重新整理詳細檔案；下方只顯示已載入的目錄資料。', sourceId: '員工記錄 ID',
+    periodInformation: '本期更表資料', capabilities: '已記錄資格', medicationAudited: '藥物核查資格', mentor: '可帶教新人',
+    yes: '是', no: '否', qualificationRecords: '資格記錄', noQualifications: '未有資格記錄。',
+    qualificationsUnavailable: '資格記錄暫時未能載入。', active: '有效', inactive: '非有效',
+    effective: '生效日期', expires: '到期日期', noDate: '未記錄', rosterHistory: '更表紀錄',
+    noHistory: '未有更表紀錄。', historyUnavailable: '更表紀錄在詳細資料可用後才會顯示。', shift: '更別', time: '時段', tasks: '任務',
+    skillsTitle: '技能及發展評估',
+    skillsUnavailable: '未評估／暫未提供',
+    skillsHint: '目前 MVP API 未提供可儲存的管理人員技能評估記錄；不會以證書、資格、更表或 AI 推斷分數代替。',
+  } : {
+    title: 'Staff Portfolio', people: 'staff members', facility: 'Facility', add: 'Add staff', refresh: 'Refresh',
+    search: 'Search name, role, unit or employment type…', allRoles: 'All role codes', role: 'Role', roleCode: 'Role code',
+    employment: 'Employment type', unit: 'Unit', status: 'Status', notProvided: 'Not provided',
+    loading: 'Loading staff records…', loadError: 'Staff records could not be loaded. Missing data is not replaced with demo records.', retry: 'Retry',
+    empty: 'No matching staff.', certificates: 'Certificates on record', noCertificates: 'No certificates on record.',
+    scheduled: 'Rostered this period', contracted: 'Contracted this period', view: 'View profile', close: 'Close',
+    profile: 'Staff profile', profileLoading: 'Refreshing staff profile…',
+    profileLoadError: 'The detailed profile could not be refreshed; only the loaded directory record is shown below.', sourceId: 'Staff record ID',
+    periodInformation: 'Current roster-period data', capabilities: 'Recorded capabilities', medicationAudited: 'Medication audited', mentor: 'Can mentor new staff',
+    yes: 'Yes', no: 'No', qualificationRecords: 'Qualification records', noQualifications: 'No qualification records returned.',
+    qualificationsUnavailable: 'Qualification records are temporarily unavailable.', active: 'Active', inactive: 'Inactive',
+    effective: 'Effective from', expires: 'Expires', noDate: 'Not recorded', rosterHistory: 'Shift history',
+    noHistory: 'No shift history returned.', historyUnavailable: 'Shift history is available after the detailed profile loads.', shift: 'Shift', time: 'Time', tasks: 'Tasks',
+    skillsTitle: 'Skills & development assessment',
+    skillsUnavailable: 'Not assessed / unavailable',
+    skillsHint: 'The current MVP API has no persisted manager skill-assessment record. Certificates, qualifications, roster history and AI output are not substituted as scores.',
+  }
 }
-const DEFAULT_STATUS = { labelZH: '可調配', labelEN: 'Available', color: '#15803d', bg: '#f0fdf4' }
 
-const STATUS: Record<number, { labelZH: string; labelEN: string; color: string; bg: string }> = {
-  1: { labelZH: '當值中', labelEN: 'On Shift',   color: '#1d4ed8', bg: '#eff6ff' },
-  2: { labelZH: '可調配', labelEN: 'Available',  color: '#15803d', bg: '#f0fdf4' },
-  3: { labelZH: '當值中', labelEN: 'On Shift',   color: '#1d4ed8', bg: '#eff6ff' },
-  4: { labelZH: '休息',   labelEN: 'Off Duty',   color: '#6b7280', bg: '#f9fafb' },
-  5: { labelZH: '可調配', labelEN: 'Available',  color: '#15803d', bg: '#f0fdf4' },
-  6: { labelZH: '病假',   labelEN: 'Sick Leave', color: '#be123c', bg: '#fff1f2' },
-  7: { labelZH: '當值中', labelEN: 'On Shift',   color: '#1d4ed8', bg: '#eff6ff' },
+function StatusBadge({ status, isZH }: { status: string | null; isZH: boolean }) {
+  if (!status) return null
+  const tone = status === 'on_leave'
+    ? 'border-rose-100 bg-rose-50 text-rose-700'
+    : status === 'scheduled'
+      ? 'border-blue-100 bg-blue-50 text-blue-700'
+      : status === 'available'
+        ? 'border-emerald-100 bg-emerald-50 text-emerald-700'
+        : 'border-slate-200 bg-slate-50 text-slate-600'
+  return <span className={`max-w-full break-words rounded-full border px-2.5 py-1 text-[11px] font-semibold emma-reflow-text ${tone}`}>{knownStatusLabel(status, isZH)}</span>
 }
 
-const SKILLS: Record<number, string[]> = {
-  1: ['ACLS', 'Triage', 'BLS', 'Emergency'],
-  2: ['First Aid', 'Manual Hand.', 'Wound Care'],
-  3: ['Elder Care', 'Vitals', 'AOM'],
-  4: ['Personal Care', 'Oral Feeding'],
-  5: ['Rehab Tech', 'Physio Support'],
-  6: ['Bathing', 'Transfer', 'Night Care'],
-  7: ['Infection Ctrl', 'Facility-wide'],
+function Field({ label, value }: { label: string; value: string }) {
+  return <div className="min-w-0 rounded-2xl border border-slate-100 bg-slate-50 p-3">
+    <dt className="break-words text-xs font-semibold text-slate-500 emma-reflow-text">{label}</dt>
+    <dd className="mt-1 break-words text-sm font-bold text-slate-900 emma-reflow-text">{value}</dd>
+  </div>
 }
 
-const AVATARS = ['🧑‍⚕️', '👩‍⚕️', '👨‍⚕️', '👩‍⚕️', '🧑‍⚕️', '👩‍⚕️', '👨‍⚕️']
-const PINK = '#f28f9e'
+function CertificateList({ certificates, empty }: { certificates: string[]; empty: string }) {
+  if (certificates.length === 0) return <p className="text-xs text-slate-500">{empty}</p>
+  return <div className="flex flex-wrap gap-2 emma-reflow-wrap">
+    {certificates.map((certificate) => <span key={certificate} className="max-w-full break-words rounded-lg border border-pink-100 bg-pink-50 px-2.5 py-1 text-xs font-semibold text-pink-700 emma-reflow-text">{certificate}</span>)}
+  </div>
+}
 
-// The two capability flags the rule engine reads off a staff record. Both are
-// editable here rather than only at creation: mentor status is the one a
-// superintendent changes most, because it decides whether a new-staff restricted
-// duty may be rostered at all (see scheduling.validate - "new_staff_restricted"
-// requires a mentor on the shift).
-const CAPABILITY_FIELDS = [
-  {
-    key: 'is_mentor' as const,
-    icon: '🎓',
-    titleZH: '可帶教新人', titleEN: 'Can mentor new staff',
-    hintZH: '新入職員工需導師陪同', hintEN: 'New staff need a mentor on duty',
-  },
-  {
-    key: 'is_audited_for_medication' as const,
-    icon: '💊',
-    titleZH: '藥物核查資格', titleEN: 'Medication audited',
-    hintZH: '可執行藥物相關工作', hintEN: 'May perform medication duties',
-  },
-]
-
-type CapabilityKey = (typeof CAPABILITY_FIELDS)[number]['key']
-
-function ProfileModal({ staff, idx, canEdit, onClose, onSaved }: {
-  staff: StaffType
-  idx: number
-  canEdit: boolean
-  onClose: () => void
-  onSaved: (name: string) => void
-}) {
+function StaffProfilePanel({ staff, onClose }: { staff: ApiStaff; onClose: () => void }) {
   const { lang } = useLang()
   const isZH = lang === 'zh'
-  const [tab, setTab] = useState<'ai' | 'history' | 'edit'>('history')
+  const copy = copyFor(isZH)
   const [detail, setDetail] = useState<StaffDetail | null>(null)
-  const [analysis, setAnalysis] = useState<StaffAiAnalysis | null>(null)
-  const [analysisError, setAnalysisError] = useState('')
-
-  // `draft` holds the pending toggle state; null until the record loads, so the
-  // switches cannot be flipped against a value we have not read yet. Saving
-  // sends only the keys that actually differ from `detail`.
-  const [draft, setDraft] = useState<Record<CapabilityKey, boolean> | null>(null)
-  const [saving, setSaving] = useState(false)
-  const [saveError, setSaveError] = useState('')
-  const [editForm, setEditForm] = useState<{
-    name: string; name_en: string; rank: string; employment_type: string
-    contracted_hours: number; gender: 'M' | 'F'; status: 'active' | 'inactive'
-  } | null>(null)
-  const [editSaving, setEditSaving] = useState(false)
-  const [editSuccess, setEditSuccess] = useState(false)
+  const [qualifications, setQualifications] = useState<StaffQualification[] | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [detailError, setDetailError] = useState(false)
+  const [qualificationError, setQualificationError] = useState(false)
 
   useEffect(() => {
-    if (!staff.apiId) return
     let cancelled = false
-    api.staffDetail(staff.apiId)
-      .then(d => {
-        if (cancelled) return
-        setDetail(d)
-        setDraft({ is_mentor: !!d.is_mentor, is_audited_for_medication: !!d.is_audited_for_medication })
-        setEditForm({
-          name: d.name || '',
-          name_en: d.name_en || '',
-          rank: d.rank || '',
-          employment_type: d.employment_type || '',
-          contracted_hours: d.contracted_hours || 44,
-          gender: (d as any).gender || 'F',
-          status: (d as any).status === 'inactive' ? 'inactive' : 'active',
-        })
-      })
-      .catch(() => {})
-    api.staffAiAnalysis(staff.apiId)
-      .then(a => { if (!cancelled) setAnalysis(a) })
-      .catch(e => { if (!cancelled) setAnalysisError(e instanceof Error ? e.message : 'Analysis unavailable') })
-    return () => { cancelled = true }
-  }, [staff.apiId])
-
-  const dirtyKeys = draft && detail
-    ? CAPABILITY_FIELDS.map(f => f.key).filter(k => draft[k] !== !!detail[k])
-    : []
-
-  async function saveCapabilities() {
-    if (!staff.apiId || !draft || dirtyKeys.length === 0) return
-    setSaving(true)
-    setSaveError('')
-    try {
-      const patch = Object.fromEntries(dirtyKeys.map(k => [k, draft[k]]))
-      const updated = await api.updateStaff(staff.apiId, patch)
-      // Re-seed from the row the API returned, so `dirtyKeys` empties and the
-      // panel reflects what was actually stored rather than what we sent.
-      setDetail(d => (d ? { ...d, ...updated } : d))
-      onSaved(staff.nameEn)
-    } catch (e) {
-      setSaveError(e instanceof Error ? e.message : 'Save failed')
-    } finally {
-      setSaving(false)
+    function closeOnEscape(event: KeyboardEvent) {
+      if (event.key === 'Escape') onClose()
     }
-  }
+    window.addEventListener('keydown', closeOnEscape)
+    setLoading(true)
+    setDetail(null)
+    setQualifications(null)
+    setDetailError(false)
+    setQualificationError(false)
 
-  const pct = staff.hoursTotal ? Math.round((staff.hoursWorked / staff.hoursTotal) * 100) : 0
+    void api.staffDetail(staff.id)
+      .then((result) => { if (!cancelled) setDetail(result) })
+      .catch(() => { if (!cancelled) setDetailError(true) })
+      .finally(() => { if (!cancelled) setLoading(false) })
 
-  // Real rostered shift history from the API (empty until the roster is loaded).
-  const SHIFT_HISTORY = (detail?.shift_history ?? []).map(h => ({
-    date: h.date,
-    shift: h.shift_type ?? '-',
-    time: h.start_time && h.end_time ? `${h.start_time} - ${h.end_time}` : '-',
-    ward: staff.ward,
-    resident: h.tasks?.[0] ?? '-',
-  }))
+    void api.staffQualifications({ staffId: staff.id })
+      .then((result) => { if (!cancelled) setQualifications(result) })
+      .catch(() => { if (!cancelled) setQualificationError(true) })
 
-  const L = {
-    covers:         isZH ? '緊急補更'        : 'Emergency Covers',
-    weekly_load:    isZH ? '本週期時數'      : 'Period Load',
-    night_shifts:   isZH ? 'N更次數'         : 'N Shifts',
-    units:          isZH ? '服務單位數'      : 'Units Worked',
-    hours_month:    isZH ? '本週期工時'      : 'Hours This Period',
-    tab_history:    isZH ? '更表紀錄'        : 'Shift History',
-    tab_ai:         isZH ? 'AI 分析'         : 'AI Analysis',
-    tab_edit:       isZH ? '編輯資料'        : 'Edit Profile',
-    completed:      isZH ? '已完成'          : 'COMPLETED',
-    credentials:    isZH ? '認可資歷'        : 'Verified Credentials',
-    ai_skill:       isZH ? 'AI 技能分析'     : 'AI Skill Analysis',
-    skill_prog:     isZH ? '技能證據對比'    : 'Evidence by Skill',
-    evidence:       isZH ? '證據來源'        : 'EVIDENCE-BACKED',
-    gaps:           isZH ? '技能缺口'        : 'Critical Skill Gaps',
-    training:       isZH ? '建議培訓'        : 'Recommended Training',
-    implicit_title: isZH ? 'AI 隱性技能分析' : 'Implicit Skill Derivation',
-    skill_gained:   isZH ? '獲得技能：'      : 'Skill Gained:',
-    confirm:        isZH ? '確認調配'        : 'Confirm Assignment',
-    contact:        isZH ? '聯絡員工'        : 'Contact Staff',
-    explicit:       isZH ? '顯性'            : 'Explicit',
-    implicit:       isZH ? '隱性'            : 'Implicit',
-    no_analysis:    isZH ? '此員工尚未有可分析的實際資料' : 'No analysable records for this staff member yet',
-    loading:        isZH ? '分析載入中…'     : 'Loading analysis…',
-    times:          isZH ? '次'              : '×',
-    capabilities:   isZH ? '資格與能力'      : 'Capabilities',
-    save:           isZH ? '儲存'            : 'Save',
-    saving:         isZH ? '儲存中…'         : 'Saving…',
-    saved:          isZH ? '已儲存'          : 'Saved',
-    unsaved:        isZH ? '尚未儲存'        : 'Unsaved changes',
-    readonly:       isZH ? '你的權限不可修改員工資格' : 'Your role may not edit staff capabilities',
-  }
-
-  async function saveEditForm() {
-    if (!staff.apiId || !editForm) return
-    setEditSaving(true)
-    setSaveError('')
-    try {
-      await api.updateStaff(staff.apiId, {
-        name: editForm.name,
-        name_en: editForm.name_en,
-        rank: editForm.rank,
-        employment_type: editForm.employment_type,
-        contracted_hours: editForm.contracted_hours,
-        gender: editForm.gender,
-        status: editForm.status,
-      })
-      setEditSuccess(true)
-      onSaved(editForm.name_en || editForm.name)
-      setTimeout(() => setEditSuccess(false), 2000)
-    } catch (e) {
-      setSaveError(e instanceof Error ? e.message : 'Save failed')
-    } finally {
-      setEditSaving(false)
+    return () => {
+      cancelled = true
+      window.removeEventListener('keydown', closeOnEscape)
     }
-  }
+  }, [onClose, staff.id])
 
-  const CREDENTIALS = analysis?.explicit_skills.length
-    ? analysis.explicit_skills
-    : (detail?.certificates ?? []).map(c => ({
-        skill: c.cert_type, status: 'valid' as const, score: 100,
-        expiry_date: c.expiry_date, days_left: null,
-      }))
+  const source = detail ?? staff
+  const card = toStaffDirectoryCard(source)
+  const certificates = Array.isArray(source.certificates) && source.certificates.length > 0
+    ? source.certificates.map((certificate) => certificate.cert_type).filter(Boolean)
+    : card.certificates
 
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-6"
-      style={{ background: 'rgba(0,0,0,0.4)' }} onClick={onClose}>
-      <div className="bg-white w-full max-w-2xl rounded-[2.5rem] overflow-hidden shadow-2xl max-h-[90vh] flex flex-col"
-        onClick={e => e.stopPropagation()}>
-
-        <div className="relative h-48 flex-shrink-0"
-          style={{ background: 'linear-gradient(135deg, #fce8f3 0%, #eff6ff 100%)' }}>
-          <button onClick={onClose}
-            className="absolute top-5 right-5 p-2 bg-white/60 hover:bg-white rounded-full transition-colors z-10 text-gray-600 font-bold w-9 h-9 flex items-center justify-center">
-            ✕
-          </button>
-          <div className="absolute -bottom-16 left-10">
-            <div className="relative">
-              <div className="w-32 h-32 rounded-[2rem] border-8 border-white bg-pink-50 flex items-center justify-center text-5xl shadow-lg">
-                {staff.apiId ? staff.avatar : AVATARS[idx]}
-              </div>
-              <div className="absolute -bottom-2 -right-2 w-10 h-10 rounded-full bg-emerald-500 flex items-center justify-center border-4 border-white shadow-md text-white text-sm">✓</div>
+  return <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 p-3 sm:p-6" onMouseDown={onClose}>
+    <section role="dialog" aria-modal="true" aria-labelledby="staff-profile-title" className="flex max-h-[calc(100dvh-1.5rem)] w-full max-w-4xl flex-col overflow-hidden rounded-3xl border border-pink-100 bg-white shadow-2xl" onMouseDown={(event) => event.stopPropagation()}>
+      <header className="flex flex-wrap items-start justify-between gap-3 border-b border-pink-100 bg-gradient-to-r from-pink-50 via-white to-rose-50 px-5 py-5 sm:px-8 emma-reflow-wrap">
+        <div className="flex min-w-0 items-start gap-3">
+          <div aria-hidden className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl border border-pink-100 bg-white text-base font-black text-pink-600 shadow-sm">{staffInitials(card)}</div>
+          <div className="min-w-0">
+            <p className="text-xs font-bold tracking-wide text-pink-700">Emma AI · {copy.profile}</p>
+            <h2 id="staff-profile-title" className="mt-1 break-words text-xl font-extrabold text-slate-950 emma-reflow-text">{card.primaryName}</h2>
+            {card.secondaryName && <p className="mt-1 break-words text-sm text-slate-600 emma-reflow-text">{card.secondaryName}</p>}
+            <div className="mt-2 flex flex-wrap items-center gap-2 emma-reflow-wrap">
+              <span className="max-w-full break-words rounded-full bg-pink-600 px-2.5 py-1 text-[11px] font-bold text-white emma-reflow-text">{card.roleCode}</span>
+              <StatusBadge status={card.status} isZH={isZH} />
             </div>
           </div>
         </div>
+        <button type="button" onClick={onClose} aria-label={copy.close} className="flex min-h-10 min-w-10 shrink-0 items-center justify-center rounded-full border border-slate-200 bg-white px-2 text-xl font-semibold text-slate-600 transition-colors hover:bg-pink-50">×</button>
+      </header>
 
-        <div className="pt-20 px-10 pb-6 overflow-y-auto flex-1">
-          <div className="flex justify-between items-start mb-6">
-            <div>
-              <h2 className="text-2xl font-extrabold text-gray-900">{staff.nameEn}</h2>
-              <div className="text-sm text-gray-500 mt-0.5">{staff.name}</div>
-              <div className="flex items-center gap-3 mt-2">
-                <span className="text-xs font-bold px-3 py-1 rounded-full text-white uppercase tracking-wider" style={{ background: PINK }}>
-                  {staff.role}
-                </span>
-                <span className="text-sm text-gray-500 font-medium">ID: #NGO-{1000 + staff.id * 317}</span>
-              </div>
-            </div>
-            <div className="text-right">
-              <div className="text-3xl font-black" style={{ color: '#10b981' }}>
-                {analysis?.activity.emergency_covers ?? 0}
-              </div>
-              <div className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">{L.covers}</div>
-            </div>
+      <div className="min-h-0 flex-1 space-y-6 overflow-y-auto p-5 sm:p-8">
+        {loading && <p role="status" className="rounded-xl bg-slate-50 p-3 text-sm text-slate-500">{copy.profileLoading}</p>}
+        {detailError && <p role="alert" className="rounded-xl bg-amber-50 p-3 text-sm leading-6 text-amber-800">{copy.profileLoadError}</p>}
+
+        <section aria-labelledby="staff-core-record" className="space-y-3">
+          <div className="flex flex-wrap items-center justify-between gap-2 emma-reflow-wrap">
+            <h3 id="staff-core-record" className="text-base font-bold text-slate-900">{copy.profile}</h3>
+            <span className="max-w-full break-all text-xs text-slate-500 emma-reflow-text">{copy.sourceId}: {card.id}</span>
           </div>
+          <dl className="grid grid-cols-1 gap-3 sm:grid-cols-2 emma-reflow-stack">
+            <Field label={copy.roleCode} value={card.roleCode} />
+            <Field label={copy.employment} value={card.employmentType || copy.notProvided} />
+            <Field label={copy.unit} value={card.unitName ?? copy.notProvided} />
+            <Field label={copy.status} value={card.status ? knownStatusLabel(card.status, isZH) : copy.notProvided} />
+          </dl>
+        </section>
 
-          <div className="grid grid-cols-3 gap-4 mb-6">
-            {[
-              { label: L.weekly_load,  value: `${staff.hoursWorked}h / ${staff.hoursTotal}h` },
-              { label: L.night_shifts, value: String(analysis?.activity.night_shifts ?? '-') },
-              { label: L.units,        value: String(analysis?.activity.distinct_units ?? '-') },
-            ].map(s => (
-              <div key={s.label} className="bg-gray-50 p-4 rounded-2xl">
-                <div className="text-[10px] font-bold text-gray-400 uppercase mb-1">{s.label}</div>
-                <div className="text-lg font-bold text-gray-900">{s.value}</div>
+        <section aria-labelledby="staff-period-record" className="space-y-3">
+          <h3 id="staff-period-record" className="text-base font-bold text-slate-900">{copy.periodInformation}</h3>
+          <p className="text-xs leading-5 text-slate-500">{isZH ? '只顯示 API 回傳的目前更表期資料；不會推算月度結算。' : 'Only current roster-period values returned by the API are shown; no monthly accounting is inferred.'}</p>
+          <dl className="grid grid-cols-1 gap-3 sm:grid-cols-2 emma-reflow-stack">
+            <Field label={copy.scheduled} value={sourceHours(card.scheduledHours, copy.notProvided)} />
+            <Field label={copy.contracted} value={sourceHours(card.contractedPeriodHours, copy.notProvided)} />
+          </dl>
+        </section>
+
+        <section aria-labelledby="staff-credentials-record" className="space-y-3">
+          <h3 id="staff-credentials-record" className="text-base font-bold text-slate-900">{copy.certificates}</h3>
+          <CertificateList certificates={certificates} empty={copy.noCertificates} />
+        </section>
+
+        <section aria-labelledby="staff-capability-record" className="space-y-3">
+          <h3 id="staff-capability-record" className="text-base font-bold text-slate-900">{copy.capabilities}</h3>
+          <dl className="grid grid-cols-1 gap-3 sm:grid-cols-2 emma-reflow-stack">
+            <Field label={copy.medicationAudited} value={source.is_audited_for_medication ? copy.yes : copy.no} />
+            <Field label={copy.mentor} value={source.is_mentor ? copy.yes : copy.no} />
+          </dl>
+        </section>
+
+        <section aria-labelledby="staff-qualification-record" className="space-y-3">
+          <h3 id="staff-qualification-record" className="text-base font-bold text-slate-900">{copy.qualificationRecords}</h3>
+          {qualificationError && <p role="alert" className="rounded-xl bg-amber-50 p-3 text-xs text-amber-800">{copy.qualificationsUnavailable}</p>}
+          {qualifications && qualifications.length === 0 && <p className="text-xs text-slate-500">{copy.noQualifications}</p>}
+          {qualifications && qualifications.length > 0 && <div className="space-y-2">
+            {qualifications.map((qualification) => <article key={qualification.id} className="rounded-2xl border border-slate-200 bg-white p-3">
+              <div className="flex flex-wrap items-start justify-between gap-2 emma-reflow-wrap">
+                <h4 className="min-w-0 break-words text-sm font-bold text-slate-800 emma-reflow-text">{qualification.qualification_type}</h4>
+                <span className={`rounded-full px-2.5 py-1 text-[11px] font-semibold ${qualification.is_active ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-600'}`}>{qualification.is_active ? copy.active : copy.inactive}</span>
               </div>
-            ))}
+              <dl className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2 emma-reflow-stack">
+                <Field label={copy.effective} value={qualification.effective_from ?? copy.noDate} />
+                <Field label={copy.expires} value={qualification.expiry_date ?? copy.noDate} />
+              </dl>
+            </article>)}
+          </div>}
+        </section>
+
+        <section aria-labelledby="staff-skills-record" className="rounded-2xl border border-pink-100 bg-pink-50/70 p-4">
+          <div className="flex flex-wrap items-start justify-between gap-2 emma-reflow-wrap">
+            <div className="min-w-0">
+              <h3 id="staff-skills-record" className="break-words text-base font-bold text-slate-900 emma-reflow-text">{copy.skillsTitle}</h3>
+              <p className="mt-1 break-words text-xs leading-5 text-slate-600 emma-reflow-text">{copy.skillsHint}</p>
+            </div>
+            <span className="max-w-full break-words rounded-full border border-pink-100 bg-white px-2.5 py-1 text-xs font-semibold text-pink-700 emma-reflow-text">{copy.skillsUnavailable}</span>
           </div>
+        </section>
 
-          <div className="mb-6 bg-gray-50 p-4 rounded-2xl">
-            <div className="flex justify-between text-xs text-gray-500 mb-2">
-              <span>{L.hours_month}</span>
-              <span className="font-bold" style={{ color: PINK }}>{staff.hoursWorked}h / {staff.hoursTotal}h</span>
-            </div>
-            <div className="h-2 bg-gray-200 rounded-full overflow-hidden">
-              <div className="h-full rounded-full" style={{ width: `${pct}%`, background: pct >= 100 ? '#dc2626' : pct >= 90 ? '#d97706' : PINK }} />
-            </div>
-          </div>
-
-          {/* Capabilities. Sits above the tabs rather than inside one, because it
-              is the only editable thing on this screen - burying a write behind a
-              tab labelled "Shift History" or "AI Analysis" is how it went missing. */}
-          <div className="mb-6">
-            <div className="flex items-center justify-between mb-2">
-              <div className="text-[9px] font-bold text-gray-400 uppercase tracking-widest">{L.capabilities}</div>
-              {canEdit && dirtyKeys.length > 0 && (
-                <div className="flex items-center gap-2">
-                  <span className="text-[10px] font-semibold text-amber-600">{L.unsaved}</span>
-                  <button onClick={saveCapabilities} disabled={saving}
-                    className="px-4 py-1.5 text-[11px] rounded-lg text-white font-bold disabled:opacity-60"
-                    style={{ background: PINK }}>
-                    {saving ? L.saving : L.save}
-                  </button>
-                </div>
-              )}
-            </div>
-
-            {draft === null ? (
-              <div className="text-[10px] text-gray-400 py-2">…</div>
-            ) : (
-              <div className="space-y-2">
-                {CAPABILITY_FIELDS.map(f => {
-                  const on = draft[f.key]
-                  return (
-                    <div key={f.key} className="flex items-center gap-3 p-3 rounded-xl" style={{ background: '#fce8f3' }}>
-                      <div className="w-8 h-8 rounded-lg flex items-center justify-center text-white text-sm shrink-0" style={{ background: PINK }}>
-                        {f.icon}
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <div className="text-sm font-semibold text-gray-900">{isZH ? f.titleZH : f.titleEN}</div>
-                        <div className="text-[10px] text-gray-500 mt-0.5">{isZH ? f.hintZH : f.hintEN}</div>
-                      </div>
-                      <button type="button"
-                        role="switch"
-                        aria-checked={on}
-                        aria-label={isZH ? f.titleZH : f.titleEN}
-                        disabled={!canEdit}
-                        onClick={() => setDraft(d => (d ? { ...d, [f.key]: !d[f.key] } : d))}
-                        className="w-10 h-6 rounded-full transition-all relative shrink-0 disabled:cursor-not-allowed disabled:opacity-50"
-                        style={{ background: on ? PINK : '#d1d5db' }}>
-                        <span className="absolute top-1 w-4 h-4 rounded-full bg-white transition-all"
-                          style={{ left: on ? '20px' : '4px' }} />
-                      </button>
-                    </div>
-                  )
-                })}
+        <section aria-labelledby="staff-history-record" className="space-y-3">
+          <h3 id="staff-history-record" className="text-base font-bold text-slate-900">{copy.rosterHistory}</h3>
+          {!detail && !detailError && <p className="text-xs text-slate-500">{copy.historyUnavailable}</p>}
+          {detail && detail.shift_history.length === 0 && <p className="text-xs text-slate-500">{copy.noHistory}</p>}
+          {detail && detail.shift_history.length > 0 && <div className="space-y-2">
+            {detail.shift_history.map((history, index) => <article key={`${history.date}-${history.shift_type ?? 'none'}-${index}`} className="rounded-2xl border border-slate-200 bg-white p-3">
+              <div className="flex flex-wrap items-start justify-between gap-3 emma-reflow-wrap">
+                <div className="min-w-0"><p className="text-xs font-semibold text-slate-500">{history.date}</p><p className="mt-1 break-words text-sm font-bold text-slate-900 emma-reflow-text">{copy.shift}: {history.shift_type ?? copy.notProvided}</p></div>
+                <p className="max-w-full break-words text-xs text-slate-600 emma-reflow-text">{copy.time}: {history.start_time && history.end_time ? `${history.start_time} – ${history.end_time}` : copy.notProvided}</p>
               </div>
-            )}
+              {history.tasks.length > 0 && <p className="mt-2 break-words text-xs leading-5 text-slate-600 emma-reflow-text">{copy.tasks}: {history.tasks.join(', ')}</p>}
+            </article>)}
+          </div>}
+          {detailError && <p className="text-xs text-slate-500">{copy.historyUnavailable}</p>}
+        </section>
+      </div>
 
-            {!canEdit && <p className="text-[10px] text-gray-400 mt-1.5">{L.readonly}</p>}
-            {saveError && <p className="text-[10px] text-rose-600 mt-1.5">{saveError}</p>}
-          </div>
+      <footer className="flex shrink-0 justify-end border-t border-slate-200 px-5 py-4 sm:px-8"><button type="button" onClick={onClose} className="rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 hover:bg-pink-50">{copy.close}</button></footer>
+    </section>
+  </div>
+}
 
-          <div className="flex gap-6 border-b border-gray-100 mb-5">
-            {[{ key: 'history', label: L.tab_history }, { key: 'ai', label: L.tab_ai }, ...(canEdit ? [{ key: 'edit', label: L.tab_edit }] : [])].map(t => (
-              <button key={t.key} onClick={() => setTab(t.key as 'ai' | 'history' | 'edit')}
-                className="pb-3 text-sm font-bold transition-all relative"
-                style={{ color: tab === t.key ? PINK : '#9ca3af' }}>
-                {t.label}
-                {tab === t.key && <div className="absolute bottom-0 left-0 right-0 h-0.5 rounded-full" style={{ background: PINK }} />}
-              </button>
-            ))}
-          </div>
-
-          {tab === 'edit' && editForm ? (
-            <div className="space-y-4">
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-1 block">
-                    {isZH ? '中文姓名' : 'Chinese Name'}
-                  </label>
-                  <input value={editForm.name} onChange={e => setEditForm({ ...editForm, name: e.target.value })}
-                    className="w-full px-3 py-2.5 border border-gray-200 rounded-xl text-sm focus:border-pink-400 focus:outline-none" />
-                </div>
-                <div>
-                  <label className="text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-1 block">
-                    {isZH ? '英文姓名' : 'English Name'}
-                  </label>
-                  <input value={editForm.name_en} onChange={e => setEditForm({ ...editForm, name_en: e.target.value })}
-                    className="w-full px-3 py-2.5 border border-gray-200 rounded-xl text-sm focus:border-pink-400 focus:outline-none" />
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-1 block">
-                    {isZH ? '職級' : 'Rank'}
-                  </label>
-                  <select value={editForm.rank} onChange={e => setEditForm({ ...editForm, rank: e.target.value })}
-                    className="w-full px-3 py-2.5 border border-gray-200 rounded-xl text-sm focus:border-pink-400 focus:outline-none bg-white">
-                    <option value="RN">RN (Registered Nurse)</option>
-                    <option value="EN">EN (Enrolled Nurse)</option>
-                    <option value="HW">HW (Health Worker)</option>
-                    <option value="PCW">PCW (Personal Care Worker)</option>
-                    <option value="CW">CW (Care Worker)</option>
-                    <option value="ASST">ASST (Assistant)</option>
-                    <option value="PT">PT (Physiotherapist)</option>
-                    <option value="OT">OT (Occupational Therapist)</option>
-                    <option value="SW">SW (Social Worker)</option>
-                    <option value="ADMIN">ADMIN (Administrative)</option>
-                    <option value="COOK">COOK (Kitchen Staff)</option>
-                    <option value="DRIVER">DRIVER</option>
-                  </select>
-                </div>
-                <div>
-                  <label className="text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-1 block">
-                    {isZH ? '僱用類型' : 'Employment Type'}
-                  </label>
-                  <select value={editForm.employment_type} onChange={e => setEditForm({ ...editForm, employment_type: e.target.value })}
-                    className="w-full px-3 py-2.5 border border-gray-200 rounded-xl text-sm focus:border-pink-400 focus:outline-none bg-white">
-                    <option value="full_time">{isZH ? '全職' : 'Full-time'}</option>
-                    <option value="part_time">{isZH ? '兼職' : 'Part-time'}</option>
-                    <option value="contract">{isZH ? '合約' : 'Contract'}</option>
-                    <option value="agency">{isZH ? '外判' : 'Agency'}</option>
-                    <option value="imported">{isZH ? '外勞' : 'Imported Worker'}</option>
-                  </select>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-3 gap-4">
-                <div>
-                  <label className="text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-1 block">
-                    {isZH ? '合約時數/週' : 'Hours/Week'}
-                  </label>
-                  <input type="number" value={editForm.contracted_hours}
-                    onChange={e => setEditForm({ ...editForm, contracted_hours: Number(e.target.value) })}
-                    className="w-full px-3 py-2.5 border border-gray-200 rounded-xl text-sm focus:border-pink-400 focus:outline-none" />
-                </div>
-                <div>
-                  <label className="text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-1 block">
-                    {isZH ? '性別' : 'Gender'}
-                  </label>
-                  <select value={editForm.gender} onChange={e => setEditForm({ ...editForm, gender: e.target.value as 'M' | 'F' })}
-                    className="w-full px-3 py-2.5 border border-gray-200 rounded-xl text-sm focus:border-pink-400 focus:outline-none bg-white">
-                    <option value="F">{isZH ? '女' : 'Female'}</option>
-                    <option value="M">{isZH ? '男' : 'Male'}</option>
-                  </select>
-                </div>
-                <div>
-                  <label className="text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-1 block">
-                    {isZH ? '狀態' : 'Status'}
-                  </label>
-                  <select value={editForm.status} onChange={e => setEditForm({ ...editForm, status: e.target.value as 'active' | 'inactive' })}
-                    className="w-full px-3 py-2.5 border border-gray-200 rounded-xl text-sm focus:border-pink-400 focus:outline-none bg-white">
-                    <option value="active">{isZH ? '在職' : 'Active'}</option>
-                    <option value="inactive">{isZH ? '離職' : 'Inactive'}</option>
-                  </select>
-                </div>
-              </div>
-
-              {saveError && <p className="text-xs text-rose-600">{saveError}</p>}
-
-              <button onClick={saveEditForm} disabled={editSaving}
-                className="w-full py-3 text-white font-bold rounded-xl transition-all disabled:opacity-60"
-                style={{ background: editSuccess ? '#10b981' : PINK }}>
-                {editSaving ? (isZH ? '儲存中…' : 'Saving…') : editSuccess ? (isZH ? '✓ 已儲存' : '✓ Saved') : (isZH ? '儲存修改' : 'Save Changes')}
-              </button>
-            </div>
-          ) : tab === 'history' ? (
-            <div className="space-y-3">
-              {SHIFT_HISTORY.length === 0 && (
-                <div className="text-xs text-gray-400 text-center py-6">{isZH ? '尚無更表紀錄' : 'No shift history yet'}</div>
-              )}
-              {SHIFT_HISTORY.map((s, i) => (
-                <div key={i} className="bg-gray-50 p-5 rounded-3xl border border-gray-100 hover:border-pink-200 transition-all">
-                  <div className="flex justify-between items-start mb-3">
-                    <div className="flex items-center gap-3">
-                      <div className="w-10 h-10 rounded-xl bg-white flex items-center justify-center shadow-sm text-lg">📅</div>
-                      <div>
-                        <div className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">{s.date}</div>
-                        <div className="text-sm font-bold text-gray-900">{s.shift}</div>
-                      </div>
-                    </div>
-                    <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 px-3 py-1 rounded-full border border-emerald-100">
-                      {L.completed}
-                    </span>
-                  </div>
-                  <div className="grid grid-cols-3 gap-3 text-xs text-gray-600">
-                    <div>🕐 {s.time}</div>
-                    <div>📍 {s.ward}</div>
-                    <div>👥 {s.resident}</div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          ) : (
-            <div className="space-y-4">
-              <div>
-                <div className="text-[9px] font-bold text-gray-400 uppercase tracking-widest mb-2">{L.credentials}</div>
-                <div className="flex gap-2 flex-wrap">
-                  {CREDENTIALS.length === 0 && (
-                    <span className="text-[10px] text-gray-400">{isZH ? '尚無證書記錄' : 'No certificates on record'}</span>
-                  )}
-                  {CREDENTIALS.map(c => (
-                    <span key={c.skill}
-                      className={`text-[10px] font-bold px-2.5 py-1 rounded-lg border ${
-                        c.status === 'expired' ? 'bg-rose-50 border-rose-200 text-rose-600'
-                          : c.status === 'expiring' ? 'bg-amber-50 border-amber-200 text-amber-700'
-                          : 'bg-gray-50 border-gray-200 text-gray-600'}`}>
-                      {c.skill}
-                      {c.days_left !== null && c.days_left !== undefined && (
-                        <span className="ml-1 font-normal opacity-70">
-                          {c.days_left < 0 ? `${-c.days_left}d ago` : `${c.days_left}d`}
-                        </span>
-                      )}
-                    </span>
-                  ))}
-                </div>
-              </div>
-
-              <div className="p-3 rounded-2xl flex items-center gap-3" style={{ background: '#1a1a2e' }}>
-                <div className="text-xl">🧠</div>
-                <div>
-                  <div className="text-xs font-bold text-white">{L.ai_skill}</div>
-                  <div className="text-[10px] text-gray-400">
-                    {analysis
-                      ? `${analysis.activity.working_shifts} shifts · ${analysis.activity.hours}h · ${analysis.activity.tasks_performed} task records`
-                      : (isZH ? '隱性與顯性技能分析' : 'Implicit & Explicit Insights')}
-                  </div>
-                </div>
-                <span className="ml-auto text-[9px] font-bold px-2 py-0.5 rounded text-white" style={{ background: PINK }}>
-                  {L.evidence}
-                </span>
-              </div>
-
-              {analysisError && (
-                <div className="rounded-2xl border border-rose-200 bg-rose-50 p-3 text-[11px] text-rose-700">{analysisError}</div>
-              )}
-              {!analysis && !analysisError && (
-                <div className="text-[11px] text-gray-400">{L.loading}</div>
-              )}
-
-              {analysis && analysis.implicit_skills.length > 0 && (
-                <div>
-                  <div className="flex gap-1.5 mb-2">
-                    <span className="text-[9px] font-bold px-2 py-0.5 rounded text-white" style={{ background: PINK }}>{L.explicit.toUpperCase()}</span>
-                    <span className="text-[9px] font-bold px-2 py-0.5 rounded bg-purple-600 text-white">{L.implicit.toUpperCase()}</span>
-                  </div>
-                  <div className="flex flex-wrap gap-1.5">
-                    {analysis.implicit_skills.map(s => (
-                      <span key={s.skill} className="text-[10px] px-2.5 py-1 rounded-full border font-medium"
-                        style={{ borderColor: 'rgba(232,24,122,.3)', color: PINK, background: '#fef6fb' }}>
-                        {s.skill} <span className="opacity-60">{s.occurrences}{L.times}</span>
-                      </span>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {analysis && analysis.skill_bars.length > 0 && (
-                <div className="bg-gray-50 p-4 rounded-2xl">
-                  <div className="flex items-center justify-between mb-3">
-                    <div className="text-xs font-bold text-gray-700">{L.skill_prog}</div>
-                    <span className="text-[9px] font-bold px-2 py-0.5 rounded bg-emerald-50 text-emerald-700 border border-emerald-200">
-                      {analysis.activity.working_shifts} shifts
-                    </span>
-                  </div>
-                  {analysis.skill_bars.map(s => (
-                    <div key={s.skill} className="mb-3">
-                      <div className="flex justify-between text-[10px] mb-1">
-                        <span className="font-semibold text-gray-700">{s.skill}</span>
-                        <span className="text-gray-400">{L.explicit}: {s.explicit}% · {L.implicit}: {s.implicit}%</span>
-                      </div>
-                      <div className="h-1.5 bg-gray-200 rounded-full overflow-hidden mb-0.5">
-                        <div className="h-full rounded-full" style={{ width: `${s.explicit}%`, background: PINK }} />
-                      </div>
-                      <div className="h-1.5 bg-gray-200 rounded-full overflow-hidden">
-                        <div className="h-full rounded-full bg-purple-500" style={{ width: `${s.implicit}%` }} />
-                      </div>
-                    </div>
-                  ))}
-                  <p className="text-[9px] text-gray-400 mt-2">{analysis.evidence_note}</p>
-                </div>
-              )}
-
-              {analysis && (
-                <div className="grid grid-cols-2 gap-3">
-                  <div className="bg-red-50 border border-red-100 p-3 rounded-2xl">
-                    <div className="text-[9px] font-bold text-red-400 uppercase tracking-widest mb-2">{L.gaps}</div>
-                    {analysis.gaps.length === 0 && (
-                      <div className="text-[10px] text-red-400">{isZH ? '未發現技能缺口' : 'No gaps detected'}</div>
-                    )}
-                    {analysis.gaps.map(g => (
-                      <div key={`${g.kind}-${g.skill}`} className="text-[10px] text-red-600 flex items-start gap-1 mb-1">
-                        <span>⚠</span>
-                        <span>{g.skill}<span className="text-red-400"> - {g.detail}</span></span>
-                      </div>
-                    ))}
-                  </div>
-                  <div className="bg-emerald-50 border border-emerald-100 p-3 rounded-2xl">
-                    <div className="text-[9px] font-bold text-emerald-600 uppercase tracking-widest mb-2">{L.training}</div>
-                    {analysis.recommended_training.length === 0 && (
-                      <div className="text-[10px] text-emerald-600">{isZH ? '暫無建議' : 'Nothing outstanding'}</div>
-                    )}
-                    {analysis.recommended_training.map(t => (
-                      <div key={t.title} className="text-[10px] text-emerald-700 flex items-start gap-1 mb-1">
-                        <span>✓</span>
-                        <span>{t.title}<span className="text-emerald-600"> - {t.reason}</span></span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {analysis && analysis.events.length > 0 && (
-                <div>
-                  <div className="flex items-center gap-2 mb-2">
-                    <div className="text-[9px] font-bold text-gray-400 uppercase tracking-widest">{L.implicit_title}</div>
-                    <span className="text-[9px] font-bold px-2 py-0.5 rounded text-white bg-purple-600">FROM ROSTER</span>
-                  </div>
-                  {analysis.events.map((e, i) => (
-                    <div key={`${e.date}-${i}`} className="flex gap-3 p-3 bg-gray-50 rounded-2xl border border-gray-100 mb-2">
-                      <div className="text-[10px] font-bold w-12 text-gray-400 flex-shrink-0">{e.date?.slice(5)}</div>
-                      <div className="flex-1">
-                        <div className="text-xs font-bold text-gray-800">{e.title}</div>
-                        <div className="text-[10px] text-gray-500">{e.detail}</div>
-                        <div className="text-[9px] font-bold mt-1" style={{ color: PINK }}>{L.skill_gained} {e.skill}</div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-
-              {analysis && analysis.activity.working_shifts === 0 && (
-                <div className="text-[11px] text-gray-400">{L.no_analysis}</div>
-              )}
-            </div>
-          )}
-        </div>
-
-        <div className="px-10 py-5 border-t border-gray-100 flex gap-3 flex-shrink-0">
-          <button className="flex-1 py-3.5 text-white font-bold rounded-2xl shadow-lg transition-transform hover:scale-[1.02]" style={{ background: PINK }}>
-            {L.confirm}
-          </button>
-          <button className="px-8 py-3.5 bg-gray-100 text-gray-600 font-bold rounded-2xl hover:bg-gray-200 transition-colors">
-            {L.contact}
-          </button>
+function StaffCard({ card, isZH, copy, onSelect }: { card: StaffDirectoryCard; isZH: boolean; copy: Copy; onSelect: () => void }) {
+  return <article data-staff-id={card.id} className="group min-w-0 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm transition-all hover:border-pink-200 hover:shadow-md">
+    <div className="flex items-start gap-3">
+      <div aria-hidden className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl border border-pink-100 bg-pink-50 text-sm font-black text-pink-600 transition-transform group-hover:scale-105">{staffInitials(card)}</div>
+      <div className="min-w-0 flex-1">
+        <button type="button" onClick={onSelect} className="block max-w-full break-words text-left text-sm font-bold text-slate-950 transition-colors hover:text-pink-700 hover:underline emma-reflow-text">{card.primaryName}</button>
+        {card.secondaryName && <p className="mt-1 break-words text-xs text-slate-500 emma-reflow-text">{card.secondaryName}</p>}
+        <div className="mt-2 flex flex-wrap items-center gap-2 emma-reflow-wrap">
+          <span className="max-w-full break-words rounded-full bg-pink-600 px-2.5 py-1 text-[11px] font-bold text-white emma-reflow-text">{card.roleCode}</span>
+          <StatusBadge status={card.status} isZH={isZH} />
         </div>
       </div>
     </div>
-  )
+
+    <dl className="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-2 emma-reflow-stack">
+      <Field label={copy.unit} value={card.unitName ?? copy.notProvided} />
+      <Field label={copy.employment} value={card.employmentType || copy.notProvided} />
+      <Field label={copy.scheduled} value={sourceHours(card.scheduledHours, copy.notProvided)} />
+      <Field label={copy.contracted} value={sourceHours(card.contractedPeriodHours, copy.notProvided)} />
+    </dl>
+
+    <div className="mt-4 border-t border-slate-100 pt-3">
+      <p className="mb-2 text-xs font-bold text-slate-600">{copy.certificates}</p>
+      <CertificateList certificates={card.certificates} empty={copy.noCertificates} />
+    </div>
+
+    <div className="mt-4 border-t border-slate-100 pt-3"><button type="button" onClick={onSelect} className="text-sm font-bold text-pink-700 hover:underline">{copy.view} →</button></div>
+  </article>
 }
 
 export default function StaffPage() {
   const { lang } = useLang()
-  const isZH = lang === 'zh'
   const { user } = useAuth()
+  const isZH = lang === 'zh'
+  const copy = copyFor(isZH)
+  const [staffRows, setStaffRows] = useState<ApiStaff[] | null>(null)
+  const [directoryError, setDirectoryError] = useState(false)
   const [search, setSearch] = useState('')
-  const [filterRole, setFilterRole] = useState<string>('ALL')
-  const [selected, setSelected] = useState<{ staff: StaffType; idx: number } | null>(null)
+  const [roleCode, setRoleCode] = useState('ALL')
+  const [selected, setSelected] = useState<ApiStaff | null>(null)
   const [addOpen, setAddOpen] = useState(false)
   const [notice, setNotice] = useState('')
-  // Per the RBAC matrix, OWNER and ADMIN_CLERK may write a staff profile; the
-  // API enforces it too, so this only avoids offering a door that won't open.
+  const requestSequence = useRef(0)
   const canWriteStaff = canWrite(user?.role, 'staff.profile_write')
 
-  // Pull the real staff directory from the API; fall back to demo data if the
-  // API is unreachable or no dev creds are configured, so the page never breaks.
-  // Always real: the directory is the live API record set (null = still loading).
-  const [liveStaff, setLiveStaff] = useState<StaffType[] | null>(null)
-  const reloadStaff = useCallback(
-    () => api.listStaff().then((rows) => setLiveStaff(mapApiStaff(rows))),
-    [],
-  )
-  useEffect(() => {
-    let cancelled = false
-    api.listStaff()
-      .then((rows) => { if (!cancelled) setLiveStaff(mapApiStaff(rows)) })
-      .catch(() => { if (!cancelled) setLiveStaff([]) })
-    return () => { cancelled = true }
+  const reloadStaff = useCallback(async () => {
+    const sequence = ++requestSequence.current
+    setStaffRows(null)
+    setDirectoryError(false)
+    try {
+      const rows = await api.listStaff()
+      if (sequence === requestSequence.current) setStaffRows(rows)
+    } catch {
+      if (sequence === requestSequence.current) {
+        setStaffRows([])
+        setDirectoryError(true)
+      }
+    }
   }, [])
-  const staffList: StaffType[] = useMemo(() => liveStaff ?? [], [liveStaff])
-  const roleOptions = ['ALL', ...Array.from(new Set(staffList.map(s => s.role)))]
 
-  const L = {
-    title:     isZH ? 'Staff Portfolio 員工檔案'                                       : 'Staff Portfolio',
-    subtitle:  isZH ? `${staffList.length} 位員工` : `${staffList.length} staff members`,
-    add_staff: isZH ? '＋ 新增員工'                           : '＋ Add Staff',
-    search_ph: isZH ? '🔍 搜尋員工...'                        : '🔍 Search staff...',
-    skills:    isZH ? '技能'                                  : 'Skills',
-    view:      isZH ? '查看檔案 →'                            : 'View Profile →',
-  }
+  useEffect(() => {
+    void reloadStaff()
+    return () => { requestSequence.current += 1 }
+  }, [reloadStaff, user?.facilityId, user?.userId])
 
-  const filtered = useMemo(() => {
-    const q = search.toLowerCase()
-    return staffList.filter(s => {
-      const matchSearch = s.nameEn.toLowerCase().includes(q) || s.name.includes(search)
-      const matchRole = filterRole === 'ALL' || s.role === filterRole
-      return matchSearch && matchRole
-    })
-  }, [search, filterRole, staffList])
-
-  return (
-    <div className="p-5 space-y-5">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-xl font-bold text-gray-900">{L.title}</h1>
-          <p className="text-xs text-gray-500 mt-0.5">{L.subtitle}</p>
-        </div>
-        <div className="flex items-center gap-3">
-          {notice && <span className="text-xs font-medium text-emerald-600">{notice}</span>}
-          {canWriteStaff && (
-            <button onClick={() => setAddOpen(true)}
-              className="px-4 py-2 text-white text-xs font-semibold rounded-xl" style={{ background: PINK }}>
-              {L.add_staff}
-            </button>
-          )}
-        </div>
-      </div>
-
-      <div className="flex gap-3 flex-wrap">
-        <input value={search} onChange={e => setSearch(e.target.value)}
-          placeholder={L.search_ph}
-          className="flex-1 px-4 py-2 border border-gray-200 rounded-xl text-sm bg-gray-50 outline-none focus:border-pink-400" />
-        <div className="flex gap-1.5 flex-wrap">
-          {roleOptions.map(r => (
-            <button key={r} onClick={() => setFilterRole(r)}
-              className="px-3 py-2 text-xs font-bold rounded-xl border transition-all"
-              style={{
-                background:  filterRole === r ? PINK : '#fff',
-                color:       filterRole === r ? '#fff' : '#6b7280',
-                borderColor: filterRole === r ? PINK : '#e5e7eb',
-              }}>
-              {r}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      {liveStaff === null ? (
-        <div className="text-sm text-gray-400 py-12 text-center">…</div>
-      ) : filtered.length === 0 ? (
-        <div className="text-sm text-gray-400 py-12 text-center">{isZH ? '沒有符合的員工' : 'No matching staff'}</div>
-      ) : (
-      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
-        {filtered.map((s, i) => {
-          const pct = s.hoursTotal ? Math.round((s.hoursWorked / s.hoursTotal) * 100) : 0
-          const status = s.apiStatus
-            ? (API_STATUS[s.apiStatus] ?? DEFAULT_STATUS)
-            : (STATUS[s.id] ?? DEFAULT_STATUS)
-          return (
-            <div key={s.id} className="bg-white p-5 rounded-2xl border border-gray-100 shadow-sm hover:shadow-md transition-all group">
-              <div className="flex items-start gap-3 mb-4">
-                <div className="w-14 h-14 rounded-2xl flex items-center justify-center text-2xl bg-pink-50 border border-pink-100 flex-shrink-0 group-hover:scale-105 transition-transform">
-                  {s.apiId ? s.avatar : AVATARS[i]}
-                </div>
-                <div className="flex-1">
-                  {/* The name is a second door to the same detail panel as
-                      "View Profile" below - clicking a person's name is the
-                      first thing anyone tries. */}
-                  <button type="button" onClick={() => setSelected({ staff: s, idx: i })}
-                    className="block text-left font-bold text-gray-900 text-sm group-hover:text-pink-600 hover:underline transition-colors mb-1">
-                    {s.nameEn}
-                  </button>
-                  <div className="flex items-center gap-1.5 mb-2">
-                    <span className="text-[10px] font-bold px-2 py-0.5 rounded uppercase tracking-wider text-white" style={{ background: PINK }}>
-                      {s.role}
-                    </span>
-                    <span className="text-[10px] font-bold px-2 py-0.5 rounded uppercase tracking-wider"
-                      style={{ color: status.color, background: status.bg }}>
-                      {isZH ? status.labelZH : status.labelEN}
-                    </span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <div className="flex-1 h-1.5 bg-gray-100 rounded-full overflow-hidden">
-                      <div className="h-full rounded-full" style={{ width: `${pct}%`, background: pct >= 100 ? '#dc2626' : pct >= 90 ? '#d97706' : PINK }} />
-                    </div>
-                    <span className="text-[10px] font-black" style={{ color: PINK }}>{pct}%</span>
-                  </div>
-                </div>
-              </div>
-
-              <div className="text-[10px] text-gray-400 mb-3">📍 {s.ward} · {s.floor}</div>
-
-              <div>
-                <div className="text-[9px] font-bold text-gray-400 uppercase tracking-widest mb-1.5">{L.skills}</div>
-                <div className="flex flex-wrap gap-1">
-                  {(s.certs.length ? s.certs : (s.apiId ? [] : SKILLS[s.id] || [])).map(sk => (
-                    <span key={sk} className="text-[10px] font-semibold text-gray-600 bg-gray-50 px-2 py-0.5 rounded-lg border border-gray-100">{sk}</span>
-                  ))}
-                </div>
-              </div>
-
-              <div className="pt-3 mt-3 border-t border-gray-50 flex justify-between items-center">
-                <button onClick={() => setSelected({ staff: s, idx: i })} className="text-xs font-bold hover:underline" style={{ color: PINK }}>
-                  {L.view}
-                </button>
-                <button className="p-2 bg-gray-50 rounded-xl text-gray-400 hover:text-pink-600 hover:bg-pink-50 transition-all">💬</button>
-              </div>
-            </div>
-          )
-        })}
-      </div>
-      )}
-
-      {selected && (
-        <ProfileModal
-          staff={selected.staff}
-          idx={selected.idx}
-          canEdit={canWriteStaff}
-          onClose={() => setSelected(null)}
-          onSaved={(name) => {
-            setNotice(isZH ? `已更新 ${name}` : `${name} updated`)
-            window.setTimeout(() => setNotice(''), 3000)
-            // The card grid shows nothing capability-related today, but the
-            // directory read is what other screens' rule checks derive from, so
-            // keep it in step with what was just written.
-            reloadStaff().catch(() => {})
-          }}
-        />
-      )}
-
-      {addOpen && (
-        <AddStaffModal
-          isZH={isZH}
-          onClose={() => setAddOpen(false)}
-          onCreated={(name) => {
-            setAddOpen(false)
-            setNotice(isZH ? `已新增 ${name}` : `${name} added`)
-            window.setTimeout(() => setNotice(''), 3000)
-            reloadStaff().catch(() => {})
-          }}
-        />
-      )}
-    </div>
+  const cards = useMemo(() => (staffRows ?? []).map(toStaffDirectoryCard), [staffRows])
+  const roleCodes = useMemo(() => Array.from(new Set(cards.map((card) => card.roleCode))).sort(), [cards])
+  const filteredCards = useMemo(
+    () => cards.filter((card) => matchesStaffDirectoryFilter(card, search, roleCode)),
+    [cards, search, roleCode],
   )
+
+  useEffect(() => {
+    if (roleCode !== 'ALL' && !roleCodes.includes(roleCode)) setRoleCode('ALL')
+  }, [roleCode, roleCodes])
+
+  const selectedCurrentRow = selected && staffRows?.find((row) => row.id === selected.id)
+
+  return <div className="min-w-0 space-y-5 p-4 sm:p-5">
+    <header className="flex flex-wrap items-start justify-between gap-4 emma-reflow-wrap">
+      <div className="flex min-w-0 items-center gap-3">
+        <img src="/icons/emma-badge.png" width={48} height={48} alt="Emma AI" className="h-12 w-12 shrink-0 rounded-2xl border border-pink-100 bg-white object-contain shadow-sm" />
+        <div className="min-w-0">
+          <p className="text-xs font-bold tracking-wide text-pink-700">Emma AI</p>
+          <h1 className="break-words text-xl font-extrabold text-slate-950 emma-reflow-text">{copy.title}</h1>
+          <p className="mt-1 break-words text-xs text-slate-500 emma-reflow-text">{staffRows ? `${staffRows.length} ${copy.people}` : copy.loading}{user?.facilityName ? ` · ${copy.facility}: ${user.facilityName}` : ''}</p>
+        </div>
+      </div>
+      <div className="flex flex-wrap items-center gap-2 emma-reflow-wrap">
+        {notice && <p role="status" className="max-w-full break-words text-xs font-semibold text-emerald-700 emma-reflow-text">{notice}</p>}
+        <button type="button" onClick={() => void reloadStaff()} className="rounded-xl border border-pink-200 bg-white px-4 py-2.5 text-sm font-semibold text-pink-700 transition-colors hover:bg-pink-50">{copy.refresh}</button>
+        {canWriteStaff && <button type="button" onClick={() => setAddOpen(true)} className="rounded-xl px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition-colors hover:brightness-95" style={{ background: PINK }}>{copy.add}</button>}
+      </div>
+    </header>
+
+    <section aria-label={copy.title} className="space-y-3 rounded-2xl border border-pink-100 bg-white p-4 shadow-sm">
+      <div className="flex flex-col gap-3 sm:flex-row emma-reflow-wrap">
+        <label className="min-w-0 flex-1"><span className="sr-only">{copy.search}</span><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder={copy.search} className="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm text-slate-900 outline-none transition-colors placeholder:text-slate-400 focus:border-pink-400 focus:bg-white focus:ring-2 focus:ring-pink-100" /></label>
+        <label className="min-w-0 sm:max-w-xs"><span className="sr-only">{copy.role}</span><select aria-label={copy.role} value={roleCode} onChange={(event) => setRoleCode(event.target.value)} className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-700 outline-none transition-colors focus:border-pink-400 focus:ring-2 focus:ring-pink-100"><option value="ALL">{copy.allRoles}</option>{roleCodes.map((role) => <option key={role} value={role}>{role}</option>)}</select></label>
+      </div>
+    </section>
+
+    {directoryError && <div role="alert" className="rounded-2xl border border-rose-100 bg-rose-50 p-4 text-sm text-rose-800"><p>{copy.loadError}</p><button type="button" onClick={() => void reloadStaff()} className="mt-3 rounded-xl border border-rose-200 bg-white px-3 py-2 text-sm font-semibold text-rose-700 hover:bg-rose-100">{copy.retry}</button></div>}
+    {!directoryError && staffRows === null && <p role="status" className="rounded-2xl bg-white p-8 text-center text-sm text-slate-500 shadow-sm">{copy.loading}</p>}
+    {!directoryError && staffRows !== null && filteredCards.length === 0 && <p className="rounded-2xl bg-white p-8 text-center text-sm text-slate-500 shadow-sm">{copy.empty}</p>}
+    {!directoryError && filteredCards.length > 0 && <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3 emma-reflow-stack">
+      {filteredCards.map((card) => {
+        const source = staffRows?.find((row) => row.id === card.id)
+        return source ? <StaffCard key={card.id} card={card} isZH={isZH} copy={copy} onSelect={() => setSelected(source)} /> : null
+      })}
+    </div>}
+
+    {selectedCurrentRow && <StaffProfilePanel key={selectedCurrentRow.id} staff={selectedCurrentRow} onClose={() => setSelected(null)} />}
+    {addOpen && <AddStaffModal isZH={isZH} onClose={() => setAddOpen(false)} onCreated={(name) => {
+      setAddOpen(false)
+      setNotice(isZH ? `已新增 ${name}` : `${name} added`)
+      window.setTimeout(() => setNotice(''), 3_000)
+      void reloadStaff()
+    }} />}
+  </div>
 }

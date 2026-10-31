@@ -132,9 +132,9 @@ export function TopNav({ onMenuToggle }: { onMenuToggle?: () => void } = {}) {
       </div>
 
       {/* Alert utility intentionally does not fabricate a badge count. */}
-      <div className="flex min-h-11 min-w-11 items-center justify-center rounded-xl text-slate-600" aria-label={isZH ? '警報' : 'Alerts'}>
+      {canOpenRoute(user?.role, ROUTE_FEATURE[ROUTES.alert]) && <button type="button" onClick={() => router.push(ROUTES.alert)} className="flex min-h-11 min-w-11 items-center justify-center rounded-xl text-slate-600 hover:bg-slate-50" aria-label={isZH ? '開啟警報' : 'Open alerts'}>
         <span aria-hidden>🔔</span>
-      </div>
+      </button>}
 
       {/* Account */}
       <div className="relative">
@@ -152,11 +152,11 @@ export function TopNav({ onMenuToggle }: { onMenuToggle?: () => void } = {}) {
           >
             {avatarLetter}
           </div>
-          <div className="hidden max-w-[150px] text-left leading-tight sm:block">
-            <div className="truncate text-sm font-semibold text-gray-800">
+          <div className="hidden max-w-[220px] text-left leading-tight sm:block">
+            <div className="emma-reflow-text break-words text-sm font-semibold text-gray-800">
               {user?.facilityName ?? '-'}
             </div>
-            <div className="truncate text-xs text-gray-500">
+            <div className="emma-reflow-text break-words text-xs text-gray-500">
               {roleLabel(user?.role, isZH) || user?.email}
             </div>
           </div>

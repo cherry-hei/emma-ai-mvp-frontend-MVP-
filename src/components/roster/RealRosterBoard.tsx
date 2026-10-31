@@ -4,18 +4,16 @@
 // generate → edit → deterministic rule check → manager publish.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { ApiRuleError, api, optimizeAndPoll } from '@/lib/api'
+import { api, optimizeAndPoll } from '@/lib/api'
 import type {
-  OptionScoreOut, PeriodOut, RosterCell, RosterGrid, RosterOption, RuleIssue,
+  OptionScoreOut, PeriodOut, RosterCell, RosterGrid, RosterOption,
   ShiftDef, TaskDefOut, ValidationOut, VersionOut,
 } from '@/lib/apiTypes'
 import { useLang } from '@/components/layout/LanguageContext'
 import { CreateShiftModal } from '@/components/modals/CreateShiftModal'
-import { canSeeTask, reasonText } from '@/lib/shiftRules'
 import { moveRosterViewAnchor, datesForRosterView, exactPaidMinutes, formatExactMinutes, type RosterViewMode } from '@/lib/roster-ui'
 import { AiOptionsModal } from './AiOptionsModal'
 import { CreateEventModal } from './CreateEventModal'
-import { BatchCreateShiftModal } from '@/components/modals/BatchCreateShiftModal'
 
 const PINK = '#E8187A'
 
@@ -71,16 +69,6 @@ function dayLabel(iso: string, isZH: boolean) {
   const dow = d.getUTCDay()
   const wd = (isZH ? ['日', '一', '二', '三', '四', '五', '六'] : ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'])[dow]
   return { wd, dm: `${d.getUTCDate()}/${d.getUTCMonth() + 1}`, weekend: dow === 0 || dow === 6 }
-}
-
-type EditState = {
-  staffId: string
-  staffName: string
-  staffRank: string
-  date: string
-  shiftType: string
-  tasks: string[]
-  wasWorking?: boolean
 }
 
 type SaveItem = {
@@ -145,8 +133,6 @@ export function RealRosterBoard() {
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
   const [busy, setBusy] = useState('')
-  const [editing, setEditing] = useState<EditState | null>(null)
-  const [cellIssues, setCellIssues] = useState<RuleIssue[]>([])
   const [newPeriodOpen, setNewPeriodOpen] = useState(false)
   const [validation, setValidation] = useState<ValidationOut | null>(null)
   const [ruleReviewOpen, setRuleReviewOpen] = useState(false)
@@ -163,7 +149,6 @@ export function RealRosterBoard() {
   const [publishError, setPublishError] = useState('')
   const [createEventOpen, setCreateEventOpen] = useState(false)
   const [createShiftOpen, setCreateShiftOpen] = useState(false)
-  const [batchShiftOpen, setBatchShiftOpen] = useState(false)
   const [pendingLog, setPendingLog] = useState<SaveItem[]>([])
   const [publishedLog, setPublishedLog] = useState<SaveItem[]>([])
   const [showSaveList, setShowSaveList] = useState(false)
@@ -186,7 +171,7 @@ export function RealRosterBoard() {
     version: isZH ? '版本' : 'Version', manual: isZH ? '手動' : 'Manual',
     ai: isZH ? '生成更表方案' : 'Generate roster options', aiBusy: isZH ? '生成中…' : 'Generating…',
     validate: isZH ? '執行規則檢查' : 'Run rule checks', saveDraft: isZH ? '儲存草稿' : 'Save draft',
-    publish: isZH ? '批准並發佈' : 'Approve & publish', staff: isZH ? '員工' : 'Staff',
+    publish: isZH ? '批准並發佈' : 'Approve & publish', staff: isZH ? '員工' : 'Staff', roleStaff: isZH ? '職級／員工' : 'Role / staff',
     filterRank: isZH ? '職級' : 'Rank',
     filterFloor: isZH ? '樓層/單位' : 'Floor/Unit',
     filterSearch: isZH ? '搜尋員工…' : 'Search staff…',
@@ -200,20 +185,19 @@ export function RealRosterBoard() {
     staffViewHint: isZH ? '已顯示此員工；按日期格可編輯草稿。' : 'Showing this staff member; select a day cell to edit the draft.',
     allRanks: isZH ? '所有職級' : 'All Ranks',
     allFloors: isZH ? '所有樓層' : 'All Floors',
-    totalHrs: isZH ? '總時數' : 'Total Hrs',
+    totalHrs: isZH ? '總時數' : 'Total Hrs', paidHoursUnavailable: isZH ? '時數未提供' : 'Hours unavailable',
     exportRoster: isZH ? '📥 匯出更表' : '📥 Export Roster',
     empty: isZH ? '此週期尚無更表資料。點擊格子開始編輯。' : 'No shifts yet. Click a cell to start editing.',
     noPeriods: isZH ? '尚無更表週期，請先建立一個。' : 'No roster periods yet - create one to begin.',
     readonly: isZH ? '（唯讀 - 已發佈或 AI 方案）' : '(read-only - published or AI option)',
-    edit: isZH ? '編輯更次' : 'Edit shift', clear: isZH ? '清除' : 'Clear',
-    save: isZH ? '儲存' : 'Save', cancel: isZH ? '取消' : 'Cancel', tasks: isZH ? '任務' : 'Tasks',
+    save: isZH ? '儲存' : 'Save', cancel: isZH ? '取消' : 'Cancel',
     passes: isZH ? '通過' : 'Passes', fails: isZH ? '不通過' : 'Fails',
     start: isZH ? '開始日期' : 'Start', end: isZH ? '結束日期' : 'End', create: isZH ? '建立' : 'Create',
     cycle: isZH ? '週期類型' : 'Cycle',
-    rejected: isZH ? '此更次不可指派以下任務' : 'These tasks are not allowed on this shift',
     createShift: isZH ? '➕ 新增更次' : '➕ Create Shift',
     createEvent: isZH ? '📅 新增特別事項' : '📅 Create Special Event',
-    batchCreate: isZH ? '📋 批量排更' : '📋 Batch Create',
+    batchCreate: isZH ? '📋 批量排更（暫不可用）' : '📋 Batch Create (unavailable)',
+    batchUnavailable: isZH ? '批量建立需要已驗證的批量排更 API；目前可使用單一更次及工作時間編輯。' : 'Batch creation needs an authenticated batch-roster API; individual shifts and task times remain available.',
     saveList: isZH ? '儲存清單' : 'Save List',
     publishList: isZH ? '發佈記錄' : 'Publish List',
     saveListTitle: isZH ? '儲存清單' : 'Save List',
@@ -452,37 +436,6 @@ export function RealRosterBoard() {
     await Promise.all([loadVersions(periodId), loadGrid(periodId, versionId)])
   }, [periodId, versionId, loadVersions, loadGrid])
 
-  async function saveCell() {
-    if (!editing || !activeVersionId) return
-    setBusy('cell')
-    setCellIssues([])
-    try {
-      if (!editing.shiftType) await api.clearCell(activeVersionId, editing.staffId, editing.date)
-      else await api.upsertCell({
-        roster_version_id: activeVersionId, staff_id: editing.staffId,
-        date: editing.date, shift_type: editing.shiftType, tasks: editing.tasks,
-      })
-      const label = !editing.shiftType
-        ? T.actionDelete
-        : editing.wasWorking ? T.actionEdit : T.actionCreate
-      logChange(
-        !editing.shiftType ? 'delete' : editing.wasWorking ? 'edit' : 'create',
-        label,
-        `${editing.staffName} · ${editing.date}${editing.shiftType ? ` · ${editing.shiftType}` : ''}`,
-      )
-      setEditing(null)
-      flash(isZH
-        ? (!editing.shiftType ? '更次已清除' : '更次已儲存')
-        : (!editing.shiftType ? 'Shift cleared' : 'Shift saved'))
-      await loadGrid(periodId, versionId)
-    } catch (e) {
-      // An eligibility refusal is a list of fixable reasons, so keep the dialog
-      // open and show them against the labels instead of closing on a one-liner.
-      if (e instanceof ApiRuleError) setCellIssues(e.issues)
-      else setError(e instanceof Error ? e.message : 'Save failed')
-    } finally { setBusy('') }
-  }
-
   async function handleValidate() {
     if (!activeVersionId) return
     setBusy('validate'); setError('')
@@ -709,8 +662,8 @@ export function RealRosterBoard() {
               className="text-xs px-3 py-1.5 border border-gray-200 rounded-lg hover:bg-gray-50 disabled:opacity-50">
               {T.createShift}
             </button>
-            <button onClick={() => setBatchShiftOpen(true)} disabled={!editable || !grid?.rows.length}
-              className="text-xs px-3 py-1.5 border border-gray-200 rounded-lg hover:bg-gray-50 disabled:opacity-50">
+            <button type="button" disabled title={T.batchUnavailable}
+              className="text-xs px-3 py-1.5 border border-gray-200 rounded-lg cursor-not-allowed opacity-50">
               {T.batchCreate}
             </button>
             <button onClick={() => setCreateEventOpen(true)} disabled={!periodId}
@@ -925,22 +878,22 @@ export function RealRosterBoard() {
         ) : loading ? (
           <div className="text-sm text-gray-400 p-8 text-center">…</div>
         ) : grid && grid.rows.length ? (
-          <table className="border-collapse bg-white rounded-xl border border-gray-200">
+          <table className="w-max min-w-full border-collapse overflow-hidden rounded-2xl border border-slate-200 bg-white text-[10px] shadow-sm">
             <thead className="sticky top-0 z-10">
-              <tr className="bg-gray-50 border-b border-gray-200">
-                <th className="text-left px-3 py-2 text-[10px] font-semibold text-gray-500 border-r border-gray-200 sticky left-0 bg-gray-50 z-20 w-44 min-w-44">
-                  {T.staff}
+              <tr className="border-b border-slate-200 bg-slate-50">
+                <th className="sticky left-0 z-20 w-44 min-w-44 border-r border-slate-200 bg-slate-50 px-3 py-3 text-left text-xs font-black text-slate-700 sm:w-56 sm:min-w-56">
+                  {T.roleStaff}
                 </th>
-                <th className="px-1 py-1.5 text-center border-r border-gray-200 min-w-[44px] bg-gray-50">
-                  <div className="text-[8px] text-gray-400">{T.totalHrs}</div>
+                <th className="min-w-[54px] border-r border-slate-200 bg-slate-50 px-1 py-1.5 text-center">
+                  <div className="text-[8px] font-bold text-slate-400">{T.totalHrs}</div>
                 </th>
                 {columns.map((iso) => {
                   const d = dayLabel(iso, isZH)
                   const dayEvents = eventsByDate.get(iso) ?? []
                   return (
-                    <th key={iso} className={`px-1 py-1.5 text-center border-r border-gray-100 min-w-[54px] ${d.weekend ? 'bg-pink-50' : 'bg-gray-50'}`}>
-                      <div className="text-[8px] text-gray-400">{d.wd}</div>
-                      <div className="text-[11px] font-bold text-gray-700">{d.dm}</div>
+                    <th key={iso} className={`min-w-[64px] border-r border-slate-200 px-1 py-2 text-center sm:min-w-[86px] ${d.weekend ? 'bg-pink-50' : 'bg-slate-50'}`}>
+                      <div className="text-[9px] font-bold text-slate-400">{d.wd}</div>
+                      <div className="text-xs font-black text-slate-800">{d.dm}</div>
                       {dayEvents.length > 0 && (
                         <div
                           className="mx-auto mt-0.5 h-1.5 w-1.5 rounded-full bg-amber-400"
@@ -972,26 +925,27 @@ export function RealRosterBoard() {
                 const unknownHours = minutes.some((value) => value === null)
                 const workedMinutes = minutes.reduce<number>((sum, value) => sum + (value ?? 0), 0)
                 return (
-                <tr key={row.staff.id} className="border-t border-gray-100">
-                  <td className="px-3 py-2 border-r border-gray-200 sticky left-0 bg-white z-10 w-44 min-w-44">
+                <tr key={row.staff.id} className="group border-t border-slate-100">
+                  <td className="sticky left-0 z-10 w-44 min-w-44 border-r border-slate-200 bg-white px-3 py-2 text-left shadow-[5px_0_8px_-8px_rgba(15,23,42,0.45)] group-hover:bg-pink-50/40 sm:w-56 sm:min-w-56">
                     <button type="button" onClick={() => {
                       setSelectedStaffId(row.staff.id)
                       setViewMode('staff')
                       if (editable) setCreateShiftOpen(true)
                     }}
                       title={editable ? (isZH ? '開啟此員工的更次編輯器' : 'Open this staff member in the shift editor') : T.readonly}
-                      className="block max-w-full truncate text-left text-[12px] font-semibold text-gray-900 hover:text-[#E8187A] hover:underline">
+                      className="block max-w-full truncate text-left text-xs font-black text-pink-700 hover:underline">
                       {row.staff.name_en || row.staff.name}
                     </button>
-                    <div className="flex items-center gap-1.5 text-[10px] text-gray-400">
-                      <span className="font-bold text-gray-500">{row.staff.rank}</span>
+                    <div className="mt-0.5 flex items-center gap-1.5 text-[10px] text-slate-500">
+                      <span className="font-bold text-slate-900">{row.staff.rank}</span>
                       {row.staff.unit_name && <span className="truncate">· {row.staff.unit_name}</span>}
                     </div>
                   </td>
-                  <td className="px-1 py-2 border-r border-gray-200 text-center">
-                    <div className="text-[10px] font-bold text-gray-600" title={unknownHours ? T.unknownHours : undefined}>
+                  <td className="border-r border-slate-200 px-1 py-2 text-center">
+                    <div className="text-[10px] font-black text-slate-600" title={unknownHours ? T.unknownHours : undefined}>
                       {unknownHours ? '—' : formatExactMinutes(workedMinutes)}
                     </div>
+                    {unknownHours && <div className="mt-0.5 text-[7px] font-semibold text-amber-700">{T.paidHoursUnavailable}</div>}
                   </td>
                   {columns.map((iso) => {
                     const cell = cellLookup.get(row.staff.id)?.get(iso)
@@ -999,25 +953,28 @@ export function RealRosterBoard() {
                     const style = st ? (SHIFT_STYLE[st] ?? DEFAULT_STYLE) : null
                     return (
                       <td key={iso} id={`roster-cell-${row.staff.id}-${iso}`}
-                        onClick={() => editable && (setCellIssues([]), setEditing({
-                          staffId: row.staff.id, staffName: row.staff.name_en || row.staff.name,
-                          staffRank: row.staff.rank,
-                          date: iso, shiftType: st ?? '', tasks: cell?.tasks ?? [],
-                          wasWorking: !!st,
-                        }))}
-                        className={`relative border-r border-gray-100 p-1 align-top ${editable ? 'cursor-pointer hover:bg-pink-50/40' : ''} ${focusedCell?.staffId === row.staff.id && focusedCell.date === iso ? 'bg-rose-50 ring-2 ring-inset ring-[#E8187A]' : ''}`}>
-                        {(issueCountByCell.get(`${row.staff.id}|${iso}`) ?? 0) > 0 && (
-                          <span className="absolute right-0.5 top-0.5 h-2 w-2 rounded-full bg-rose-500 ring-2 ring-white" title={isZH ? '此更次有規則提示' : 'This shift has a rule alert'} />
-                        )}
-                        {st ? (
-                          <div className="rounded px-1 py-0.5 text-[9px] font-bold text-center"
-                            style={{ background: style!.bg, color: style!.fg }}>{st}</div>
-                        ) : (
-                          <div className="h-4" />
-                        )}
-                        {cell?.tasks?.slice(0, 2).map((t) => (
-                          <div key={t} className="text-[7px] text-gray-400 leading-tight truncate">• {t}</div>
-                        ))}
+                        className={`relative border-r border-slate-100 bg-white p-1 align-top ${focusedCell?.staffId === row.staff.id && focusedCell.date === iso ? 'bg-rose-50 ring-2 ring-inset ring-[#E8187A]' : ''}`}>
+                        <button type="button" disabled={!editable} onClick={() => {
+                          setSelectedStaffId(row.staff.id)
+                          setFocusDate(iso)
+                          setCreateShiftOpen(true)
+                        }}
+                          title={editable ? (isZH ? '新增、修改或刪除更次與工作時間' : 'Create, edit or delete this shift and task times') : T.readonly}
+                          className="group/cell flex min-h-16 w-full min-w-14 flex-col items-stretch rounded-lg p-1 text-left transition hover:bg-pink-50 focus:outline-none focus:ring-2 focus:ring-pink-300 disabled:cursor-not-allowed disabled:hover:bg-transparent sm:min-w-20">
+                          {(issueCountByCell.get(`${row.staff.id}|${iso}`) ?? 0) > 0 && (
+                            <span className="absolute right-1.5 top-1.5 h-2 w-2 rounded-full bg-rose-500 ring-2 ring-white" title={isZH ? '此更次有規則提示' : 'This shift has a rule alert'} />
+                          )}
+                          {st ? (
+                            <>
+                              <span className="break-words rounded-md px-1.5 py-1 text-center text-[10px] font-black" style={{ background: style!.bg, color: style!.fg }}>{st}</span>
+                              {cell?.tasks?.slice(0, viewMode === 'month' ? 0 : 2).map((task) => (
+                                <span key={task} className="mt-0.5 block truncate text-[8px] leading-tight text-slate-400">• {task}</span>
+                              ))}
+                            </>
+                          ) : (
+                            <span className="flex flex-1 items-center justify-center rounded-md border border-dashed border-slate-200 text-sm font-bold text-slate-300 group-hover/cell:border-pink-200 group-hover/cell:text-pink-500">＋</span>
+                          )}
+                        </button>
                       </td>
                     )
                   })}
@@ -1081,93 +1038,6 @@ export function RealRosterBoard() {
       )}
       </div>
 
-      {/* Cell editor */}
-      {editing && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-6" style={{ background: 'rgba(0,0,0,0.4)' }}
-          onClick={() => setEditing(null)}>
-          <div className="bg-white w-full max-w-md rounded-2xl shadow-2xl p-6" onClick={(e) => e.stopPropagation()}>
-            <div className="text-sm font-bold text-gray-900">{T.edit}</div>
-
-            <div className="text-xs text-gray-500 mb-4">{editing.staffName} · {editing.date}</div>
-
-            <div className="flex flex-wrap gap-1.5 mb-4">
-              {shiftDefs.map((sd) => {
-                const sel = editing.shiftType === sd.shift_type
-                const style = SHIFT_STYLE[sd.shift_type] ?? DEFAULT_STYLE
-                return (
-                  <button key={sd.id} onClick={() => setEditing({
-                    ...editing, shiftType: sel ? '' : sd.shift_type, tasks: [],
-                  })}
-                    className="px-2.5 py-1 rounded-lg text-xs font-bold border-2 transition-all"
-                    style={{ background: style.bg, color: style.fg, borderColor: sel ? PINK : 'transparent' }}
-                    title={sd.label ?? sd.shift_type}>
-                    {sd.shift_type}
-                  </button>
-                )
-              })}
-            </div>
-
-            {taskDefs.length > 0 && editing.shiftType && (
-              <div className="mb-4">
-                <div className="text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-1.5">{T.tasks}</div>
-                <div className="flex flex-wrap gap-1.5 max-h-24 overflow-y-auto">
-                  {taskDefs.filter((td) => canSeeTask(
-                    editing.staffRank, td, editing.shiftType, shiftDefs,
-                  )).map((td) => {
-                    const label = td.task_name || td.task_code
-                    const on = editing.tasks.includes(label)
-                    return (
-                      <button key={td.id}
-                        onClick={() => setEditing({
-                          ...editing,
-                          tasks: on ? editing.tasks.filter((t) => t !== label) : [...editing.tasks, label],
-                        })}
-                        className="px-2 py-0.5 rounded-full text-[10px] border transition-all"
-                        style={{ borderColor: on ? PINK : '#e5e7eb', background: on ? '#fff0f5' : '#fff', color: on ? PINK : '#6b7280' }}>
-                        {label}
-                      </button>
-                    )
-                  })}
-                </div>
-              </div>
-            )}
-
-            {cellIssues.length > 0 && (
-              <div className="mb-4 rounded-lg border p-2.5"
-                   style={{ background: '#fff1f2', borderColor: '#fecdd3' }}>
-                <div className="text-[10px] font-bold uppercase tracking-wider mb-1"
-                     style={{ color: '#be123c' }}>
-                  {T.rejected}
-                </div>
-                <ul className="space-y-1">
-                  {cellIssues.map((issue, i) => (
-                    <li key={i} className="text-[11px]" style={{ color: '#9f1239' }}>
-                      {issue.task_label && (
-                        <span className="font-semibold">{issue.task_label}: </span>
-                      )}
-                      {(issue.issues?.length ? issue.issues : [issue])
-                        .map((r) => reasonText(r, isZH))
-                        .join(' · ')}
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            )}
-
-            <div className="flex gap-2 justify-end">
-              <button onClick={() => setEditing({ ...editing, shiftType: '', tasks: [] })}
-                className="px-3 py-1.5 text-xs rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-50">{T.clear}</button>
-              <button onClick={() => setEditing(null)}
-                className="px-3 py-1.5 text-xs rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50">{T.cancel}</button>
-              <button onClick={saveCell} disabled={busy === 'cell'}
-                className="px-4 py-1.5 text-xs rounded-lg text-white font-semibold disabled:opacity-60" style={{ background: PINK }}>
-                {busy === 'cell' ? '…' : T.save}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
       {newPeriodOpen && (
         <NewPeriodModal
           isZH={isZH}
@@ -1182,17 +1052,6 @@ export function RealRosterBoard() {
           publishError={publishError} periodLabel={periodLabel} isZH={isZH}
           publishingId={publishingId} publishedIds={publishedIds}
           onPublish={handlePublishOption} onClose={() => setAiOpen(false)}
-        />
-      )}
-
-      {batchShiftOpen && grid && (
-        <BatchCreateShiftModal
-          open={batchShiftOpen}
-          onClose={() => setBatchShiftOpen(false)}
-          staff={grid.rows.map((r) => r.staff)}
-          shiftDefs={shiftDefs}
-          dates={periodColumns}
-          onBatchCreated={(count) => { flash(`${count} shifts created`); void loadGrid(periodId, versionId) }}
         />
       )}
 
@@ -1220,6 +1079,11 @@ export function RealRosterBoard() {
             } else {
               flash(isZH ? '更次已儲存' : 'Shift saved')
             }
+            loadGrid(periodId, versionId)
+          }}
+          onDeleted={({ staffName, date }) => {
+            logChange('delete', T.actionDelete, `${staffName} · ${date}`)
+            flash(isZH ? '更次已清除' : 'Shift cleared')
             loadGrid(periodId, versionId)
           }}
         />

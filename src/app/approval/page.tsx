@@ -1,14 +1,15 @@
 'use client'
 
-import { useCallback, useEffect, useMemo, useState } from 'react'
-import { api, downloadReportCsv } from '@/lib/api'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { api } from '@/lib/api'
+import { approvalCsv } from '@/lib/approval-csv.js'
 import type { LeaveCategory, LeaveGroup, LeaveRequest, LeaveStats, Unit } from '@/lib/apiTypes'
 import { useLang } from '@/components/layout/LanguageContext'
 import { useAuth } from '@/components/layout/AuthContext'
-import { canDecide, canRecommend, grantFor } from '@/lib/permissions'
+import { canDecide, canRecommend, canRead } from '@/lib/permissions'
 
-const PINK = '#f28f9e'
-const PINK_HOVER = '#e87a8e'
+const PINK = '#E8187A'
+const PINK_HOVER = '#cf126b'
 
 const STATUS_STYLE: Record<string, { bg: string; text: string }> = {
   pending:     { bg: '#EFF6FF', text: '#1D4ED8' },
@@ -24,7 +25,7 @@ const STATUS_STYLE: Record<string, { bg: string; text: string }> = {
 interface Recommendation {
   recommender_name: string
   recommender_role: string
-  decision: 'approve' | 'reject'
+  recommendation: 'approve' | 'reject'
   reason?: string
   created_at?: string
 }
@@ -45,29 +46,39 @@ function fmtRange(from: string, to: string): string {
 }
 
 // ─── Reject / Withdraw Reason Modal ────────────────────────────────────────
-function ReasonModal({ title, placeholder, onConfirm, onCancel }: {
-  title: string; placeholder: string
-  onConfirm: (reason: string) => void; onCancel: () => void
+function ReasonModal({ title, placeholder, onConfirm, onCancel, isZH }: {
+  title: string; placeholder: string; isZH: boolean
+  onConfirm: (reason: string) => Promise<boolean>; onCancel: () => void
 }) {
   const [reason, setReason] = useState('')
+  const [pending, setPending] = useState(false)
+  const [failure, setFailure] = useState('')
+  async function submit() {
+    if (pending || !reason.trim()) return
+    setPending(true); setFailure('')
+    try {
+      if (!await onConfirm(reason.trim())) setFailure(isZH ? '未保存，理由已保留，請重試。' : 'Not saved. Your reason is retained; please retry.');
+    } finally { setPending(false) }
+  }
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-      <div className="bg-white rounded-2xl shadow-xl w-full max-w-md p-5 space-y-4">
+      <div role="dialog" aria-modal="true" aria-label={title} className="bg-white rounded-2xl shadow-xl w-full max-w-md max-h-[85dvh] overflow-y-auto p-5 space-y-4">
         <h3 className="text-sm font-bold text-gray-900">{title}</h3>
         <textarea
           className="w-full border border-gray-200 rounded-xl p-3 text-xs text-gray-700 outline-none focus:border-pink-300 resize-none"
-          rows={3} placeholder={placeholder} value={reason}
+          disabled={pending} rows={3} placeholder={placeholder} value={reason}
           onChange={(e) => setReason(e.target.value)} autoFocus
         />
-        <div className="flex justify-end gap-2">
-          <button onClick={onCancel}
+        {failure && <p role="alert" className="text-sm text-rose-700">{failure}</p>}
+        <div className="flex flex-wrap justify-end gap-2">
+          <button disabled={pending} onClick={onCancel}
             className="px-4 py-2 text-xs rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50">
-            取消 / Cancel
+            {isZH ? '取消' : 'Cancel'}
           </button>
-          <button onClick={() => onConfirm(reason)} disabled={!reason.trim()}
+          <button onClick={() => void submit()} disabled={pending || !reason.trim()}
             className="px-4 py-2 text-xs rounded-lg text-white font-medium disabled:opacity-40"
             style={{ background: PINK }}>
-            確認 / Confirm
+            {isZH ? '確認' : 'Confirm'}
           </button>
         </div>
       </div>
@@ -77,9 +88,9 @@ function ReasonModal({ title, placeholder, onConfirm, onCancel }: {
 
 // ─── Recommendation Badge ───────────────────────────────────────────────────
 function RecommendationBadge({ rec }: { rec: Recommendation }) {
-  const isApprove = rec.decision === 'approve'
+  const isApprove = rec.recommendation === 'approve'
   return (
-    <div className={`flex items-center gap-1.5 px-2 py-1 rounded-lg text-[10px] ${
+    <div className={`flex items-center gap-1.5 px-2 py-1 rounded-lg text-xs ${
       isApprove ? 'bg-emerald-50 text-emerald-700' : 'bg-rose-50 text-rose-700'
     }`}>
       <span>{isApprove ? '✅' : '❌'}</span>
@@ -95,16 +106,17 @@ function ApprovalCard({ request, role, isZH, onAction, busy }: {
   request: LeaveRequestExtended
   role: string | null
   isZH: boolean
-  onAction: (id: string, action: string, note?: string) => void
+  onAction: (id: string, action: string, note?: string) => Promise<boolean>
   busy: boolean
 }) {
   const [showRejectModal, setShowRejectModal] = useState(false)
+  const [showRecommendModal, setShowRecommendModal] = useState(false)
   const [showWithdrawModal, setShowWithdrawModal] = useState(false)
 
   const recs = request.recommendations ?? []
   const hasDisagreement = recs.length >= 2 &&
-    recs.some(r => r.decision === 'approve') &&
-    recs.some(r => r.decision === 'reject')
+    recs.some(r => r.recommendation === 'approve') &&
+    recs.some(r => r.recommendation === 'reject')
 
   const isOwner = canDecide(role, 'approve.leave')
   const isRecommender = canRecommend(role, 'approve.leave') && !isOwner
@@ -122,26 +134,26 @@ function ApprovalCard({ request, role, isZH, onAction, busy }: {
         hasDisagreement ? 'border-amber-300 ring-1 ring-amber-100' : 'border-gray-200'
       }`}>
         {/* Header: Staff info + Status */}
-        <div className="flex items-start justify-between">
+        <div className="emma-reflow-wrap flex flex-wrap items-start justify-between gap-3">
           <div className="flex items-center gap-3">
             <div className="w-9 h-9 rounded-full flex items-center justify-center text-xs text-white font-bold flex-shrink-0"
               style={{ background: PINK }}>
               {(request.name_en || request.name || '?')[0]}
             </div>
             <div>
-              <div className="text-sm font-semibold text-gray-900">{request.name_en || request.name}</div>
-              <div className="text-[10px] text-gray-400">
+              <div className="text-sm font-semibold text-gray-900">{isZH ? request.name || request.name_en : request.name_en || request.name}</div>
+              <div className="text-xs text-gray-400">
                 {[request.rank, request.unit_name].filter(Boolean).join(' · ')}
               </div>
             </div>
           </div>
           <div className="flex items-center gap-2">
             {hasDisagreement && (
-              <span className="text-[9px] px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 font-medium">
+              <span className="text-xs px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 font-medium">
                 {isZH ? '⚠️ 意見分歧' : '⚠️ Disagreement'}
               </span>
             )}
-            <span className="text-[9px] px-2 py-0.5 rounded-full font-medium"
+            <span className="text-xs px-2 py-0.5 rounded-full font-medium"
               style={{ background: statusStyle.bg, color: statusStyle.text }}>
               {statusLabel}
             </span>
@@ -149,29 +161,29 @@ function ApprovalCard({ request, role, isZH, onAction, busy }: {
         </div>
 
         {/* Request details */}
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
+        <div className="emma-reflow-stack grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3 text-xs">
           <div>
-            <div className="text-[9px] text-gray-400 uppercase tracking-wider mb-0.5">
+            <div className="text-xs text-gray-400 uppercase tracking-wider mb-0.5">
               {isZH ? '類型' : 'Type'}
             </div>
             <div className="font-medium text-gray-800">{request.leave_type}</div>
           </div>
           <div>
-            <div className="text-[9px] text-gray-400 uppercase tracking-wider mb-0.5">
+            <div className="text-xs text-gray-400 uppercase tracking-wider mb-0.5">
               {isZH ? '日期' : 'Dates'}
             </div>
             <div className="font-medium text-gray-800">{fmtRange(request.date_start, request.date_end)}</div>
           </div>
           {request.requested_shift_type && (
             <div>
-              <div className="text-[9px] text-gray-400 uppercase tracking-wider mb-0.5">
+              <div className="text-xs text-gray-400 uppercase tracking-wider mb-0.5">
                 {isZH ? '申請更期' : 'Shift'}
               </div>
               <div className="font-medium text-gray-800">{request.requested_shift_type}</div>
             </div>
           )}
           <div>
-            <div className="text-[9px] text-gray-400 uppercase tracking-wider mb-0.5">
+            <div className="text-xs text-gray-400 uppercase tracking-wider mb-0.5">
               {isZH ? '申請日期' : 'Applied'}
             </div>
             <div className="text-gray-600">{fmtDate(request.created_at)}</div>
@@ -181,7 +193,7 @@ function ApprovalCard({ request, role, isZH, onAction, busy }: {
         {/* Reason */}
         {request.reason && (
           <div className="text-xs text-gray-600 bg-gray-50 rounded-lg px-3 py-2">
-            <span className="text-[9px] text-gray-400 font-medium uppercase mr-2">
+            <span className="text-xs text-gray-400 font-medium uppercase mr-2">
               {isZH ? '原因' : 'Reason'}:
             </span>
             {request.reason}
@@ -191,7 +203,7 @@ function ApprovalCard({ request, role, isZH, onAction, busy }: {
 
         {/* Document */}
         {request.document_url && (
-          <div className="flex items-center gap-1 text-[10px] text-blue-600">
+          <div className="flex items-center gap-1 text-xs text-blue-600">
             📄 <a href={request.document_url} target="_blank" rel="noopener noreferrer" className="hover:underline">
               {isZH ? '查看附件' : 'View attachment'}
             </a>
@@ -201,7 +213,7 @@ function ApprovalCard({ request, role, isZH, onAction, busy }: {
         {/* Recommendations section */}
         {recs.length > 0 && (
           <div className="space-y-1.5">
-            <div className="text-[9px] text-gray-400 uppercase tracking-wider font-medium">
+            <div className="text-xs text-gray-400 uppercase tracking-wider font-medium">
               {isZH ? '建議意見' : 'Recommendations'}
             </div>
             <div className="flex flex-wrap gap-1.5">
@@ -213,7 +225,7 @@ function ApprovalCard({ request, role, isZH, onAction, busy }: {
         {/* Decision note (for already-decided items) */}
         {request.decision_note && (
           <div className="text-xs text-gray-500 bg-gray-50 rounded-lg px-3 py-2 italic">
-            <span className="text-[9px] text-gray-400 font-medium uppercase mr-2 not-italic">
+            <span className="text-xs text-gray-400 font-medium uppercase mr-2 not-italic">
               {isZH ? '決定備註' : 'Decision note'}:
             </span>
             {request.decision_note}
@@ -223,24 +235,24 @@ function ApprovalCard({ request, role, isZH, onAction, busy }: {
         {isApproved && (
           <div className="flex flex-col gap-2 rounded-lg border border-sky-100 bg-sky-50 px-3 py-2 sm:flex-row sm:items-center sm:justify-between">
             <div>
-              <div className="text-[10px] font-semibold text-sky-800">
+              <div className="text-xs font-semibold text-sky-800">
                 {isZH ? 'A.5 更表同步核對' : 'A.5 roster sync verification'}
               </div>
-              <div className="mt-0.5 text-[9px] leading-relaxed text-sky-700">
-                {isZH ? '批准狀態已保存；請在更表確認AL／SL code已寫入正確日期。未見更表更新，不代表前端可以代寫。' : 'Approval is saved. Confirm the AL／SL code appears on the correct roster date. The frontend never writes a fake roster value.'}
+              <div className="mt-0.5 text-xs leading-relaxed text-sky-700">
+                {isZH ? '審批狀態已保存；請核對更表限制及通知。批准假期與自動填更是不同步驟，前端不會假裝已改更。' : 'The decision is saved. Verify roster constraints and notifications. Leave approval and roster autofill are separate steps; the frontend never fabricates a roster change.'}
               </div>
             </div>
-            <a href="/roster" className="shrink-0 rounded-lg border border-sky-200 bg-white px-3 py-1.5 text-[10px] font-semibold text-sky-700 hover:bg-sky-50">
+            <a href="/roster" className="shrink-0 rounded-lg border border-sky-200 bg-white px-3 py-1.5 text-xs font-semibold text-sky-700 hover:bg-sky-50">
               {isZH ? '開啟更表核對' : 'Open roster'}
             </a>
           </div>
         )}
 
         {/* Action buttons */}
-        <div className="flex items-center justify-between pt-2 border-t border-gray-100">
-          <div className="text-[9px] text-gray-400">
+        <div className="emma-reflow-wrap flex flex-wrap items-center justify-between gap-3 pt-2 border-t border-gray-100">
+          <div className="text-xs text-gray-400">
             {request.priority && request.priority !== 'normal' && (
-              <span className={`px-1.5 py-0.5 rounded text-[8px] font-medium uppercase ${
+              <span className={`px-1.5 py-0.5 rounded text-xs font-medium uppercase ${
                 request.priority === 'urgent' ? 'bg-red-100 text-red-700' :
                 request.priority === 'high' ? 'bg-orange-100 text-orange-700' :
                 'bg-blue-100 text-blue-700'
@@ -250,17 +262,17 @@ function ApprovalCard({ request, role, isZH, onAction, busy }: {
             )}
           </div>
 
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2">
             {/* OWNER sees Approve / Reject / Withdraw */}
             {isOwner && isPending && (
               <>
                 <button disabled={busy} onClick={() => onAction(request.id, 'approve')}
-                  className="px-3 py-1.5 text-[10px] rounded-lg text-white font-medium disabled:opacity-50 hover:opacity-90 transition-opacity"
+                  className="px-3 py-1.5 text-xs rounded-lg text-white font-medium disabled:opacity-50 hover:opacity-90 transition-opacity"
                   style={{ background: '#10B981' }}>
                   {isZH ? '✅ 批准' : '✅ Approve'}
                 </button>
                 <button disabled={busy} onClick={() => setShowRejectModal(true)}
-                  className="px-3 py-1.5 text-[10px] rounded-lg border border-rose-200 text-rose-600 font-medium disabled:opacity-50 hover:bg-rose-50 transition-colors">
+                  className="px-3 py-1.5 text-xs rounded-lg border border-rose-200 text-rose-600 font-medium disabled:opacity-50 hover:bg-rose-50 transition-colors">
                   {isZH ? '❌ 拒絕' : '❌ Reject'}
                 </button>
               </>
@@ -268,7 +280,7 @@ function ApprovalCard({ request, role, isZH, onAction, busy }: {
 
             {isOwner && isApproved && (
               <button disabled={busy} onClick={() => setShowWithdrawModal(true)}
-                className="px-3 py-1.5 text-[10px] rounded-lg border border-gray-300 text-gray-600 font-medium disabled:opacity-50 hover:bg-gray-50 transition-colors">
+                className="px-3 py-1.5 text-xs rounded-lg border border-gray-300 text-gray-600 font-medium disabled:opacity-50 hover:bg-gray-50 transition-colors">
                 {isZH ? '↩️ 撤回' : '↩️ Withdraw'}
               </button>
             )}
@@ -276,21 +288,21 @@ function ApprovalCard({ request, role, isZH, onAction, busy }: {
             {/* Recommender sees Recommend Approve / Recommend Reject */}
             {isRecommender && isPending && (
               <>
-                <button disabled={busy} onClick={() => onAction(request.id, 'recommend_approve')}
-                  className="px-3 py-1.5 text-[10px] rounded-lg border border-emerald-200 text-emerald-700 font-medium disabled:opacity-50 hover:bg-emerald-50 transition-colors">
+                <button disabled={busy} onClick={() => setShowRecommendModal(true)}
+                  className="px-3 py-1.5 text-xs rounded-lg border border-emerald-200 text-emerald-700 font-medium disabled:opacity-50 hover:bg-emerald-50 transition-colors">
                   {isZH ? '👍 建議批准' : '👍 Recommend Approve'}
                 </button>
                 <button disabled={busy} onClick={() => setShowRejectModal(true)}
-                  className="px-3 py-1.5 text-[10px] rounded-lg border border-rose-200 text-rose-600 font-medium disabled:opacity-50 hover:bg-rose-50 transition-colors">
+                  className="px-3 py-1.5 text-xs rounded-lg border border-rose-200 text-rose-600 font-medium disabled:opacity-50 hover:bg-rose-50 transition-colors">
                   {isZH ? '👎 建議拒絕' : '👎 Recommend Reject'}
                 </button>
               </>
             )}
 
             {/* Mark as reviewed (any recommender or owner) */}
-            {(isOwner || isRecommender) && isPending && !request.reviewed && (
+            {isOwner && isPending && !request.reviewed && (
               <button disabled={busy} onClick={() => onAction(request.id, 'review')}
-                className="px-3 py-1.5 text-[10px] rounded-lg border border-gray-200 text-gray-500 disabled:opacity-50 hover:bg-gray-50 transition-colors">
+                className="px-3 py-1.5 text-xs rounded-lg border border-gray-200 text-gray-500 disabled:opacity-50 hover:bg-gray-50 transition-colors">
                 {isZH ? '👁️ 標為已閱' : '👁️ Mark reviewed'}
               </button>
             )}
@@ -298,28 +310,39 @@ function ApprovalCard({ request, role, isZH, onAction, busy }: {
         </div>
       </div>
 
+      {/* Recommendations are not final decisions; both require a reason. */}
+      {showRecommendModal && <ReasonModal isZH={isZH}
+        title={isZH ? '建議批准理由（必填）' : 'Reason for recommending approval (required)'}
+        placeholder={isZH ? '請輸入理由…' : 'Enter a reason…'}
+        onConfirm={async reason => {
+          const saved = await onAction(request.id, 'recommend_approve', reason)
+          if (saved) setShowRecommendModal(false)
+          return saved
+        }} onCancel={() => setShowRecommendModal(false)} />}
       {/* Modals */}
       {showRejectModal && (
-        <ReasonModal
+        <ReasonModal isZH={isZH}
           title={isRecommender
             ? (isZH ? '建議拒絕原因' : 'Reason for recommending rejection')
             : (isZH ? '拒絕原因（必填）' : 'Reason for rejection (required)')
           }
           placeholder={isZH ? '請輸入原因...' : 'Enter reason...'}
-          onConfirm={(reason) => {
-            setShowRejectModal(false)
-            onAction(request.id, isRecommender ? 'recommend_reject' : 'reject', reason)
+          onConfirm={async (reason) => {
+            const saved = await onAction(request.id, isRecommender ? 'recommend_reject' : 'reject', reason)
+            if (saved) setShowRejectModal(false)
+            return saved
           }}
           onCancel={() => setShowRejectModal(false)}
         />
       )}
       {showWithdrawModal && (
-        <ReasonModal
+        <ReasonModal isZH={isZH}
           title={isZH ? '撤回原因（必填）' : 'Reason for withdrawal (required)'}
           placeholder={isZH ? '請輸入撤回原因...' : 'Enter reason for withdrawal...'}
-          onConfirm={(reason) => {
-            setShowWithdrawModal(false)
-            onAction(request.id, 'withdraw', reason)
+          onConfirm={async (reason) => {
+            const saved = await onAction(request.id, 'withdraw', reason)
+            if (saved) setShowWithdrawModal(false)
+            return saved
           }}
           onCancel={() => setShowWithdrawModal(false)}
         />
@@ -353,7 +376,7 @@ export default function ApprovalPage() {
   const L = {
     title:        isZH ? '審批中心' : 'Approval Centre',
     subtitle:     isZH ? '審批員工申請及假期請求' : 'Approve staff requests and leave applications',
-    export:       isZH ? '匯出報告' : 'Export Report',
+    export:       isZH ? '匯出目前清單' : 'Export Current List',
     total_title:  isZH ? '審批總數' : 'Total Actions',
     total_label:  isZH ? '本月審批總數' : 'Total this month',
     rate_title:   isZH ? '批准率' : 'Approval Rate',
@@ -375,89 +398,123 @@ export default function ApprovalPage() {
     { key: 'sick', label: L.sub_sick },
   ]
 
-  const load = useCallback(() => {
-    setLoading(true)
-    setError('')
-    api.leaveRequests({
-      group, category,
-      search: search || undefined,
-      unitId: unitId === 'all' ? undefined : unitId,
-      dateFrom: dateFrom || undefined,
-      dateTo: dateTo || undefined,
-    })
-      .then((data) => setRows(data as LeaveRequestExtended[]))
-      .catch((e) => setError(e instanceof Error ? e.message : 'Failed to load requests'))
-      .finally(() => setLoading(false))
-  }, [group, category, search, unitId, dateFrom, dateTo])
+  const scope = user ? `${user.userId}:${user.facilityId ?? ''}:${role ?? ''}` : ''
+  const activeScope = useRef(scope)
+  activeScope.current = scope
+  const loads = useRef(0)
+  const statsLoads = useRef(0)
+  const saving = useRef(false)
 
-  useEffect(() => { load() }, [load])
+  const loadStats = useCallback(async () => {
+    const generation = ++statsLoads.current
+    if (!scope) return
+    try {
+      const data = await api.leaveStats()
+      if (scope === activeScope.current && generation === statsLoads.current) setStats(data)
+    } catch {
+      if (scope === activeScope.current && generation === statsLoads.current) setStats(null)
+    }
+  }, [scope])
+
+  const load = useCallback(async (silent = false) => {
+    const generation = ++loads.current
+    if (!scope) return
+    if (!silent) setLoading(true)
+    setError('')
+    try {
+      const data = await api.leaveRequests({
+        group, category, search: search || undefined,
+        unitId: unitId === 'all' ? undefined : unitId,
+        dateFrom: dateFrom || undefined, dateTo: dateTo || undefined,
+      })
+      if (scope !== activeScope.current || generation !== loads.current) return
+      setRows(data as LeaveRequestExtended[])
+    } catch (cause) {
+      if (scope !== activeScope.current || generation !== loads.current) return
+      setRows([])
+      setError(cause instanceof Error ? cause.message : 'Failed to load requests')
+    } finally {
+      if (scope === activeScope.current && generation === loads.current) setLoading(false)
+    }
+  }, [group, category, search, unitId, dateFrom, dateTo, scope])
 
   useEffect(() => {
-    api.leaveStats().then(setStats).catch(() => {})
-    api.units().then(setUnits).catch(() => {})
-  }, [])
+    setRows([]); setStats(null); setUnits([]); setSyncNotice(''); setError(''); setBusyId('')
+    saving.current = false
+    if (!scope) return
+    let live = true
+    void api.units().then(data => {
+      if (live && activeScope.current === scope) setUnits(data)
+    }).catch(() => {})
+    return () => { live = false }
+  }, [scope])
 
-  async function handleAction(id: string, action: string, note?: string) {
-    setBusyId(id)
-    setError('')
+  useEffect(() => { void load(); void loadStats() }, [load, loadStats])
+  useEffect(() => {
+    const update = () => {
+      if (document.visibilityState === 'visible' && navigator.onLine && !saving.current) {
+        void load(true); void loadStats()
+      }
+    }
+    const timer = window.setInterval(update, 30_000)
+    window.addEventListener('focus', update); window.addEventListener('online', update)
+    return () => {
+      window.clearInterval(timer)
+      window.removeEventListener('focus', update); window.removeEventListener('online', update)
+    }
+  }, [load, loadStats])
+
+  async function handleAction(id: string, action: string, note?: string): Promise<boolean> {
+    if (!scope || saving.current || !rows.some(row => row.id === id)) return false
+    const originatingScope = scope
+    saving.current = true
+    setBusyId(id); setError('')
     try {
       if (action === 'withdraw') {
         await api.revokeLeaveRequest(id, note || (isZH ? '管理員撤回批准' : 'Approval revoked by manager'))
-        setSyncNotice(isZH ? '批准已撤回。請在更表核對原有shift／tasks是否已恢復。' : 'Approval revoked. Verify the original shift／tasks were restored on the roster.')
-        load()
-        api.leaveStats().then(setStats).catch(() => {})
-        return
+      } else if (action === 'recommend_approve' || action === 'recommend_reject') {
+        if (!note?.trim()) throw new Error(isZH ? '推薦理由必填' : 'A recommendation reason is required')
+        await api.recommendLeaveRequest(id, action === 'recommend_approve' ? 'approve' : 'reject', note.trim())
+      } else if (action === 'approve' || action === 'reject' || action === 'review') {
+        await api.decideLeaveRequest(id, action, note)
+      } else {
+        throw new Error('Unsupported approval action')
       }
-
-      // Map frontend actions to API decisions
-      const apiDecision = (() => {
-        switch (action) {
-          case 'approve': return 'approve'
-          case 'reject': return 'reject'
-          case 'review': return 'review'
-          case 'recommend_approve': return 'review' // recommend uses review for now
-          case 'recommend_reject': return 'review'  // recommend uses review for now
-          default: return action
-        }
-      })() as 'approve' | 'reject' | 'review'
-
-      const decisionNote = action === 'recommend_approve'
-        ? `[RECOMMEND APPROVE] ${note || ''}`
-        : action === 'recommend_reject'
-        ? `[RECOMMEND REJECT] ${note}`
-        : note
-
-      await api.decideLeaveRequest(id, apiDecision, decisionNote || undefined)
-      if (action === 'approve') {
-        setSyncNotice(isZH ? '申請已批准。請立即在更表核對AL／SL code；A.5只在backend roster-cell真正更新後才算完成。' : 'Request approved. Verify the AL／SL code on the roster now; A.5 is complete only after the backend roster cell changes.')
+      if (originatingScope !== activeScope.current) return false
+      if (action === 'approve' || action === 'withdraw') {
+        setSyncNotice(isZH ? '後端已保存審批決定。請核對更表、限制及通知；批准不等於前端已自動填更。' : 'The backend saved the decision. Check the roster, constraints and notifications; approval does not mean the frontend has automatically filled a shift.')
       }
-      load()
-      api.leaveStats().then(setStats).catch(() => {})
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Action failed')
+      void load(); void loadStats()
+      return true
+    } catch (cause) {
+      if (originatingScope === activeScope.current) setError(cause instanceof Error ? cause.message : 'Action failed')
+      return false
     } finally {
-      setBusyId('')
+      if (originatingScope === activeScope.current) { saving.current = false; setBusyId('') }
     }
   }
 
   return (
-    <div className="p-4 md:p-6 space-y-4 max-w-5xl mx-auto">
+    <div className="p-4 md:p-6 space-y-5 max-w-7xl mx-auto">
 
       {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
         <div>
-          <h1 className="text-lg font-bold text-gray-900">{L.title}</h1>
+          <h1 className="text-2xl font-bold text-slate-900">{L.title}</h1>
           <p className="text-xs text-gray-500 mt-0.5">{L.subtitle}</p>
         </div>
-        <button
-          onClick={() => downloadReportCsv('staff_register').catch(
-            (e) => setError(e instanceof Error ? e.message : 'Export failed'))}
+        {canRead(role, 'reports') && <button disabled={loading || Boolean(error) || rows.length === 0}
+          onClick={() => {
+            const url = URL.createObjectURL(new Blob([approvalCsv(rows, isZH)], { type: 'text/csv;charset=utf-8' }))
+            const link = document.createElement('a'); link.href = url; link.download = 'approval-current-list.csv'; link.click()
+            window.setTimeout(() => URL.revokeObjectURL(url), 1000)
+          }}
           className="px-4 py-2 text-xs rounded-lg text-white font-medium self-start sm:self-auto"
           style={{ background: PINK }}
           onMouseEnter={(e) => (e.currentTarget.style.background = PINK_HOVER)}
           onMouseLeave={(e) => (e.currentTarget.style.background = PINK)}>
           {L.export}
-        </button>
+        </button>}
       </div>
 
       {error && (
@@ -469,12 +526,12 @@ export default function ApprovalPage() {
       {/* KPI boxes */}
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         <div className="bg-white border border-gray-200 rounded-xl p-4">
-          <div className="text-[9px] text-gray-400 uppercase tracking-wider mb-1">{L.total_title}</div>
+          <div className="text-xs text-gray-400 uppercase tracking-wider mb-1">{L.total_title}</div>
           <div className="text-3xl font-bold text-gray-900 tabular-nums">{stats?.total_actions ?? '-'}</div>
-          <div className="text-[10px] text-gray-400 mt-1">{L.total_label}</div>
+          <div className="text-xs text-gray-400 mt-1">{L.total_label}</div>
         </div>
         <div className="bg-white border border-gray-200 rounded-xl p-4">
-          <div className="text-[9px] text-gray-400 uppercase tracking-wider mb-1">{L.rate_title}</div>
+          <div className="text-xs text-gray-400 uppercase tracking-wider mb-1">{L.rate_title}</div>
           <div className="text-3xl font-bold tabular-nums" style={{ color: '#10B981' }}>
             {stats ? `${stats.approval_rate}%` : '-'}
           </div>
@@ -482,14 +539,14 @@ export default function ApprovalPage() {
             <div className="h-full rounded-full bg-emerald-400"
               style={{ width: `${stats?.approval_rate ?? 0}%` }} />
           </div>
-          <div className="text-[10px] text-gray-400 mt-1">
+          <div className="text-xs text-gray-400 mt-1">
             {stats ? `${stats.approved_count}/${stats.decided_count} ${L.rate_sub}` : ''}
           </div>
         </div>
       </div>
 
       {syncNotice && (
-        <div className="flex items-start justify-between gap-3 rounded-xl border border-sky-200 bg-sky-50 px-4 py-3 text-[11px] text-sky-800">
+        <div className="emma-reflow-wrap flex flex-wrap items-start justify-between gap-3 gap-3 rounded-xl border border-sky-200 bg-sky-50 px-4 py-3 text-sm text-sky-800">
           <span>{syncNotice}</span>
           <button onClick={() => setSyncNotice('')} aria-label="Dismiss" className="font-bold text-sky-500">×</button>
         </div>
@@ -535,7 +592,7 @@ export default function ApprovalPage() {
         <div className="flex border-b border-gray-50 bg-gray-50 px-3 gap-1 pt-2 overflow-x-auto">
           {SUB_TABS.map((s) => (
             <button key={s.key} onClick={() => setCategory(s.key)}
-              className="px-3 py-2 text-[10px] rounded-t-lg font-medium transition-colors whitespace-nowrap"
+              className="px-3 py-2 text-xs rounded-t-lg font-medium transition-colors whitespace-nowrap"
               style={{
                 background:   category === s.key ? '#ffffff' : 'transparent',
                 color:        category === s.key ? PINK : '#9CA3AF',
@@ -556,12 +613,12 @@ export default function ApprovalPage() {
           )}
           {!loading && rows.map((r) => (
             <ApprovalCard
-              key={r.id}
+              key={`${scope}:${r.id}`}
               request={r}
               role={role}
               isZH={isZH}
               onAction={handleAction}
-              busy={busyId === r.id}
+              busy={Boolean(busyId)}
             />
           ))}
         </div>

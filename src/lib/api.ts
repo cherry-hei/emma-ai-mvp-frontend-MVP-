@@ -22,6 +22,17 @@ import type {
   ThresholdMonitor, Unit, ValidationOut, VersionOut,
 } from './apiTypes'
 import { assertPreviewNetworkAllowed } from './previewGate.js'
+import {
+  confirmCellUpsert,
+  confirmDraftSave,
+  confirmLeaveDecision,
+  confirmLeaveRecommendation,
+  confirmLeaveRevocation,
+  confirmPeriodCreate,
+  confirmStaffCreate,
+  confirmStaffUpdate,
+  readJsonBody,
+} from './api-response.js'
 
 const BASE = (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000').replace(/\/+$/, '')
 const TOKEN_KEY = 'emma_token'
@@ -169,7 +180,7 @@ export async function login(email: string, password: string): Promise<SessionOut
     body: JSON.stringify({ email, password }),
   })
   if (!res.ok) throw await toError(res)
-  const session = (await res.json()) as SessionOut
+  const session = (await readJsonBody(res)) as SessionOut
   if (!isCurrentCredentials(beforeLogin)) {
     throw new Error('Sign-in was superseded by a newer session action.')
   }
@@ -208,7 +219,7 @@ function refreshAccessToken(snapshot: CredentialSnapshot): Promise<RefreshResult
         body: JSON.stringify({ refresh_token: snapshot.refresh }),
       })
       if (!res.ok) throw new Error('refresh failed')
-      const session = (await res.json()) as SessionOut
+      const session = (await readJsonBody(res)) as SessionOut
       // A late refresh must not restore credentials after sign-out or replace a
       // newer identity that has signed in while this request was pending.
       if (!isCurrentCredentials(snapshot)) return null
@@ -264,8 +275,13 @@ async function apiFetchForCredentials<T>(
   }
 
   if (!res.ok) throw await toError(res)
-  if (res.status === 204) return undefined as T
-  return (await res.json()) as T
+  if (res.status === 204) {
+    if (!isCurrentCredentials(snapshot)) throw new Error('Response belongs to a superseded session; please reload.')
+    return undefined as T
+  }
+  const data = (await readJsonBody(res)) as T
+  if (!isCurrentCredentials(snapshot)) throw new Error('Response belongs to a superseded session; please reload.')
+  return data
 }
 
 // ── typed endpoint helpers ───────────────────────────────────────────────────
@@ -291,9 +307,9 @@ export const api = {
     gender?: 'M' | 'F'; status?: 'active' | 'inactive'
     // POST returns the raw staff row, not the enriched directory shape - the
     // page re-reads GET /staff afterwards rather than splicing this in.
-  }) => apiFetch<{ id: string; name: string }>('/staff', {
+  }) => apiFetch<unknown>('/staff', {
     method: 'POST', body: JSON.stringify(body),
-  }),
+  }).then(result => confirmStaffCreate(result, body) as { id: string; name: string }),
 
   // PATCH semantics: only the keys sent are touched, so a capability toggle does
   // not have to round-trip the whole profile and cannot clobber a field another
@@ -303,9 +319,9 @@ export const api = {
     primary_unit_id?: string | null; contracted_hours?: number
     is_audited_for_medication?: boolean; is_mentor?: boolean
     gender?: 'M' | 'F'; status?: 'active' | 'inactive'
-  }) => apiFetch<ApiStaff>(`/staff/${id}`, {
+  }) => apiFetch<unknown>(`/staff/${id}`, {
     method: 'PATCH', body: JSON.stringify(patch),
-  }),
+  }).then(result => confirmStaffUpdate(result, id, patch) as ApiStaff),
 
   publish: (versionId: string) =>
     apiFetch<{ roster_version_id: string; status: string }>(
@@ -322,7 +338,9 @@ export const api = {
   // ── period + manual editing + publish workflow ──────────────────────────────
   createPeriod: (body: {
     period_start: string; period_end: string; cycle_type?: string; create_manual_version?: boolean
-  }) => apiFetch<CreatePeriodResponse>('/roster-periods', { method: 'POST', body: JSON.stringify(body) }),
+  }) => apiFetch<unknown>('/roster-periods', {
+    method: 'POST', body: JSON.stringify(body),
+  }).then(result => confirmPeriodCreate(result, body) as CreatePeriodResponse),
 
   shiftDefinitions: () => apiFetch<ShiftDef[]>('/shift-definitions'),
   taskDefinitions: () => apiFetch<TaskDefOut[]>('/task-definitions'),
@@ -441,15 +459,22 @@ export const api = {
   // POST and PATCH /shifts share the same upsert-cell behavior on the backend.
   upsertCell: (body: {
     roster_version_id: string; staff_id: string; date: string; shift_type: string; tasks?: string[]
-  }) => apiFetch<{ assignment_id: string }>('/shifts', { method: 'PATCH', body: JSON.stringify(body) }),
+  }) => apiFetch<unknown>('/shifts', {
+    method: 'PATCH', body: JSON.stringify(body),
+  }).then(result => confirmCellUpsert(result) as { assignment_id: string }),
 
   clearCell: (versionId: string, staffId: string, date: string) => {
     const q = new URLSearchParams({ roster_version_id: versionId, staff_id: staffId, date })
     return apiFetch<void>(`/shifts?${q.toString()}`, { method: 'DELETE' })
   },
 
+  // The current route exposes only `{ ok: true }`, not a durable version/event
+  // identity. `confirmDraftSave` consequently fails closed until that contract
+  // is upgraded, so the board retains the unsaved UI state rather than flashing
+  // a misleading success.
   saveDraft: (versionId: string) =>
-    apiFetch<{ ok: boolean }>(`/rosters/${versionId}/save-draft`, { method: 'POST' }),
+    apiFetch<unknown>(`/rosters/${versionId}/save-draft`, { method: 'POST' })
+      .then(result => confirmDraftSave(result, versionId) as unknown as { ok: boolean }),
 
   validateRoster: (versionId: string) =>
     apiFetch<ValidationOut>('/validate-roster', {
@@ -521,7 +546,7 @@ export const api = {
     return apiFetch<LeaveRequest[]>(`/leave-requests${qs ? `?${qs}` : ''}`)
   },
 
-  leaveStats: () => apiFetch<LeaveStats>('/leave-requests/stats'),
+  leaveStats: (on?: string) => apiFetch<LeaveStats>(`/leave-requests/stats${on ? `?date=${encodeURIComponent(on)}` : ''}`),
 
   createLeaveRequest: (body: {
     staff_id?: string; leave_type: string; date_start: string; date_end: string
@@ -531,14 +556,19 @@ export const api = {
   }),
 
   decideLeaveRequest: (id: string, decision: 'approve' | 'reject' | 'review', note?: string) =>
-    apiFetch<LeaveRequest>(`/leave-requests/${id}`, {
+    apiFetch<unknown>(`/leave-requests/${id}`, {
       method: 'PATCH', body: JSON.stringify({ decision, note }),
-    }),
+    }).then(result => confirmLeaveDecision(result, id, decision, note) as LeaveRequest),
+
+  recommendLeaveRequest: (id: string, recommendation: 'approve' | 'reject', reason: string) =>
+    apiFetch<unknown>(`/leave-requests/${encodeURIComponent(id)}/recommendation`, {
+      method: 'POST', body: JSON.stringify({ recommendation, reason }),
+    }).then(result => confirmLeaveRecommendation(result, id, recommendation, reason)),
 
   revokeLeaveRequest: (id: string, reason: string) =>
-    apiFetch<LeaveRequest>(`/leave-requests/${id}/revoke`, {
+    apiFetch<unknown>(`/leave-requests/${id}/revoke`, {
       method: 'POST', body: JSON.stringify({ reason }),
-    }),
+    }).then(result => confirmLeaveRevocation(result, id, reason) as LeaveRequest),
 
   // ── Phase 3 · alert centre + emergency cover ────────────────────────────────
   incidents: (params?: { status?: string; limit?: number }) => {

@@ -1,373 +1,407 @@
 'use client'
 
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useLang } from '@/components/layout/LanguageContext'
 import { useAuth } from '@/components/layout/AuthContext'
+import { messagesApi, type DirectMessage, type MessageContact } from '@/lib/messages-api'
 
-const PINK = '#E8187A'
-const STORAGE_KEY = 'emma_messages'
+const MAX_MESSAGE_LENGTH = 1_000
+const POLL_INTERVAL_MS = 30_000
 
-// Demo staff list (in production this comes from API)
-const DEMO_STAFF = [
-  { id: 's1', name: '陳小明', name_en: 'Chan Siu Ming', rank: 'RN', avatar: '👨‍⚕️' },
-  { id: 's2', name: '李美玲', name_en: 'Lee Mei Ling', rank: 'HW', avatar: '👩‍⚕️' },
-  { id: 's3', name: '王大偉', name_en: 'Wong Tai Wai', rank: 'CW', avatar: '👨' },
-  { id: 's4', name: '張惠芳', name_en: 'Cheung Wai Fong', rank: 'CW', avatar: '👩' },
-  { id: 's5', name: '劉志強', name_en: 'Lau Chi Keung', rank: 'HCA', avatar: '👨' },
-  { id: 's6', name: '黃麗珍', name_en: 'Wong Lai Chun', rank: 'EN', avatar: '👩‍⚕️' },
-]
-
-interface Message {
-  id: string
-  threadId: string
-  from: 'admin' | 'staff'
-  text: string
-  timestamp: string
-  context?: string // e.g. "關於你 10月5日嘅 AL request"
+function mergeMessages(current: DirectMessage[], incoming: DirectMessage[]): DirectMessage[] {
+  // Every entry in this union originated from the service. Keeping a confirmed
+  // write prevents an older poll response from erasing it while replicas catch up.
+  const byId = new Map<string, DirectMessage>()
+  current.forEach((message) => byId.set(message.id, message))
+  incoming.forEach((message) => byId.set(message.id, message))
+  return [...byId.values()].sort((a, b) => a.created_at.localeCompare(b.created_at))
 }
 
-interface Thread {
-  id: string
-  staffId: string
-  staffName: string
-  staffNameEn: string
-  staffRank: string
-  staffAvatar: string
-  lastMessage: string
-  lastTimestamp: string
-  unreadCount: number
-  context?: string
+function messageTime(value: string, lang: 'en' | 'zh'): string {
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return value
+  return new Intl.DateTimeFormat(lang === 'zh' ? 'zh-Hant' : 'en-SG', {
+    dateStyle: 'medium',
+    timeStyle: 'short',
+  }).format(date)
 }
 
-function getThreads(): Thread[] {
-  try {
-    const stored = localStorage.getItem(STORAGE_KEY + '_threads')
-    return stored ? JSON.parse(stored) : []
-  } catch { return [] }
-}
-
-function getMessages(threadId: string): Message[] {
-  try {
-    const stored = localStorage.getItem(STORAGE_KEY + '_' + threadId)
-    return stored ? JSON.parse(stored) : []
-  } catch { return [] }
-}
-
-function saveThreads(threads: Thread[]) {
-  localStorage.setItem(STORAGE_KEY + '_threads', JSON.stringify(threads))
-}
-
-function saveMessages(threadId: string, messages: Message[]) {
-  localStorage.setItem(STORAGE_KEY + '_' + threadId, JSON.stringify(messages))
-}
+type MessageIssue = 'load' | 'send' | 'read' | null
 
 export default function MessagesPage() {
   const { lang } = useLang()
-  const { user } = useAuth()
+  const { status, user } = useAuth()
   const isZH = lang === 'zh'
 
-  const [threads, setThreads] = useState<Thread[]>([])
-  const [activeThread, setActiveThread] = useState<string | null>(null)
-  const [messages, setMessages] = useState<Message[]>([])
+  // `apiFetch` supplies the JWT. This identity key supplies the UI-level stale
+  // response guard and is deliberately based on both identity and facility.
+  const sessionKey = status === 'authed' && user?.userId && user.facilityId
+    ? `${user.userId}:${user.facilityId}`
+    : null
+  const hasFacilityContext = status === 'authed' && Boolean(user?.userId && user.facilityId)
+
+  const requestGeneration = useRef(0)
+  const loadRequest = useRef(0)
+  const openRequest = useRef(0)
+  const sendRequest = useRef(0)
+  const contentGeneration = useRef(0)
+  const sendingRef = useRef(false)
+  const selectedIdRef = useRef<string | null>(null)
+  const inputRef = useRef('')
+  const draftsByContact = useRef<Record<string, string>>({})
+
+  const [contacts, setContacts] = useState<MessageContact[]>([])
+  const [messages, setMessages] = useState<DirectMessage[]>([])
+  const [selectedId, setSelectedId] = useState<string | null>(null)
   const [input, setInput] = useState('')
-  const [showNewThread, setShowNewThread] = useState(false)
-  const [newContext, setNewContext] = useState('')
+  const [loading, setLoading] = useState(false)
+  const [sending, setSending] = useState(false)
+  const [issue, setIssue] = useState<MessageIssue>(null)
 
-  const L = useMemo(() => ({
-    title: isZH ? '訊息中心' : 'Messages',
-    subtitle: isZH ? '與員工溝通 · 假期協商 · 更表通知' : 'Staff communication · Leave negotiation · Roster notifications',
-    new_msg: isZH ? '+ 新訊息' : '+ New Message',
-    no_threads: isZH ? '暫無對話記錄' : 'No conversations yet',
-    no_threads_sub: isZH ? '點擊「+ 新訊息」開始與員工溝通' : 'Click "+ New Message" to start communicating with staff',
-    type_msg: isZH ? '輸入訊息…' : 'Type a message…',
-    send: isZH ? '發送' : 'Send',
-    select_staff: isZH ? '選擇員工' : 'Select Staff',
-    context_ph: isZH ? '關於什麼？（可選）例如：關於你10月5日嘅AL request' : 'Context (optional) e.g. About your AL request on Oct 5',
-    start: isZH ? '開始對話' : 'Start Conversation',
-    cancel: isZH ? '取消' : 'Cancel',
-    back: isZH ? '← 返回' : '← Back',
-    demo_note: isZH ? '💡 Demo 模式：訊息儲存在本機。正式版將由 Kien 接入後端 API。' : '💡 Demo mode: Messages stored locally. Production will use backend API.',
-    admin: isZH ? '管理員' : 'Admin',
-  }), [isZH])
+  const L = useMemo(() => isZH ? {
+    title: '訊息中心',
+    subtitle: '與同一院舍已開通帳戶的同事直接聯絡。',
+    privacyNote: '訊息只會使用已登入帳戶及院舍範圍的服務；此頁不會建立示範對話或把訊息儲存在瀏覽器。',
+    contacts: '已開通的聯絡人',
+    noContacts: '暫未有可聯絡的已開通帳戶。',
+    select: '選擇一位聯絡人以查看對話。',
+    back: '返回聯絡人',
+    loading: '正在載入訊息…',
+    noMessages: '暫未有訊息。',
+    placeholder: '輸入訊息…',
+    send: '發送',
+    sending: '發送中…',
+    read: '已讀',
+    unread: '未讀',
+    retry: '重試',
+    signInRequired: '請使用已驗證的帳戶登入後查看訊息。',
+    facilityRequired: '此帳戶未有院舍範圍，因此無法載入訊息。',
+    unavailable: '此環境暫時無法使用訊息服務。需要部署已提議的訊息 API 路由並為你的帳戶開通權限；沒有訊息已儲存在本機。',
+    sendFailed: '伺服器未確認此訊息。你的草稿仍然保留，服務恢復後可再次發送。',
+    readFailed: '伺服器未確認已讀狀態；訊息可能仍然顯示為未讀。',
+    composerLabel: '給 {name} 的訊息',
+    length: '最多 {count} 個字元',
+  } : {
+    title: 'Messages',
+    subtitle: 'Direct contact with provisioned accounts in the same facility.',
+    privacyNote: 'Messages use the signed-in account and facility-scoped service only; this page creates no demo conversations and stores none in the browser.',
+    contacts: 'Provisioned contacts',
+    noContacts: 'No provisioned contacts are available.',
+    select: 'Choose a contact to view the conversation.',
+    back: 'Back to contacts',
+    loading: 'Loading messages…',
+    noMessages: 'No messages yet.',
+    placeholder: 'Write a message…',
+    send: 'Send',
+    sending: 'Sending…',
+    read: 'Read',
+    unread: 'Unread',
+    retry: 'Retry',
+    signInRequired: 'Sign in with an authenticated account to view messages.',
+    facilityRequired: 'This account has no facility context, so messages cannot be loaded.',
+    unavailable: 'Messaging is unavailable in this environment. The proposed messaging API routes must be deployed and your account provisioned; no message was stored on this device.',
+    sendFailed: 'The server did not confirm this message. Your draft is kept so you can send it again when the service is available.',
+    readFailed: 'The server did not confirm the read status; the message may remain unread.',
+    composerLabel: 'Message to {name}',
+    length: 'Up to {count} characters',
+  }, [isZH])
 
-  useEffect(() => { setThreads(getThreads()) }, [])
-
-  const openThread = useCallback((threadId: string) => {
-    setActiveThread(threadId)
-    setMessages(getMessages(threadId))
-    // Mark as read
-    setThreads(prev => {
-      const updated = prev.map(t => t.id === threadId ? { ...t, unreadCount: 0 } : t)
-      saveThreads(updated)
-      return updated
-    })
+  const rememberDraft = useCallback((contactId: string, value = inputRef.current) => {
+    draftsByContact.current[contactId] = value
   }, [])
 
-  const sendMessage = useCallback(() => {
-    if (!input.trim() || !activeThread) return
-    const msg: Message = {
-      id: `msg-${Date.now()}`,
-      threadId: activeThread,
-      from: 'admin',
-      text: input.trim(),
-      timestamp: new Date().toISOString(),
+  const setDraft = useCallback((value: string) => {
+    inputRef.current = value
+    setInput(value)
+  }, [])
+
+  const load = useCallback(async (silent = false, allowDuringSend = false) => {
+    if (!sessionKey || (sendingRef.current && !allowDuringSend)) return
+
+    const generation = requestGeneration.current
+    const contentVersion = contentGeneration.current
+    const request = ++loadRequest.current
+    if (!silent) setLoading(true)
+
+    try {
+      const [nextContacts, nextMessages] = await Promise.all([
+        messagesApi.contacts(),
+        messagesApi.list(),
+      ])
+      if (generation !== requestGeneration.current ||
+          request !== loadRequest.current ||
+          contentVersion !== contentGeneration.current) return
+
+      setContacts(nextContacts)
+      setMessages((current) => mergeMessages(current, nextMessages))
+      const currentSelection = selectedIdRef.current
+      if (currentSelection && !nextContacts.some((contact) => contact.id === currentSelection)) {
+        rememberDraft(currentSelection)
+        selectedIdRef.current = null
+        setSelectedId(null)
+        setDraft('')
+      }
+      setIssue(null)
+    } catch {
+      if (generation !== requestGeneration.current || request !== loadRequest.current) return
+      // Do not replace confirmed service data with empty placeholders after a
+      // transient failure. The visible alert and retry remain explicit.
+      setIssue('load')
+    } finally {
+      if (generation === requestGeneration.current && request === loadRequest.current && !silent) {
+        setLoading(false)
+      }
     }
-    const updated = [...messages, msg]
-    setMessages(updated)
-    saveMessages(activeThread, updated)
+  }, [rememberDraft, sessionKey, setDraft])
+
+  // A real identity or tenant change invalidates every in-flight response and is
+  // the only event that discards all memory-only drafts.
+  useEffect(() => {
+    requestGeneration.current += 1
+    loadRequest.current += 1
+    openRequest.current += 1
+    sendRequest.current += 1
+    contentGeneration.current += 1
+    sendingRef.current = false
+    draftsByContact.current = {}
+    selectedIdRef.current = null
+    inputRef.current = ''
+    setContacts([])
+    setMessages([])
+    setSelectedId(null)
     setInput('')
+    setIssue(null)
+    setSending(false)
+    setLoading(Boolean(sessionKey))
+  }, [sessionKey])
 
-    // Update thread last message
-    setThreads(prev => {
-      const newThreads = prev.map(t => t.id === activeThread
-        ? { ...t, lastMessage: msg.text, lastTimestamp: msg.timestamp }
-        : t)
-      saveThreads(newThreads)
-      return newThreads
-    })
+  useEffect(() => {
+    if (!sessionKey) return
+    void load()
+    const timer = window.setInterval(() => {
+      if (document.visibilityState === 'visible' && navigator.onLine) void load(true)
+    }, POLL_INTERVAL_MS)
+    return () => window.clearInterval(timer)
+  }, [load, sessionKey])
 
-    // Simulate staff reply after 2 seconds
-    setTimeout(() => {
-      const replies = isZH
-        ? ['收到，多謝通知', '好的，我明白了', '了解，我會跟進', '謝謝院長']
-        : ['Received, thanks for letting me know', 'OK, understood', 'Got it, I will follow up', 'Thank you']
-      const reply: Message = {
-        id: `msg-${Date.now()}-reply`,
-        threadId: activeThread,
-        from: 'staff',
-        text: replies[Math.floor(Math.random() * replies.length)],
-        timestamp: new Date().toISOString(),
+  const knownMessages = useMemo(() => {
+    const contactIds = new Set(contacts.map((contact) => contact.id))
+    return messages.filter((message) =>
+      contactIds.has(message.sender_profile_id) || contactIds.has(message.recipient_profile_id))
+  }, [contacts, messages])
+
+  const active = contacts.find((contact) => contact.id === selectedId) ?? null
+  const thread = useMemo(() => active
+    ? knownMessages.filter((message) =>
+      message.sender_profile_id === active.id || message.recipient_profile_id === active.id)
+    : [], [active, knownMessages])
+
+  const latestFor = useCallback((contactId: string) => knownMessages
+    .filter((message) => message.sender_profile_id === contactId || message.recipient_profile_id === contactId)
+    .sort((a, b) => a.created_at.localeCompare(b.created_at))
+    .at(-1), [knownMessages])
+
+  const unreadFor = useCallback((contactId: string) => knownMessages
+    .filter((message) => message.sender_profile_id === contactId && !message.read_at), [knownMessages])
+
+  const openContact = useCallback((contact: MessageContact) => {
+    if (sendingRef.current) return
+
+    const previous = selectedIdRef.current
+    if (previous && previous !== contact.id) rememberDraft(previous)
+    selectedIdRef.current = contact.id
+    setSelectedId(contact.id)
+    setDraft(draftsByContact.current[contact.id] ?? '')
+
+    const unread = unreadFor(contact.id)
+    if (!unread.length) return
+
+    const generation = requestGeneration.current
+    const viewRequest = ++openRequest.current
+    contentGeneration.current += 1
+    void (async () => {
+      try {
+        const confirmations = await Promise.all(unread.map((message) => messagesApi.markRead(message.id)))
+        const confirmed = confirmations.every((message, index) =>
+          message.id === unread[index].id &&
+          message.sender_profile_id === contact.id &&
+          message.read_at !== null)
+        if (!confirmed) throw new Error('Read status was not confirmed.')
+        if (generation !== requestGeneration.current ||
+            viewRequest !== openRequest.current ||
+            selectedIdRef.current !== contact.id) return
+        // A confirmed response is re-read before the UI renders a read receipt.
+        // Retire any poll that began while this status update was pending.
+        contentGeneration.current += 1
+        void load(true)
+      } catch {
+        if (generation !== requestGeneration.current ||
+            viewRequest !== openRequest.current ||
+            selectedIdRef.current !== contact.id) return
+        setIssue('read')
       }
-      setMessages(prev => {
-        const newMsgs = [...prev, reply]
-        saveMessages(activeThread, newMsgs)
-        return newMsgs
-      })
-      setThreads(prev => {
-        const newThreads = prev.map(t => t.id === activeThread
-          ? { ...t, lastMessage: reply.text, lastTimestamp: reply.timestamp }
-          : t)
-        saveThreads(newThreads)
-        return newThreads
-      })
-    }, 2000)
-  }, [input, activeThread, messages, isZH])
+    })()
+  }, [load, rememberDraft, setDraft, unreadFor])
 
-  const createThread = useCallback((staffId: string) => {
-    const staff = DEMO_STAFF.find(s => s.id === staffId)
-    if (!staff) return
-    const thread: Thread = {
-      id: `thread-${Date.now()}`,
-      staffId: staff.id,
-      staffName: staff.name,
-      staffNameEn: staff.name_en,
-      staffRank: staff.rank,
-      staffAvatar: staff.avatar,
-      lastMessage: newContext || (isZH ? '新對話' : 'New conversation'),
-      lastTimestamp: new Date().toISOString(),
-      unreadCount: 0,
-      context: newContext || undefined,
-    }
-    const updated = [thread, ...threads]
-    setThreads(updated)
-    saveThreads(updated)
-    setShowNewThread(false)
-    setNewContext('')
+  const closeContact = useCallback(() => {
+    if (sendingRef.current || !selectedIdRef.current) return
+    rememberDraft(selectedIdRef.current)
+    openRequest.current += 1
+    selectedIdRef.current = null
+    setSelectedId(null)
+    setDraft('')
+    setIssue(null)
+  }, [rememberDraft, setDraft])
 
-    // If context provided, add as first system message
-    if (newContext) {
-      const msg: Message = {
-        id: `msg-${Date.now()}-ctx`,
-        threadId: thread.id,
-        from: 'admin',
-        text: newContext,
-        timestamp: new Date().toISOString(),
-        context: newContext,
+  const updateDraft = useCallback((value: string) => {
+    setDraft(value)
+    if (selectedIdRef.current) rememberDraft(selectedIdRef.current, value)
+    if (issue === 'send') setIssue(null)
+  }, [issue, rememberDraft, setDraft])
+
+  const send = useCallback(async () => {
+    if (!active || sendingRef.current) return
+    const body = inputRef.current.trim()
+    if (!body || body.length > MAX_MESSAGE_LENGTH) return
+
+    const generation = requestGeneration.current
+    const request = ++sendRequest.current
+    const contactId = active.id
+    sendingRef.current = true
+    contentGeneration.current += 1
+    setSending(true)
+    setIssue(null)
+
+    try {
+      const confirmed = await messagesApi.send(contactId, body)
+      if (confirmed.recipient_profile_id !== contactId || confirmed.body !== body) {
+        throw new Error('Message confirmation did not match the selected contact.')
       }
-      saveMessages(thread.id, [msg])
+      if (generation !== requestGeneration.current ||
+          request !== sendRequest.current ||
+          selectedIdRef.current !== contactId) return
+
+      // Retire a poll that began while this write awaited confirmation, then
+      // preserve the confirmed response until a newer service read completes.
+      contentGeneration.current += 1
+      setMessages((current) => mergeMessages(current, [confirmed]))
+      delete draftsByContact.current[contactId]
+      setDraft('')
+      // The write response, rather than an optimistic placeholder, is the only
+      // source used here. Refresh in the background for other-server updates.
+      void load(true, true)
+    } catch {
+      if (generation !== requestGeneration.current ||
+          request !== sendRequest.current ||
+          selectedIdRef.current !== contactId) return
+      // Keep both the uncontrolled memory copy and the visible draft intact.
+      rememberDraft(contactId)
+      setIssue('send')
+    } finally {
+      if (generation === requestGeneration.current && request === sendRequest.current) {
+        sendingRef.current = false
+        setSending(false)
+      }
     }
+  }, [active, load, rememberDraft, setDraft])
 
-    openThread(thread.id)
-  }, [threads, newContext, isZH, openThread])
+  const issueText = issue === 'send' ? L.sendFailed : issue === 'read' ? L.readFailed : L.unavailable
+  const accessMessage = status !== 'authed' ? L.signInRequired : !hasFacilityContext ? L.facilityRequired : null
+  const showChat = Boolean(active)
 
-  const formatTime = (iso: string) => {
-    const d = new Date(iso)
-    const now = new Date()
-    const diff = now.getTime() - d.getTime()
-    if (diff < 60000) return isZH ? '剛剛' : 'Just now'
-    if (diff < 3600000) return `${Math.floor(diff / 60000)}m`
-    if (diff < 86400000) return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-    return d.toLocaleDateString(isZH ? 'zh-HK' : 'en-GB', { month: 'short', day: 'numeric' })
-  }
-
-  // Thread detail view
-  if (activeThread) {
-    const thread = threads.find(t => t.id === activeThread)
-    return (
-      <div className="flex flex-col h-full">
-        {/* Header */}
-        <div className="px-4 py-3 border-b border-gray-100 flex items-center gap-3 bg-white flex-shrink-0">
-          <button onClick={() => setActiveThread(null)}
-            className="text-xs text-gray-500 hover:text-gray-700 md:hidden">
-            {L.back}
-          </button>
-          <button onClick={() => setActiveThread(null)}
-            className="text-xs text-gray-500 hover:text-gray-700 hidden md:block">
-            {L.back}
-          </button>
-          <div className="w-8 h-8 rounded-full flex items-center justify-center text-base bg-pink-50">
-            {thread?.staffAvatar}
-          </div>
-          <div className="flex-1 min-w-0">
-            <div className="text-sm font-semibold text-gray-800 truncate">
-              {isZH ? thread?.staffName : thread?.staffNameEn}
-            </div>
-            <div className="text-[10px] text-gray-400">{thread?.staffRank}</div>
-          </div>
-          {thread?.context && (
-            <div className="text-[9px] px-2 py-1 rounded-full bg-pink-50 text-pink-600 hidden sm:block">
-              {thread.context}
-            </div>
-          )}
-        </div>
-
-        {/* Messages */}
-        <div className="flex-1 overflow-y-auto p-4 space-y-3 bg-gray-50">
-          {messages.length === 0 && (
-            <div className="text-center text-[11px] text-gray-400 py-8">
-              {isZH ? '開始輸入訊息…' : 'Start typing a message…'}
-            </div>
-          )}
-          {messages.map(msg => (
-            <div key={msg.id} className={`flex ${msg.from === 'admin' ? 'justify-end' : 'justify-start'}`}>
-              <div className={`max-w-[75%] rounded-2xl px-3.5 py-2.5 ${
-                msg.from === 'admin'
-                  ? 'bg-pink-500 text-white rounded-br-md'
-                  : 'bg-white border border-gray-200 text-gray-800 rounded-bl-md'
-              }`}>
-                <div className="text-[12px] leading-relaxed">{msg.text}</div>
-                <div className={`text-[9px] mt-1 ${msg.from === 'admin' ? 'text-pink-200' : 'text-gray-400'}`}>
-                  {formatTime(msg.timestamp)}
-                  {msg.from === 'admin' && <span className="ml-1">✓✓</span>}
-                </div>
-              </div>
-            </div>
-          ))}
-        </div>
-
-        {/* Input */}
-        <div className="px-4 py-3 border-t border-gray-100 bg-white flex gap-2 flex-shrink-0">
-          <input
-            type="text"
-            value={input}
-            onChange={e => setInput(e.target.value)}
-            onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage() } }}
-            placeholder={L.type_msg}
-            className="flex-1 px-3.5 py-2.5 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-1 focus:ring-pink-200 bg-gray-50"
-          />
-          <button onClick={sendMessage} disabled={!input.trim()}
-            className="px-4 py-2.5 rounded-xl text-xs font-semibold text-white disabled:opacity-40 transition-opacity"
-            style={{ background: PINK }}>
-            {L.send}
-          </button>
-        </div>
-      </div>
-    )
-  }
-
-  // Thread list view
   return (
-    <div className="p-4 md:p-5 space-y-4 h-full flex flex-col">
-      {/* Header */}
-      <div className="flex items-center justify-between flex-shrink-0">
-        <div>
-          <h1 className="text-lg font-bold text-gray-900">{L.title}</h1>
-          <p className="text-[10px] text-gray-400 mt-0.5">{L.subtitle}</p>
-        </div>
-        <button onClick={() => setShowNewThread(true)}
-          className="px-3 py-2 rounded-xl text-xs font-semibold text-white"
-          style={{ background: PINK }}>
-          {L.new_msg}
-        </button>
-      </div>
+    <div className="h-full min-h-0 p-3 sm:p-5">
+      <div className="mx-auto flex h-[calc(100dvh-7.75rem)] max-w-6xl overflow-hidden rounded-2xl border border-pink-100 bg-white shadow-sm md:h-[calc(100dvh-6rem)]">
+        <section className={`${showChat ? 'hidden md:flex' : 'flex'} min-w-0 w-full flex-col border-r border-pink-100 md:w-[min(340px,36vw)] md:flex-none`} aria-label={L.contacts}>
+          <header className="border-b border-pink-100 px-4 py-4 sm:px-5">
+            <h1 className="text-lg font-bold text-slate-900">{L.title}</h1>
+            <p className="emma-reflow-text mt-0.5 break-words text-xs text-slate-500 [overflow-wrap:anywhere]">{L.subtitle}</p>
+            <p className="emma-reflow-text mt-3 break-words rounded-xl border border-pink-100 bg-pink-50 px-3 py-2 text-[11px] leading-relaxed text-slate-600 [overflow-wrap:anywhere]">{L.privacyNote}</p>
+          </header>
 
-      {/* Demo note */}
-      <div className="text-[10px] px-3 py-2 rounded-lg border border-amber-200 bg-amber-50 text-amber-700 flex-shrink-0">
-        {L.demo_note}
-      </div>
+          {accessMessage ? <div role="alert" className="m-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5 text-sm leading-relaxed text-amber-900">{accessMessage}</div> : null}
+          {issue ? <div role="alert" className="m-3 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2.5 text-sm leading-relaxed text-rose-800">
+            <p>{issueText}</p>
+            {sessionKey ? <button type="button" onClick={() => void load()} disabled={loading || sending} className="mt-2 text-xs font-semibold text-rose-800 underline decoration-rose-300 underline-offset-2 disabled:opacity-50">{L.retry}</button> : null}
+          </div> : null}
 
-      {/* New thread dialog */}
-      {showNewThread && (
-        <div className="border border-pink-200 rounded-xl p-4 bg-pink-50/50 space-y-3 flex-shrink-0">
-          <div className="text-xs font-semibold text-gray-700">{L.select_staff}</div>
-          <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-            {DEMO_STAFF.map(s => (
-              <button key={s.id} onClick={() => createThread(s.id)}
-                className="flex items-center gap-2 p-2.5 rounded-lg border border-gray-200 bg-white hover:border-pink-300 hover:bg-pink-50 transition-colors text-left">
-                <span className="text-base">{s.avatar}</span>
-                <div className="min-w-0">
-                  <div className="text-[11px] font-medium text-gray-800 truncate">
-                    {isZH ? s.name : s.name_en}
-                  </div>
-                  <div className="text-[9px] text-gray-400">{s.rank}</div>
+          <div className="min-h-0 flex-1 overflow-y-auto p-2" aria-busy={loading}>
+            {loading && contacts.length === 0 ? <p className="p-3 text-sm text-slate-500">{L.loading}</p> : null}
+            {!loading && sessionKey && contacts.length === 0 && !issue ? <p className="p-3 text-sm text-slate-500">{L.noContacts}</p> : null}
+            {contacts.map((contact) => {
+              const latest = latestFor(contact.id)
+              const unread = unreadFor(contact.id).length
+              const selected = contact.id === selectedId
+              return <button
+                key={contact.id}
+                type="button"
+                onClick={() => openContact(contact)}
+                disabled={sending}
+                aria-pressed={selected}
+                className={`mb-1 w-full rounded-xl px-3 py-3 text-left transition focus:outline-none focus:ring-2 focus:ring-pink-200 disabled:cursor-not-allowed ${selected ? 'bg-pink-50' : 'hover:bg-slate-50'}`}
+              >
+                <div className="flex min-w-0 items-start justify-between gap-2">
+                  <span className={`emma-reflow-text min-w-0 break-words text-sm font-semibold [overflow-wrap:anywhere] ${selected ? 'text-pink-700' : 'text-slate-900'}`}>{contact.display_name}</span>
+                  {unread > 0 ? <span className="shrink-0 rounded-full bg-pink-600 px-2 py-0.5 text-[10px] font-semibold text-white">{unread} {L.unread}</span> : null}
                 </div>
+                <p className="emma-reflow-text mt-1 break-words text-xs text-slate-500 [overflow-wrap:anywhere]">{contact.role}</p>
+                <p className="emma-reflow-text mt-1 line-clamp-2 break-words text-xs text-slate-500 [overflow-wrap:anywhere]">{latest?.body || L.noMessages}</p>
               </button>
-            ))}
+            })}
           </div>
-          <input
-            type="text"
-            value={newContext}
-            onChange={e => setNewContext(e.target.value)}
-            placeholder={L.context_ph}
-            className="w-full px-3 py-2 border border-gray-200 rounded-lg text-[11px] bg-white"
-          />
-          <button onClick={() => setShowNewThread(false)}
-            className="text-[10px] text-gray-500 hover:text-gray-700">
-            {L.cancel}
-          </button>
-        </div>
-      )}
+        </section>
 
-      {/* Thread list */}
-      <div className="flex-1 overflow-y-auto space-y-1">
-        {threads.length === 0 && !showNewThread ? (
-          <div className="text-center py-12">
-            <div className="text-3xl mb-3">💬</div>
-            <div className="text-sm text-gray-500">{L.no_threads}</div>
-            <div className="text-[10px] text-gray-400 mt-1">{L.no_threads_sub}</div>
-          </div>
-        ) : (
-          threads.map(thread => (
-            <button key={thread.id} onClick={() => openThread(thread.id)}
-              className="w-full flex items-center gap-3 p-3 rounded-xl hover:bg-gray-50 transition-colors text-left border border-transparent hover:border-gray-200">
-              <div className="w-10 h-10 rounded-full flex items-center justify-center text-lg bg-pink-50 flex-shrink-0">
-                {thread.staffAvatar}
+        <section className={`${showChat ? 'flex' : 'hidden md:flex'} min-w-0 flex-1 flex-col`} aria-live="polite">
+          {!active ? <div className="m-auto max-w-md px-6 text-center text-sm leading-relaxed text-slate-500">{accessMessage || L.select}</div> : <>
+            <header className="border-b border-pink-100 bg-white px-4 py-3 sm:px-5">
+              <button type="button" onClick={closeContact} disabled={sending} className="mb-2 text-xs font-semibold text-pink-700 md:hidden disabled:opacity-50">{L.back}</button>
+              <div className="min-w-0">
+                <h2 className="emma-reflow-text break-words text-base font-bold text-slate-900 [overflow-wrap:anywhere]">{active.display_name}</h2>
+                <p className="emma-reflow-text mt-0.5 break-words text-xs text-slate-500 [overflow-wrap:anywhere]">{active.role}</p>
               </div>
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-semibold text-gray-800 truncate">
-                    {isZH ? thread.staffName : thread.staffNameEn}
-                  </span>
-                  <span className="text-[9px] text-gray-400 flex-shrink-0 ml-2">
-                    {formatTime(thread.lastTimestamp)}
-                  </span>
-                </div>
-                <div className="flex items-center justify-between mt-0.5">
-                  <span className="text-[11px] text-gray-500 truncate">{thread.lastMessage}</span>
-                  {thread.unreadCount > 0 && (
-                    <span className="text-[8px] text-white rounded-full w-4 h-4 flex items-center justify-center flex-shrink-0 ml-2"
-                      style={{ background: PINK }}>
-                      {thread.unreadCount}
-                    </span>
-                  )}
-                </div>
-                {thread.context && (
-                  <div className="text-[9px] text-pink-500 mt-0.5 truncate">{thread.context}</div>
-                )}
+            </header>
+
+            <div className="min-h-0 flex-1 overflow-y-auto bg-pink-50/40 px-4 py-4 sm:px-5">
+              {loading ? <p className="mb-3 text-xs text-slate-500">{L.loading}</p> : null}
+              {!loading && thread.length === 0 ? <p className="mt-10 text-center text-sm text-slate-500">{L.noMessages}</p> : null}
+              <div className="space-y-3">
+                {thread.map((message) => {
+                  const incoming = message.sender_profile_id === active.id
+                  return <article key={message.id} className={`flex min-w-0 ${incoming ? 'justify-start' : 'justify-end'}`}>
+                    <div className={`min-w-0 max-w-[88%] rounded-2xl px-3.5 py-2.5 shadow-sm sm:max-w-[72%] ${incoming ? 'rounded-bl-md border border-slate-200 bg-white text-slate-800' : 'rounded-br-md bg-pink-600 text-white'}`}>
+                      <p className="emma-reflow-text whitespace-pre-wrap break-words text-sm leading-relaxed [overflow-wrap:anywhere]">{message.body}</p>
+                      <time dateTime={message.created_at} className={`mt-1 block text-[10px] ${incoming ? 'text-slate-400' : 'text-pink-100'}`}>
+                        {messageTime(message.created_at, lang)}{!incoming && message.read_at ? ` · ${L.read}` : ''}
+                      </time>
+                    </div>
+                  </article>
+                })}
               </div>
-            </button>
-          ))
-        )}
+            </div>
+
+            <form onSubmit={(event) => { event.preventDefault(); void send() }} className="border-t border-pink-100 bg-white p-3 sm:p-4">
+              {issue ? <div role="alert" className="emma-reflow-wrap mb-2 flex flex-wrap items-start justify-between gap-2 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs leading-relaxed text-rose-800">
+                <span className="emma-reflow-text min-w-0 flex-1 break-words [overflow-wrap:anywhere]">{issueText}</span>
+                {sessionKey ? <button type="button" onClick={() => void load()} disabled={loading || sending} className="shrink-0 font-semibold underline disabled:opacity-50">{L.retry}</button> : null}
+              </div> : null}
+              <label htmlFor="message-body" className="sr-only">{L.composerLabel.replace('{name}', active.display_name)}</label>
+              <textarea
+                id="message-body"
+                rows={3}
+                value={input}
+                maxLength={MAX_MESSAGE_LENGTH}
+                disabled={sending || loading || !sessionKey}
+                onChange={(event) => updateDraft(event.target.value)}
+                placeholder={L.placeholder}
+                className="block min-h-[5rem] w-full resize-y rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-800 outline-none transition placeholder:text-slate-400 focus:border-pink-400 focus:ring-2 focus:ring-pink-100 disabled:bg-slate-50"
+              />
+              <div className="emma-reflow-wrap mt-2 flex flex-wrap items-center justify-between gap-2">
+                <span className="emma-reflow-text min-w-0 flex-1 break-words text-[11px] text-slate-400 [overflow-wrap:anywhere]">{input.length}/{MAX_MESSAGE_LENGTH} · {L.length.replace('{count}', String(MAX_MESSAGE_LENGTH))}</span>
+                <button type="submit" disabled={sending || loading || !sessionKey || !input.trim() || input.trim().length > MAX_MESSAGE_LENGTH} className="shrink-0 rounded-xl bg-pink-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-pink-700 disabled:cursor-not-allowed disabled:bg-slate-300">{sending ? L.sending : L.send}</button>
+              </div>
+            </form>
+          </>}
+        </section>
       </div>
     </div>
   )

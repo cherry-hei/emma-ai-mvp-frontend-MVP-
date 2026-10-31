@@ -54,3 +54,14 @@ test('a failed grid or stale version cannot remain editable, and unsaved notes a
   assert.ok(modal.includes('value={row.note} disabled'))
   assert.ok(modal.includes('if (!next && !busy) onClose()'))
 })
+
+test('roster cards use the retained task-aware editor and do not expose simulated batch saves', () => {
+  const board = readFileSync(new URL('../components/roster/RealRosterBoard.tsx', import.meta.url), 'utf8')
+  assert.ok(board.includes('setSelectedStaffId(row.staff.id)'))
+  assert.ok(board.includes('setFocusDate(iso)'))
+  assert.ok(board.includes('setCreateShiftOpen(true)'))
+  assert.ok(board.includes('assignmentId: cell?.assignment_id || null'))
+  assert.ok(board.includes('onDeleted={({ staffName, date })'))
+  assert.ok(board.includes('Batch creation needs an authenticated batch-roster API'))
+  assert.ok(!board.includes('BatchCreateShiftModal'))
+})
