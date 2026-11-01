@@ -297,7 +297,7 @@ def test_me_and_legacy_pwa_reads_are_db_time_and_scope_backed():
         "opens_at": "2026-11-01T00:00:00+00:00",
         "closes_at": "2026-11-03T00:00:00+00:00",
         "target_start": "2026-11-10",
-        "target_end": "2026-12-01",
+        "target_end": "2026-11-30",
         "status": "open",
         "server_now": "2026-11-01T01:00:00+00:00",
     }

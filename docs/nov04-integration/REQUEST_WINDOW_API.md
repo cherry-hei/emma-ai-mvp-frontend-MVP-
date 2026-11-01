@@ -122,9 +122,9 @@ For `kind=leave`, the response is display-ready but does not imply the existing 
 
 ### Compatibility alias: `GET /request-windows/duty`
 
-The currently inspected Staff PWA source (`client/src/lib/api.ts`) calls this older path and expects flat fields: `enabled`, `opens_at`, `closes_at`, `target_start`, `target_end`, and `status`. The candidate retains a **read-only** alias with that shape. Its `target_end` is now **exclusive**.
+The currently inspected Staff PWA source (`client/src/lib/api.ts`) calls this older path and expects flat fields: `enabled`, `opens_at`, `closes_at`, `target_start`, `target_end`, and `status`. The candidate retains a **read-only** alias with that shape. Its legacy `target_end` remains **inclusive**: the service subtracts one calendar day from `target_end_exclusive`, so unchanged PWA clients do not enable an invalid final date.
 
-The PWA owner should move to `/me/request-window?kind=duty`, update `DutyRequestWindow` to use `target_end_exclusive`, and change the date check in `RecordsPage.tsx` from `end <= target_end` to `end < target_end_exclusive`. Until then, the server remains authoritative and rejects the otherwise enabled final exclusive date; the client must not report it as saved on failure.
+Future PWA migration to `/me/request-window?kind=duty` must unwrap the canonical `window`, use `target_end_exclusive`, and change the date check from `end <= target_end` to `end < target_end_exclusive`. The legacy alias and database enforce the same set of dates now; no Staff PWA source or deployment changed in this work package.
 
 ## Migration, rollout, and rollback
 
@@ -137,6 +137,6 @@ Safe rollback is operational, not a blind table drop: first disable/remove `trg_
 ## Known runtime blockers
 
 - No confirmed Supabase project/database credentials are available in this worktree, so SQL was not applied and DB/RLS/trigger concurrency tests have not run.
-- `api/main.py` is parent-owned and still needs the one explicit router registration above.
+- The integration parent registered the router in the candidate `api/main.py`; this is not live deployment.
 - The current database has no verified deputy role mapping or organisation-level administrator policy. The candidate deliberately permits only the existing OWNER/superintendent mapping and only facility/unit administration.
-- Staff PWA source uses the legacy inclusive `target_end` UI contract and needs the documented type/condition update before hosted UAT.
+- Hosted UAT must verify the unchanged legacy PWA inclusive-date response, authentication and CORS using controlled accounts.

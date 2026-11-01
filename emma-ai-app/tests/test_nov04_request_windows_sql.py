@@ -32,6 +32,9 @@ def test_create_is_idempotent_and_patch_uses_explicit_compare_and_swap_version()
     sql = _sql()
     assert "uq_request_windows_idempotency" in sql
     assert "pg_advisory_xact_lock" in sql
+    assert "v_create_reason text" in sql
+    assert "a.action = 'create'" in sql
+    assert "v_create_reason is not distinct from p_reason" in sql
     assert "idempotency key already belongs to a different request window" in sql
     assert "p_expected_version" in sql
     assert "stale request-window version" in sql
@@ -50,7 +53,9 @@ def test_database_time_and_exclusive_bounds_are_authoritative():
 def test_leave_insert_trigger_rechecks_gated_duty_writes_in_database():
     sql = _sql()
     assert "create or replace function public.enforce_request_window_on_leave_insert" in sql
-    assert "before insert on public.leave_requests" in sql
+    assert "before insert or update of facility_id, staff_id, leave_type, date_start, date_end on public.leave_requests" in sql
+    assert "tg_op = 'update'" in sql
+    assert "new.leave_type is not distinct from old.leave_type" in sql
     assert "public.request_window_availability(" in sql
     assert "request window unavailable:" in sql
     assert "when 'do' then 'duty'" in sql
@@ -84,9 +89,37 @@ def test_frontline_availability_rpc_is_limited_to_their_own_staff_identity():
     assert "request-window staff is not available" in sql
 
 
-def test_historical_records_are_not_updated_or_revalidated_by_migration():
+def test_effective_configuration_is_share_locked_through_the_leave_transaction():
+    sql = _sql()
+    assert "for share of f" in sql
+    assert "limit 1\n     for share;" in sql
+    assert "for update;" in sql
+
+
+def test_known_role_vocabulary_fails_closed_in_rpc_catalog_and_rls():
+    sql = _sql()
+    known_roles = (
+        "'superintendent', 'admin', 'staff', 'scheduler', 'hr', 'auditor',\n"
+        "        'owner', 'nurse_mgr', 'allied_health', 'admin_clerk', 'frontline', 'hr_auditor'"
+    )
+    assert sql.count(known_roles) >= 2
+    windows_policy = sql.split("create policy request_windows_tenant_read", 1)[1].split(
+        "drop policy if exists request_window_audit_tenant_read", 1
+    )[0]
+    audit_policy = sql.split("create policy request_window_audit_tenant_read", 1)[1].split(
+        "revoke all on public.request_windows", 1
+    )[0]
+    for role in ("superintendent", "admin", "staff", "scheduler", "hr", "auditor",
+                 "owner", "nurse_mgr", "allied_health", "admin_clerk", "frontline", "hr_auditor"):
+        assert f"'{role}'" in windows_policy
+        assert f"'{role}'" in audit_policy
+    assert "or not v_known_role" in sql
+    assert "nullif(btrim(coalesce(public.current_role_name(), '')), '') is not null" not in sql
+
+
+def test_only_policy_input_updates_are_revalidated_not_status_only_history_updates():
     sql = _sql()
     trigger_region = sql.split("create trigger trg_enforce_request_window_on_leave_insert", 1)[1]
-    assert "before insert on public.leave_requests" in trigger_region
+    assert "before insert or update of facility_id, staff_id, leave_type, date_start, date_end" in trigger_region
     assert "before update on public.leave_requests" not in trigger_region
     assert "update public.leave_requests" not in sql

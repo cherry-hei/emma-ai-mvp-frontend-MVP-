@@ -3,9 +3,9 @@
 --
 -- This migration intentionally gates only the confirmed existing duty request
 -- types (DO, duty_request, shift_swap).  SL/DSL/urgent/late remain emergency
--- reporting paths and are never blocked by a request window.  Existing rows are
--- not rewritten: the enforcement trigger is BEFORE INSERT only, preserving
--- historical and approved records already in leave_requests.
+-- reporting paths and are never blocked by a request window. Existing rows are
+-- not rewritten: enforcement applies only to creates and policy-input changes,
+-- not to status-only or audit-only updates of historical decisions.
 --
 -- Application timestamps use [opens_at, closes_at).  Requested leave dates use
 -- [target_start, target_end_exclusive), because leave_requests.date_end is an
@@ -200,11 +200,18 @@ declare
     v_status text;
     v_service boolean := coalesce(auth.role(), current_setting('request.jwt.claim.role', true)) = 'service_role';
     v_role text := lower(coalesce(public.current_role_name(), ''));
+    v_known_role boolean;
 begin
+    -- This is the exact direct-message legacy plus canonical role vocabulary,
+    -- case-normalized here so unknown/stale values fail closed at this RPC.
+    v_known_role := v_role in (
+        'superintendent', 'admin', 'staff', 'scheduler', 'hr', 'auditor',
+        'owner', 'nurse_mgr', 'allied_health', 'admin_clerk', 'frontline', 'hr_auditor'
+    );
     if not v_service and (
         auth.uid() is null
         or p_facility_id is distinct from public.current_facility_id()
-        or v_role = ''
+        or not v_known_role
     ) then
         raise exception using errcode = '42501', message = 'request-window facility is not available';
     end if;
@@ -228,11 +235,15 @@ begin
         );
     end if;
 
+    -- Retain a shared facility lock through the calling transaction.  It blocks
+    -- RPC creation of a new effective unit override (which locks this facility
+    -- FOR UPDATE) after this availability decision and before a leave write.
     select f.org_id, s.primary_unit_id
       into v_org_id, v_unit_id
       from public.facilities f
       join public.staff s on s.id = p_staff_id and s.facility_id = f.id
-     where f.id = p_facility_id;
+     where f.id = p_facility_id
+     for share of f;
     if not found then
         return jsonb_build_object(
             'kind', v_kind,
@@ -254,7 +265,8 @@ begin
             or w.scope_level = 'facility'
        )
      order by case when w.scope_level = 'unit' then 0 else 1 end
-     limit 1;
+     limit 1
+     for share;
 
     if not found then
         return jsonb_build_object(
@@ -316,9 +328,11 @@ begin
 end;
 $$;
 
--- This trigger is intentionally the final authority.  It applies to service
--- role writes too, preventing a service preflight / closing-window race or an
--- accidental direct insert from bypassing the durable policy.
+-- This trigger is intentionally the final authority. It applies to service-role
+-- writes too. The availability function retains shared locks on the governing
+-- facility and window through the leave transaction, so a close or a newly
+-- created override cannot commit after the final gate but before the leave write.
+-- Status-only and other non-policy updates are deliberately not revalidated.
 create or replace function public.enforce_request_window_on_leave_insert()
 returns trigger
 language plpgsql
@@ -328,6 +342,14 @@ as $$
 declare
     v_availability jsonb;
 begin
+    if tg_op = 'UPDATE'
+       and new.facility_id is not distinct from old.facility_id
+       and new.staff_id is not distinct from old.staff_id
+       and new.leave_type is not distinct from old.leave_type
+       and new.date_start is not distinct from old.date_start
+       and new.date_end is not distinct from old.date_end then
+        return new;
+    end if;
     if public.request_window_kind_for_leave(new.leave_type) is null then
         return new;
     end if;
@@ -348,7 +370,7 @@ end;
 $$;
 drop trigger if exists trg_enforce_request_window_on_leave_insert on public.leave_requests;
 create trigger trg_enforce_request_window_on_leave_insert
-before insert on public.leave_requests
+before insert or update of facility_id, staff_id, leave_type, date_start, date_end on public.leave_requests
 for each row execute function public.enforce_request_window_on_leave_insert();
 
 create or replace function public.assert_request_window_admin(p_facility_id uuid)
@@ -400,6 +422,7 @@ declare
     v_org_id uuid;
     v_row public.request_windows%rowtype;
     v_existing public.request_windows%rowtype;
+    v_create_reason text;
 begin
     v_profile_id := public.assert_request_window_admin(p_facility_id);
     if p_kind not in ('duty', 'leave')
@@ -433,7 +456,18 @@ begin
            and v_existing.closes_at = p_closes_at
            and v_existing.target_start = p_target_start
            and v_existing.target_end_exclusive = p_target_end_exclusive then
-            return public.request_window_public(v_existing, v_now);
+            -- The reason is immutable create evidence, so it is part of exact
+            -- replay identity even though it lives only in the append-only audit.
+            select a.reason into v_create_reason
+              from public.request_window_audit a
+             where a.request_window_id = v_existing.id
+               and a.action = 'create'
+               and a.version = 1
+             order by a.created_at, a.id
+             limit 1;
+            if found and v_create_reason is not distinct from p_reason then
+                return public.request_window_public(v_existing, v_now);
+            end if;
         end if;
         raise exception using errcode = '23505', message = 'idempotency key already belongs to a different request window';
     end if;
@@ -557,15 +591,24 @@ as $$
 declare
     v_now timestamptz := clock_timestamp();
     v_service boolean := coalesce(auth.role(), current_setting('request.jwt.claim.role', true)) = 'service_role';
-    v_owner boolean := lower(coalesce(public.current_role_name(), '')) in ('owner', 'superintendent');
+    v_role text := lower(coalesce(public.current_role_name(), ''));
+    v_known_role boolean;
+    v_owner boolean;
     v_staff_id uuid := public.current_staff_id();
     v_unit_id uuid;
     v_windows jsonb;
 begin
+    -- Keep this in lockstep with the direct-message migration's known legacy
+    -- and canonical role vocabulary. Unknown nonempty values must not read.
+    v_known_role := v_role in (
+        'superintendent', 'admin', 'staff', 'scheduler', 'hr', 'auditor',
+        'owner', 'nurse_mgr', 'allied_health', 'admin_clerk', 'frontline', 'hr_auditor'
+    );
+    v_owner := v_role in ('owner', 'superintendent');
     if not v_service and (
         auth.uid() is null
         or p_facility_id is distinct from public.current_facility_id()
-        or lower(coalesce(public.current_role_name(), '')) = ''
+        or not v_known_role
     ) then
         raise exception using errcode = '42501', message = 'request-window facility is not available';
     end if;
@@ -600,7 +643,10 @@ create policy request_windows_tenant_read on public.request_windows
     for select to authenticated
     using (
         facility_id = public.current_facility_id()
-        and nullif(btrim(coalesce(public.current_role_name(), '')), '') is not null
+        and lower(coalesce(public.current_role_name(), '')) in (
+            'superintendent', 'admin', 'staff', 'scheduler', 'hr', 'auditor',
+            'owner', 'nurse_mgr', 'allied_health', 'admin_clerk', 'frontline', 'hr_auditor'
+        )
         and exists (
             select 1 from public.facilities f
              where f.id = request_windows.facility_id
@@ -622,7 +668,10 @@ create policy request_window_audit_tenant_read on public.request_window_audit
     for select to authenticated
     using (
         facility_id = public.current_facility_id()
-        and nullif(btrim(coalesce(public.current_role_name(), '')), '') is not null
+        and lower(coalesce(public.current_role_name(), '')) in (
+            'superintendent', 'admin', 'staff', 'scheduler', 'hr', 'auditor',
+            'owner', 'nurse_mgr', 'allied_health', 'admin_clerk', 'frontline', 'hr_auditor'
+        )
         and exists (
             select 1 from public.facilities f
              where f.id = request_window_audit.facility_id

@@ -7,7 +7,7 @@ feedback rather than a race-prone security boundary.
 """
 from __future__ import annotations
 
-from datetime import date as Date
+from datetime import date as Date, timedelta
 from typing import Any, Mapping
 
 
@@ -251,18 +251,22 @@ def _own_unit_id(client: object, facility_id: str, staff_id: str) -> str | None:
 def legacy_duty_window(result: Mapping[str, Any]) -> dict:
     """Map the new `/me` contract to the currently shipped PWA duty shape.
 
-    ``target_end`` is intentionally an *exclusive* date boundary.  The legacy
-    PWA condition must change from ``<=`` to ``<`` before it enables a final-day
-    submission; the server already enforces the correct exclusive boundary.
+    Legacy ``target_end`` remains inclusive. Subtract one calendar day from the
+    canonical exclusive bound so an unchanged PWA never enables an invalid day.
     """
     window = result.get("window") if isinstance(result.get("window"), Mapping) else {}
     status = str(result.get("status") or "unavailable")
+    exclusive = window.get("target_end_exclusive")
+    try:
+        inclusive_end = (Date.fromisoformat(str(exclusive)) - timedelta(days=1)).isoformat() if exclusive else None
+    except (ValueError, OverflowError):
+        raise RequestWindowDatabaseUnavailable("request window returned an invalid target date")
     return {
         "enabled": bool(window and window.get("state") == "open"),
         "opens_at": window.get("opens_at"),
         "closes_at": window.get("closes_at"),
         "target_start": window.get("target_start"),
-        "target_end": window.get("target_end_exclusive"),
+        "target_end": inclusive_end,
         "status": status if status in {"open", "closed", "scheduled", "expired"} else "closed",
         "server_now": result.get("server_now"),
     }
