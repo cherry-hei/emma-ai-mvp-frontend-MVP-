@@ -10,6 +10,7 @@ from emma_core.errors import RuleViolationError
 from api.routers import ai as _ai
 from api.routers import analytics as _analytics
 from api.routers import auth as _auth
+from api.routers import auto_approval as _auto_approval
 from api.routers import calendar as _calendar
 from api.routers import compliance as _compliance
 from api.routers import configs as _configs
@@ -81,7 +82,7 @@ for _module in (_auth, _roster, _residents, _compliance, _staff, _optimize,
                 _ai,
                 _leave, _incidents, _me, _analytics, _reports, _scheduling,
                 _imports, _calendar, _configs, _governance, _swaps,
-                _notifications, _organisations):
+                _notifications, _organisations, _auto_approval):
     app.include_router(_module.router)
 
 
