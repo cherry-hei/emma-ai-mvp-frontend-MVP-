@@ -1,0 +1,33 @@
+# Emma AI Limited — shared engineering handoff
+
+Use this file in the owner's existing `Emma AI Limited – Company OS` desktop project, ChatGPT project and Manus project. It is a portable handoff, not evidence that those private project histories were automatically synchronized. Never upload raw staff/roster/health data, passwords or tokens to the public repository. The owner can attach the same private local folder/repository clone in Codex desktop; the sandbox path is not a folder on the owner's Windows computer.
+
+## Current source and reality
+
+Repo: https://github.com/cherry-hei/emma-ai-mvp-frontend-MVP-
+
+Approved frontend main: caff1c86c44cf97231e84f24563c1bde6f414a07. PR8 merged. Backendwasnotdeployedwiththatfrontend. PR9chat/windowcandidate;PR10policy/evaluation(notautomaticapply);PR11StaffPWAmonorepo/domain;PR12stagedpriorities/365fairnesshelper atd0ff7b9aa9d17fea003a39bff0b326ef288108d8. NewNAACUIcandidatebuiltbyactualCodexCLI;7focusedtests,existingUIregressionandstrictTypeScriptpassed;notoperationaltenantbinding.
+
+Backenddirectory: emma-ai-app/. Manager:src/. StaffPWA:staff-pwa/. StandaloneStaffsource remains separate; importingitdoesnotupdateVerceldeployment. Pokoi/Haven are independentdemoapps/storage/passwords, nevermergecustomeridentities/dataintothem.
+
+LatestknownsuccessfulAPIdeploy698b9810003ead2e1cc48e53c33626bb134a185e run35721064048 giveshistoricalSupabaseproject eadisvkosqdnikhzmndz andSingaporeECS. Currentmembership/migrationledger/RLS/CORS/backupneedverification;historicalmetadataisnotcurrentruntimeproof. Fiveowner-providedDemoaccountsverifiedHTTP200loginwithcorrectDemofacility;doesnotproveNAACtenant/hostedPWA/RLS.
+
+## Planner → Codex → independent review
+
+For difficult/ambiguouswork, plannerfirstproducesaone-pageversionedplan. A ChatGPTstrongerthinkingmodelmaybethatplannerwhenowneropensanauthorisedsession;ManushasnotclaimeditopenedChatGPTplanner. Whenunneeded, skipduplicateplanning. A strongerplannerdoesnotguaranteecreditsavings.
+
+Planner output contract: goal,sourceSHA,confirmedpolicyfacts,unknowns/questions,allowedfiles,non-goals,API/schemaeffects,tests,rollbackandapprovalboundary. OnlythatconcisecontractgoestoCodex,notentirechat. Codeximplementsoneboundedtask inoneownedworktree. Manusindependentlychecksactualdiff/testsandrecordstheresult/PR. CEOresolvespolicyconflictsandseparatelyapprovesexactreleasepayload. Do notautomergemainorblindlyrunallpendingmigrations.
+
+ManusandCodexactuallyexecutedboundedengineering/analysisjobsusingexistingChatGPTsubscriptionandManuscredits. CLItranscriptswerestoredinrestrictedtasklogs;theyarenotautomaticdesktopprojectconversationimports. Do nottransferauth.json/secrets. Avoidephemeralsessionlossforfuturecontinuationonlyusingofficialresume/clientworkflow;source/PRisthecanonicalhandoff.
+
+## Confirmed domain policy
+
+SAandNAACrules/dictionaries/historymustremainseparatewithimmutableorg/facility/unitids. A=SA/B=NAACisdesiredbusinessmapping;currentDemoA/Browsarenotproofthatbindingexists. NAACsourcehasindependentprovisionaltenantJSON/seed/importerbutexecution/accountsnotverified. UsernewExcelpermissionsisrequirements-onlyandconflictswithpriorconfirmed12-actionmatrix;flagconflictsratherthangrantelevatedrights.
+
+Roster-first meanscompletejointshift/taskcandidatebeforefinalrequestapproval,NOTfreezetask-blindroster. Approvedleave/locks/qualification/restandconfirmedtask/staffminimahard. PendingAL>PH>medicalFU>CL>ordinarydutypreferencesfivelexicographiclevels;DOppriorityunknown. Hardbudgetrolloutdeferred;externalmin/fairnesssoftandnotsavingguarantees. Rolling365softspread<=3usesactual/planned/exposureseparately,partialhistorynotzero,covernotdoublecounted;noforced4Norsicknesspenalty.
+
+NAAC18-sheet42-daycontract,hashduty→nextcalendarDayOffincludingcycleboundary. Do notreuseold17-sheetPR5manifest. SAwindow25M-2→10M-1,targetM;N21:15→07:15;AN07:00–14:30+21:30→07:15;3distinctRCWnightoperationalhard;paidminutesnotclockspan.
+
+## Communications
+
+GitHubCEOEmma:queueisready/syncedwithactualCodexauthgate;noend-to-endverifiedtask. Telegramconnectorenabledbuttokenfieldnotavailable,botnotverified/noprivatepairing/webhookadapteryet. NoTelegrampollinglooporpaidrunner. Larkstillneedsappcredentials/userOAuth;latestMessengerthreadnotread. NoautomaticLark/WhatsAppreportdelivery. A dailyreportcanbepreparedonlywithanagreedtime/verifiedrecipient/channel;neverclaimsentwithoutproviderresponse.

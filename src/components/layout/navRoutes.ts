@@ -19,6 +19,7 @@ export const ROUTES = {
   insights:   '/insights',
   settings:   '/settings',
   messages:   '/messages',
+  naacAccessPreview: '/naac-access-preview',
 } as const
 
 export type RoutePath = (typeof ROUTES)[keyof typeof ROUTES]
@@ -53,6 +54,7 @@ export const ROUTE_FEATURE: Record<string, Feature> = {
   [ROUTES.reports]:    'reports',
   [ROUTES.alert]:      'alerts',
   [ROUTES.settings]:   'facility.settings',
+  [ROUTES.naacAccessPreview]: 'facility.settings',
   // The Emma AI workspace is management-only and reuses the existing `kpi` read
   // permission until the backend RBAC matrix defines a dedicated AI capability.
   [ROUTES.insights]:   'kpi',

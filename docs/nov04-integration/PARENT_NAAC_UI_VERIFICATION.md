@@ -1,0 +1,9 @@
+# Parent verification — NAAC UI candidate
+
+Codex used the existing authenticated ChatGPT subscription for bounded task `job_Ye2tWsYG`; not a new desktopProject or ChatGPTplannerconversation. Parent independently inspectedpolicy/preview/navguard andreran7 focusedNode tests:7passed,0failed. Parent then reusedexistinglocaldependencies andranstrict`tsc --noEmit` plusentireexisting`npm run test:ui` successfully;buildandbrowservisualUATnotrun.
+
+OnlyexactfutureNAACroleIDsareaccepted;unknown/canonical/jobtitlealiases denied. Policycovers12CEOconfirmedactions, superintendent/deputyorgscope,nurse/staffunit/personalscope,superintendent-onlyfinaldecision/publish. NoappointedSW1fromjobtitle. Preview isowner-onlythroughfacility.settings andallbuttonsdisabled,rolepickerdoesnotchangeauth. Existingglobal7rolepermissionsandAPI/RLSunchanged.
+
+The newlyuploadedExcelisrequirements-onlyandhasbroaderdepartment/HRpermissions;these conflictsareflagged, notsilentlyapplied. UserstillneedsdecidebeforeoperationalRBACbinding. Chineseownerlabelcorrectedto主任(notSA院長). Owner-reviewstaticcandidateonly;noactualNAACaccounts/livebinding/deploy/migrations/customerdata.
+
+Source/UIclientguardsarenotsecuritysubstitutes. Futureimplementationrequiresactualimmutableorg/unitmembershipandappointmentserver-side,notdevicebased. StaffPWAcanbeusedonphoneorcomputer;lackofpermissionnotdeviceformfactorrestrictsorgscreens. Existinghard/soft/publishconstraintsstayunchanged.
