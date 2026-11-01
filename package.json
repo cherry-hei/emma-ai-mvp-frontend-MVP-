@@ -7,6 +7,7 @@
     "dev:next": "next dev -p 3001",
     "dev:webpack": "next dev -p 3001 --webpack",
     "typecheck": "tsc --noEmit",
+    "test:naac-ui": "node --experimental-strip-types --test src/lib/naac-ui-policy.test.mjs",
     "test:ui": "node --experimental-strip-types --test src/components/layout/display-preferences.test.mjs src/lib/roster-ui.test.mjs src/lib/api.test.mjs src/lib/task-schedule.test.mjs src/lib/approval-sync.test.mjs src/lib/approval-ui-contract.test.mjs src/lib/messages-api.test.mjs src/lib/message-send-attempts.test.mjs src/components/staff/staff-view-model.test.mjs src/lib/api-write-confirmation.test.mjs",
     "build": "npm run typecheck && next build",
     "start": "next start",
