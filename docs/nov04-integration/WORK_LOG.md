@@ -96,3 +96,19 @@ Actual authenticated Codex task consolidated Staff source689aea2 into staff-pwa/
 Parent wrote domain blueprint, roster-first state contract, decision update, manifest/backlog and Chinese workflow map. Official SWD appendix differentiates RCHE/RCHD licence categories; 2024 Code ratio examples are not exhaustive current 2026 nursing-care-practitioner alternatives. User's operational minima are not statutory ratios. Source inventory shows no verified full12-month history and basePR9 gaps in NAAC reader/D+1DO/export, persisted-lock projection, hard-budget/task-demand and correct solver status.
 
 Supabase recheck after user's verification still shows projects=[]; no actual target/ledger/backup facts inferred. No main merge, API deploy, live DB migration/import, DNS, accounts, HRMS record or extra spending. Existing subscription only. Sandbox inode pressure resolved by removing only2 verified inactive duplicated dependency directories; all source/worktrees/deliverables and current dependencies preserved.
+
+## 1 November 17:26 — CEO resolves three SA workflow questions
+
+Target January2027 intake is25November2026->10December2026; issue roster in third weekDecember. General targetM opening25M-2,closecalendarDay10M-1,publishweek3M-1; exact exclusive clock instant and weekday remain config, not invented.
+
+StandaloneN21:15D->07:15D+1; AN/A-N consistsA07:00-14:30D plusN21:30D->07:15D+1, split gap excluded. EligibleHW/RCW/CW; dailyatleast3distinctRCW N-or-AN is hard operational need;2-3AN perapplicableeligibleperson/calendar-month is softfairness, not exactquota or silently N+AN. Remove active six-days note. Elapsed clock time is not paid minutes.
+
+Task +1 defaultadditionalaboveEast/Westbase; authorised fallback proposal may drawbaseline ifextraunavailable, but remaininghardminima/qualification/time/location/budget must revalidate and no duplicateperson/cost. Owner's normalcomplete-candidatereview is decisiongate; not permissiontow aiv e law or new unrecorded per-task overrides.
+
+Real finiteCodex task dispatched17:28 foropt-inSA profileprimitives/newtests only; separateManusagent synchronisesexistingdocs/manifest. No existingsolver/API/DB/UI changes or liveactivation authorised bythis step. FinalsourceSHA/testresults belonginthefollow-uphandoff. No additionalspend.
+
+### SA confirmation final offline evidence
+
+Codex authored4 scopednewfiles and reported45 tests. Parent independently ran45/45, then added safe_to_propose planning evidence plus2tests separating safeproposal fromowneracceptance. Finalparent command `python3 -m pytest -q emma-ai-app/tests/test_sa_confirmed_profile.py` returned47passed in0.15s; py_compile anddiff--check passed. Missing/staleacceptance alone mayleavea safeproposal readyfornormalownerreview; hardcoverage/qualification/incomplete-minima failuresblockbothproposal andfinal localacceptance. No adapterauth/decision/auditwriteismade.
+
+Source remainsopt-in/unwired; noexistingroutes/solver/migrations/UI/deploychanges. Calendaranchors do notcreateDBwindows; nightcountandfairnessevidence are notcompleteCP-SATconstraintintegration. Parent willpushsamePR11asnewSHA,notmain; earlierSHA6574624isnotapprovalforthisnewhead.

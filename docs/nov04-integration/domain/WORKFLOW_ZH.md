@@ -1,5 +1,7 @@
 # Emma 完整排更流程與人機分工
 
+**最新 SA 來源權威：**`SA_CONFIRMED_RULES_2026-11-01.md`，CEO 於 2026 年 11 月 1 日 17:26 HKT 確認。此確認只取代先前 SA 目標月份、N/AN 及任務加人三項待定內容；本文仍是 source-only 候選實作說明，不是已部署政策、法律認證或正式上線承諾。
+
 你講嘅 domain，核心係「院舍實際運作流程」，唔係 DNS 網域。網址、CORS 及登入影響網站接駁；真正令系統識得編更嘅，係已確認嘅職位資格、更碼、工時、任務、人手、預算、申請及批核權限。
 
 Staff PWA 應同 manager website、FastAPI 放喺同一個 MVP repository，但分成獨立 `staff-pwa/`、管理端 `src/`、後端 `emma-ai-app/`。共用已批准嘅 API／資料契約，唔係共用 service-role key 或登入 token。今次建立嘅係候選分支整合，唔代表正式後端已部署。
@@ -28,9 +30,9 @@ Staff PWA 應同 manager website、FastAPI 放喺同一個 MVP repository，但�
 
 ## 3. N／AN、申請窗口及 Agency
 
-「先排 N／AN」可以成為模型安排優先層，但唔應將一個未核證嘅局部更表永久鎖死。已批准嘅指定安排係 hard；普通輪次公平性可以係 soft／排序目標。每日 3 AN、每人每月 2 次及「6 日排好」需要確認定義；31 日月有 93 次每日分配，唔能夠全部以每人正好 2 次配平。
+「先排 N／AN」可以成為模型安排優先層，但唔應將一個未核證嘅局部更表永久鎖死。SA 呢組規則只適用於 HW、RCW、CW：獨立 N 係 roster 日 D 21:15 至 D+1 07:15；AN／A-N 係**一個** composite assignment，內含 D 日 A 07:00–14:30 同 D 日 21:30 至 D+1 07:15 嘅 N 段。14:30–21:30 係 off-duty gap，唔可以當連續工作、在場或計入已付／credited 分鐘。每個 night date 必須有最少 3 個**不同 RCW**擔任合資格 N 或 AN night segment（HARD）；HW／CW 唔會自動填補呢個 RCW 人數。每位適用且合資格嘅人每曆月 2–3 次 **AN** 係 SOFT 公平目標，AN 只計一次，唔可以改讀成 N+AN 配額；獨立 N 負荷要分開記錄。已刪除「6 日排好」作為現行要求。
 
-25 號開放、10 號截止，要先明確係收集邊個目標月份嘅申請及確切香港時間。開放、提醒、截止應由後端有紀錄嘅工作執行，PWA 顯示相同狀態；關閉只限制適用嘅普通 preference，緊急 SL 報告不能一併停用。4 個 preferred duty／DO 要按已確認計數方式執行，唔代表所有 AL／SL 都只可填 4 個。
+目標月份 M 嘅普通 duty／DO preference 係 M-2 月 25 日開放、M-1 月 10 日截止、M-1 月第 3 周發布；例如 2027 年 1 月，即 2026 年 11 月 25 日／12 月 10 日／12 月第 3 周。UI 用 Asia/Hong_Kong，並將截止日同已配置嘅 exclusive UTC instant 分開儲存。確實開／截止鐘數及第 3 周內哪一天發布仍要配置，唔可以猜。開放、提醒、截止應由後端有紀錄嘅工作執行，PWA 顯示相同狀態；關閉只限制適用嘅普通 preference，緊急 SL 報告不能一併停用。4 個 preferred duty／DO 要按已確認計數方式執行，唔代表所有 AL／SL 都只可填 4 個。
 
 Agency 每更提供 2–3 個選擇，係替代選項，唔係已訂 2–3 更。系統要同時核对資格、可用時段、實際訂位及費率，最後只選可承諾嘅方案。
 
@@ -40,9 +42,9 @@ Agency 每更提供 2–3 個選擇，係替代選項，唔係已訂 2–3 更�
 
 模型先確保法律、资格、重疊／休息、已批准承諾、各時段人手、必做任務及已批准 hard budget。再於可行範圍內滿足申請、公平分配、更表穩定性、減少 OT／外購等。若你要 AL > PH > medical FU > CL > ordinary duty 嘅真正優先次序，應使用分層優化，唔係隨意細權重累加，令好多低優先申請抵銷一個高優先申請。[1]
 
-救世軍 East／West 嘅 RN／HW／CW／AW 數目係機構要求，不應標示成 SWD 法定比例；A／P 時段、夜間要求，以及「+1」係額外加人定從 base 抽調，要有確認。同一個人喺同一時間不能既當 East 又當 West，亦不能一面全數當 base coverage，一面外出／上堂／做另一個不能兼做嘅工作。
+救世軍 East／West 嘅 RN／HW／CW／AW 數目係機構要求，不應標示成 SWD 法定比例；A／P 時段、夜間詳細 coverage 仍未提供。`+1 RN/HW/CW` 預設係實際重疊任務時段、East／West baseline **之上**嘅額外人手。只有冇額外人手時，系統可按已授權 fallback policy 自動提出安全嘅 controlled base draw；唔係每個 task 都要另開 ad-hoc permission。最終接受仍在正常 complete-candidate owner review 內進行，並須在 commitments／發布前由 version-bound owner acceptance 覆蓋該次 draw 及證據。必須保留職位／任務／地點／時段、受影響 unit 人數、spare-capacity 來源、預算影響及 audit，並重驗抽走後剩餘 baseline、task、statutory 等所有 hard minima。唔過就阻止發布，改為尋找合法可行方案或另行依法授權更改營運最低要求。未知兼容性預設不能同時計數：同一個人／時段／成本唔可以 double count，亦唔可以豁免法律或已承諾安排。
 
-CP-SAT 顯示 FEASIBLE 只代表可行，唔一定最優；UNKNOWN／超時唔代表證明無解。系統應顯示已支持嘅 hard rules、仍欠規則、完整性及方案差異，唔可以用「100%」掩蓋未建好嘅約束。[2]
+CP-SAT 顯示 FEASIBLE 只代表可行，唔一定最優；UNKNOWN／超時唔代表證明無解。系統應顯示已支持嘅 hard rules、仍欠規則、完整性及方案差異，唔可以用「100%」掩蓋未建好嘅約束。特別係 21:15–21:30 時段唔可以由 21:30 才開始嘅 AN 虛構 coverage；next-day A 07:00 與前一晚 N 到 07:15 重疊，除非另有獨立授權嘅 real-time／code 政策處理。[2]
 
 ## 5. 過往 12 個月不是直接餵 AI，更不是已經有齊
 

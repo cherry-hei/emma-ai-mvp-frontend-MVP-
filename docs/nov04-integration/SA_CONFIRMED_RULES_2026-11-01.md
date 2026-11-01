@@ -1,0 +1,31 @@
+# SA confirmed planning rules — CEO 1 November 2026 17:26 HKT
+
+This is the latest authoritative requirements update. It supersedes the earlier pending target-month/N/AN/task-additive questions in DOMAIN_SOURCE_FACTS, blueprint, manifest and CODEX_DOMAIN_TASK. Source-only candidate implementation, not deployed policy or legal certification. No NAAC/Pokoi rule migration. Same code meaning remains organisation/job-family/version scoped.
+
+## 1. Target-month request timeline
+
+For target January2027: request intake opens25 November2026, closes on10 December2026, and January roster is issued in the third week of December2026. General mapping: target-month M -> opening calendar date25 of M-2 -> closing calendar date10 of M-1 -> publication in week3 of M-1. Store the close calendar day separately from the exact exclusive UTC instant. Exact opening/closing hours and a particular day/deadline within the third week are NOT newly supplied; require configured policy, do not invent. UI shows Asia/Hong_Kong. Test year/month/leap boundaries. Ordinary preference close does not stop emergency SL reports. NAAC retains independent cycle-relative windows.
+
+## 2. N and AN/A-N as distinct clocks
+
+Eligible job families: HW,RCW,CW. Standalone N starts21:15 on roster day D and ends07:15 on D+1. AN (user also writes A/N) is ONE composite roster assignment with TWO work segments: A07:00-14:30 on D and N21:30 on D to07:15 on D+1. Do NOT overwrite standalone N with21:30, or AN night with21:15. Do not count14:30-21:30 as continuous work/availability. Preserve each work segment, cross-midnight date, rest/overlap and time coverage.
+
+Clock durations are elapsed work intervals, NOT confirmed paid/credited minutes: no meal deductions/paid hours/rates invented. The off-duty split gap must not be credited as presence. A next-day A starting07:00 overlaps the prior N end07:15 and must fail overlap validation unless an independently authorised real-time/code change resolves it. Split-duty definition is not permission to waive law/contract rest, safe hours or approved leave. Max-hour/rest rules use effective confirmed policies.
+
+HARD operational need: every roster-night date has at least3 DISTINCT RCW assigned a qualifying N or AN/A-N night segment. It is not '3 from any HW/RCW/CW' and not3 AN plus3 N. Extra RCW/skill-mix caps or exact headcount are not assumed. Staff carrying multiple codes cannot count twice; HW/CW do not fill this RCW-specific headcount without an explicit separately approved substitution. Both shift clocks must appear in time coverage;21:15-21:30 coverage is not fabricated from AN staff who start21:30. An additional time-specific minimum for that slice depends on the operational coverage policy, not an invented shared clock.
+
+SOFT fairness target: each applicable HW/RCW/CW staff member who is required/eligible to take A/N or N should receive2-3 AN assignments per CALENDAR month. User explicitly says the2-3 AN target is fairness, not an exact hard quota. Count a composite AN once, not A and N as two, nor the cross-midnight end as another assignment. Do NOT silently reinterpret it as a combined N+AN quota. Record standalone N load separately; whether the future fairness objective should combine it is not established by this wording. Fairness outside the range is a report/penalty, not automatic publication block. Eligibility, actual leave/opportunities and confirmed contracts must govern applicability; not all nominal staff must work AN if ineligible.
+
+Omit the obsolete 'six days already assigned' statement entirely from active requirements. Historical WORK_LOG records may remain explicitly labelled superseded; do not retain it as a constraint, requirement or open question.
+
+## 3. Event/task staffing
+
+Default +1 RN/HW/CW means ADDITIONAL staff ABOVE East/West baseline for the actual overlapping task duration. Qualified tasks and confirmed baseline/operational/statutory minima remain mandatory. No duplicate person/time counting or duplicate staff cost.
+
+The CEO permits a fallback where extra staff are unavailable: draw from existing baseline staffing. The system may automatically PROPOSE a safe reallocation under this authorised fallback policy. Final acceptance is part of the normal complete-candidate owner review, not a newly required ad-hoc approval for every task. A version-bound owner acceptance must cover the particular draw and its evidence before commitments/publication. Preserve role/task/location/interval, affected unit counts, budget impact and audit. This is CONTROLLED REALLOCATION, not permission to count one worker in incompatible places or waive mandatory floor minima. Revalidate remaining baseline and statutory/task requirements after removal/reallocation. If all hard minima pass, the proposal may be accepted; if they fail, request legal feasible alternatives or separately authorised operational-minimum amendment where lawful, and block publication meanwhile. No generic override of law or committed promises.
+
+Whether a given task worker can simultaneously count in base coverage requires explicitly confirmed compatibility/location/time policy. Unknown compatibility defaults to non-simultaneous, not double credit. Staff available within surplus may be reallocated; the source of actual spare capacity must be shown. Task '+HW/EN' alternative-role ambiguity, task dates/durations, rates and precise clock deadlines remain separate config questions; the three main earlier clarifications are now answered.
+
+## Engineer acceptance
+
+Target Jan2027 yields Nov25/Dec10/Dec week3; target February leap-year boundaries. N600 elapsed minutes; AN A450 plus night585, with split gap excluded, using deterministic time arithmetic. No mapping of clock minutes to paid minutes by inference. AN remains one assignment; staff/day/night uniqueness. Two RCW plus one CW fails nightlyRCW3 hard check even if3 total staff, and threeRCW with mixtureN/AN qualifies assignment-count check but still exposes interval coverage for review. AN fairness2-3 soft; N-only history not transformed into AN. Task additional default vs audited draw-from-base capacity recheck, hard shortfall rejection and no duplicate booking/cost. No source creates live accounts/events/DB/API or bypasses approved leave/rest/rules.

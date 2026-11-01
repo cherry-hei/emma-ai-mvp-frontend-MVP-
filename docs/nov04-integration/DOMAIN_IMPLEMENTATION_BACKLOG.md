@@ -1,9 +1,11 @@
 # Domain implementation backlog — source-aware and not milestone sign-off
 
+**Latest SA source authority:** `SA_CONFIRMED_RULES_2026-11-01.md`, CEO confirmation, 1 November 2026 17:26 HKT. The items below are source-only candidate implementation work, not a runtime/deployment commitment.
+
 ## P0: confirmed-rule vertical slice for 4 November
 
 1. Finish exact runtime Supabase/API/CORS/migration/backup facts and permissions; source consolidation is not deployment. Recheck same-org/unit roles and provisioned staff links.
-2. Confirm SA target month, N/AN semantics and task extra-staff assumptions; confirm NAAC active code/next-day DO meanings/qualifications. No unknown-as-zero rule activation.
+2. Implement and test confirmed SA mapping M → open day25 of M-2 / close day10 of M-1 / publication week3 of M-1; store close calendar day separately from configured exclusive UTC instant and keep UI Asia/Hong_Kong. Implement distinct HW/RCW/CW N clocks (N 21:15–07:15; composite AN A07:00–14:30 plus N21:30–07:15) with preserved split gap, and hard nightly ≥3 distinct RCW N-or-AN assignment validation. Implement 2–3 composite AN/calendar-month as SOFT applicable-eligibility fairness only, separately tracking N load. Make `+1 RN/HW/CW` additional above base by default; when extras are unavailable, permit the system to propose a safe audited base draw after capacity and remaining-hard-minimum recheck, with no duplicate person/time/cost. Bind final acceptance of each proposed draw and its evidence to the normal complete-candidate owner review and version before commitments/publication, not a new ad-hoc task permission. Retain residual configuration for exact deadline/publication hours, paid/credited minutes/rates, 21:15–21:30 minimum and substitution/compatibility. Confirm NAAC active code/next-day DO meanings/qualifications independently. No unknown-as-zero rule activation.
 3. Add scoped calendar-month/42-day validators and successor-boundary inputs. Generic create-period currently accepts arbitrary spans. A task code # is not the same as duty hash.
 4. Project persisted roster_cell_locks into EACH optimise snapshot with conflict detection; current base reads request-body locks only. Already approved leave/DO/duty promises cannot depend on the caller remembering pins.
 5. Implement NAAC # D+1 Day-Off constraint and deterministic validator, including month/year/42nd-day boundary, not generic night recovery. Register actual NAAC workbook reader; profile/CSV alone is not 18-sheet import/export.
@@ -12,7 +14,7 @@
 
 ## P1: complete domain optimisation
 
-Versioned statutory and organisation time-segment staffing/eligibility layers; additive-vs-drawn task coverage; no simultaneous double counting. Build true joint hard coverage/task/budget model, not only validation after elastic slack candidates. A/B/C options preserve hard constraints and ranked pending priorities. Introduce confirmed cents ratecards, calendar-month budget ledger, night/PH component stacking, existing commitments and six-week cost allocation; current cost proxy is not a budget cap.
+Versioned statutory and organisation time-segment staffing/eligibility layers; task additional coverage with controlled authorised base reallocation; no simultaneous double counting. Build true joint hard coverage/task/budget model, not only validation after elastic slack candidates. A/B/C options preserve hard constraints and ranked pending priorities. Introduce confirmed cents ratecards, calendar-month budget ledger, night/PH component stacking, existing commitments and six-week cost allocation; current cost proxy is not a budget cap. Do not infer rates or paid/credited minutes from the confirmed N/AN clocks.
 
 Add immutable planning snapshots that include external rules/residents/budget/request/task/leave versions. Existing publish freshness is roster-content-focused; broader policy changes must invalidate validation/approval. Specific soft omission only, no toggle for legal/approved promises.
 
@@ -30,4 +32,4 @@ Optional owner-delegated approvals are future policy and require positive/negati
 
 ## Acceptance dimensions
 
-Complete month and NAAC 42 days; same code different org/family; cycle/time/budget boundaries; qualification/coverage/task overlap; approved promises; input completeness; deadline/direct API/race; stale answer/approval; atomic failure injection; double notification prevention; manager/staff committed state; actual 18-sheet live-content export; representative scale/restart/restore. Offline fixtures, build, and API docs do not count as hosted multi-user/RLS or contract milestone sign-off.
+Complete month and NAAC 42 days; SA year/month/leap boundary mapping; standalone-N versus composite-AN clocks and split gap; nightly distinct-RCW3 hard failure/qualification; AN fairness soft reporting without N+AN conversion; additional-task default and audited base-draw hard-minimum/capacity recheck; same code different org/family; cycle/time/budget boundaries; qualification/coverage/task overlap; approved promises; input completeness; deadline/direct API/race; stale answer/approval; atomic failure injection; double notification prevention; manager/staff committed state; actual 18-sheet live-content export; representative scale/restart/restore. Offline fixtures, build, and API docs do not count as hosted multi-user/RLS or contract milestone sign-off.

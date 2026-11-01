@@ -30,6 +30,8 @@ Use true CP-SAT candidates and deterministic revalidation with the current rule/
 
 The latest CEO workflow is roster-first: pending request matched in a COMPLETE candidate is NOT approval. Owner reviews the complete plan and final requests; only durable authorised decision+lock+audit/outbox receipts change approved status/notices. HR forms/HRMS are separate. AI explains/asks bounded version-bound questions; it does not waive hard rules or approve. A valid human answer creates new authorised input/version and system resumes automatically. Read DECISION_UPDATE_2026-11-01.md and DOMAIN_WORKFLOW_BLUEPRINT.md. Do not assume 12 months history exists, SA codes/windows apply to NAAC, vacancy allowance is actual spendable budget, or unknown task qualifications are zero. No automatic staffing/employment cuts or health/performance inference.
 
+Read SA_CONFIRMED_RULES_2026-11-01.md FIRST for the17:26 answered questions. Target-monthM opens25M-2/closes10M-1/publishesweek3M-1. N and AN night segments have different starts21:15/21:30; splitgap not worked. Daily>=3distinctRCW N-or-AN is hard;2-3ANmonthlyfairnesssoft and Nreportedseparately. Taskadditionaldefault, safecontrolledbase-drawproposal withnormalownerreview and remaininghardmin revalidation; neverdoublecount or waive law. New domain_profiles.sa primitives are candidate-only unless their integration is actually verified; do not call them live solver behaviour.
+
 ## Verification and phone review
 
 Build/typecheck commands must fail on errors; never use `next build || true`. PR checks may run without production secrets. Do not interpret a screenshot, route, offline test or successful build as live DB/RLS or multi-user acceptance.
