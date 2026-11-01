@@ -1,0 +1,31 @@
+{
+  "contract_version": "2026-11-01-roster-first-v1",
+  "status": "proposed_not_runtime_automation",
+  "tenant_scope": ["organisation_id", "facility_id", "unit_id", "role", "effective_date"],
+  "planning_profiles": {
+    "SA": {"cycle": "calendar_month", "request_open_day": 25, "request_close_day": 10, "target_month_offset": null, "cutoff_timezone": "Asia/Hong_Kong", "cutoff_instant": null},
+    "NAAC": {"cycle": "42_calendar_days", "export_sheet_count": 18, "window_offsets_from_start": null, "duty_hash_next_day": "calendar_day_off", "successor_period_buffer_required": true}
+  },
+  "stages": [
+    {"id": "confirm_inputs", "owner": "authorised_human", "blocks": ["unconfirmed_licence", "code_mapping", "task_coverage", "ratecard", "cycle_dates"]},
+    {"id": "budget_ledger", "owner": "deterministic_system", "input_authority": "approved_versioned_cost_policy", "monthly_split": true},
+    {"id": "request_window", "owner": "backend_schedule_and_outbox", "ordinary_cutoff_only": true, "emergency_sickness_reporting": "remain_available"},
+    {"id": "snapshot", "owner": "deterministic_system", "bind": ["request_versions", "ruleset", "dictionary", "staff_eligibility", "residents", "tasks", "budget", "history_manifest", "approved_locks"]},
+    {"id": "generate", "owner": "cp_sat", "can_approve_requests": false, "statuses": ["OPTIMAL", "FEASIBLE", "INFEASIBLE", "MODEL_INVALID", "UNKNOWN"]},
+    {"id": "revalidate", "owner": "deterministic_system", "unknown_required_rule": "block_publication"},
+    {"id": "clarify", "owner": "AI_explanation_then_authorised_human", "answer_bound_to_snapshot": true, "auto_resume_after_validated_answer": "new_snapshot_only"},
+    {"id": "final_request_decision", "owner": "existing_owner_RBAC", "required": "complete_candidate_review", "recommendation_is_approval": false},
+    {"id": "decision_bundle", "owner": "backend_transaction", "atomic": ["request_CAS", "approved_unavailability_or_pins", "accounting", "immutable_audit", "outbox_intents"], "currently_implemented": false},
+    {"id": "publish", "owner": "authorised_publish_role_then_backend_transaction", "hard_omit": false, "specific_soft_acknowledgements": true},
+    {"id": "sync", "owner": "backend_outbox_and_staff_reads", "must_use_committed_receipts": true},
+    {"id": "HR_record", "owner": "staff_supervisor_HR", "separate_external_authorisation": true, "currently_integrated": false},
+    {"id": "history_forecast_QA", "owner": "deterministic_analytics_and_grounded_AI", "may_infer_new_hard_rule": false, "may_reduce_staff_automatically": false}
+  ],
+  "hard_invariants": ["law_and_qualification", "no_overlap_and_confirmed_rest", "approved_leave_or_locks", "confirmed_time_segment_coverage", "required_task_coverage", "approved_hard_budget", "NAAC_hash_D_plus_1"],
+  "pending_priority_proposal": ["AL", "PH", "medical_FU_duty", "compensatory_leave", "ordinary_duty"],
+  "priority_mode": "owner_confirmed_lexicographic_or_weighted",
+  "unresolved": ["SA_target_month_offset_and_publish_lead", "N_AN_clock_and_quota_semantics", "task_additive_vs_base_drawn", "CL_compensatory_vs_compassionate_code_mapping", "DO_SL_BL_priority_and_exceptions", "complete_12_month_history", "latest_licence_rule_mapping", "live_API_DB_CORS_backup_target"],
+  "AI_permissions": {"explain": true, "ask_bounded_questions": true, "interpret_unverified_law_as_fact": false, "approve_or_modify_roster": false, "create_policy_without_authorisation": false},
+  "release_authority": "separate_exact_SHA_target_full_migration_backup_rollback_approval",
+  "extra_spend_authorised": false
+}

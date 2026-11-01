@@ -1,0 +1,22 @@
+{
+  "name": "Emma AI Staff App",
+  "short_name": "Emma Staff",
+  "description": "員工手機 App — 更表、任務、申請紀錄",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#FFFFFF",
+  "theme_color": "#E8187A",
+  "orientation": "portrait",
+  "icons": [
+    {
+      "src": "/icons/emma-logo-192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "/icons/emma-logo-512.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
+}
