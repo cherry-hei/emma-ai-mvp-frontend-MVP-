@@ -1,0 +1,34 @@
+flowchart TD
+    A[院長：確認機構牌照、規則及預算] --> B[系統：核對字典、資格、任務及 history]
+    B --> C{必要資料齊全？}
+    C -- 否 --> Q[AI：根據證據指出缺口及發問]
+    Q --> V[有權人士：确认答案及有效版本]
+    V --> B
+    C -- 是 --> D[系統：開放申請窗口及發通知]
+    D --> E[職員／Agency：提交申請及替代選擇]
+    E --> F[系統：截止普通 preference；緊急 SL 仍可報告]
+    F --> G[系統：鎖定 request、rules、budget 等 snapshot]
+    G --> H[CP-SAT：生成完整月份／六星期候選方案]
+    H --> I{求解結果？}
+    I -- 超時或模型無效 --> R[系統：記錄狀態；不發布、不假稱無解]
+    R --> Z[工程／操作負責人：排查或按預算重試]
+    Z --> G
+    I -- 已證明無可行解 --> J[AI：解釋衝突與合法可行選項]
+    J --> K[有權人士：確認資料、預算或 soft 取捨]
+    K --> G
+    I -- 可行 --> L[系統：重驗 hard rules、人手、成本及申請配對]
+    L --> M[院長：覆核完整更表及最終申請決定]
+    M --> N{所有版本仍有效？}
+    N -- 否 --> G
+    N -- 是 --> O[系統：原子記錄批准、承諾鎖、Audit 及通知事件]
+    O --> P[有權者：授權發布及逐項 soft acknowledgement]
+    P --> S[系統：重驗並發布；同步 Staff PWA 及通知]
+    S --> T[職員／HR：正式假紙或 HRMS 獨立跟進]
+    S --> U[系統：核對實際數據、forecast 及下一輪改善]
+    U --> A
+    classDef human fill:#fce7f3,stroke:#be185d,color:#831843;
+    classDef system fill:#e0f2fe,stroke:#0369a1,color:#0c4a6e;
+    classDef ai fill:#f3e8ff,stroke:#7e22ce,color:#581c87;
+    class A,V,E,K,M,P,T,Z human;
+    class B,D,F,G,H,R,L,O,S,U system;
+    class Q,J ai;

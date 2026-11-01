@@ -16,6 +16,7 @@ from datetime import date as Date
 from . import audit
 from . import notifications as notify
 from . import roster_locks
+from . import request_windows
 from . import validation
 from ..permissions import Feature
 from ._common import iso, month_bounds, now_iso, staff_brief, staff_by_id
@@ -360,6 +361,18 @@ def create_request(client, facility_id: str, *, staff_id: str, leave_type: str,
     if not positive_duty and requested_shift_type:
         raise ValueError(
             "requested_shift_type is only valid for a duty request or shift swap"
+        )
+    # The router uses the caller's RLS client for early feedback. Real Supabase
+    # service clients expose ``rpc`` and are gated here too; PostgreSQL's BEFORE
+    # INSERT trigger rechecks in the write transaction and remains the atomic
+    # authority. Existing pure in-memory service fixtures intentionally do not
+    # implement PostgREST RPCs, so leave their legacy workflow tests as pure
+    # policy tests rather than treating a Python fake as an installed database.
+    # Sick/emergency types are a no-op in the helper in all cases.
+    if callable(getattr(client, "rpc", None)):
+        request_windows.assert_request_allowed(
+            client, facility_id, staff_id=staff_id, leave_type=leave_type,
+            date_start=date_start, date_end=date_end,
         )
     category = category_for(leave_type)
     request = {

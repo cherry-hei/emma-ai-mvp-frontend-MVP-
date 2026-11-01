@@ -18,10 +18,12 @@ from api.routers import imports as _imports
 from api.routers import incidents as _incidents
 from api.routers import leave as _leave
 from api.routers import me as _me
+from api.routers import messages as _messages
 from api.routers import notifications as _notifications
 from api.routers import organisations as _organisations
 from api.routers import optimize as _optimize
 from api.routers import reports as _reports
+from api.routers import request_windows as _request_windows
 from api.routers import residents as _residents
 from api.routers import roster as _roster
 from api.routers import scheduling as _scheduling
@@ -81,7 +83,7 @@ for _module in (_auth, _roster, _residents, _compliance, _staff, _optimize,
                 _ai,
                 _leave, _incidents, _me, _analytics, _reports, _scheduling,
                 _imports, _calendar, _configs, _governance, _swaps,
-                _notifications, _organisations):
+                _notifications, _organisations, _messages, _request_windows):
     app.include_router(_module.router)
 
 

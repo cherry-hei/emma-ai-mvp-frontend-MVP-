@@ -1,0 +1,7 @@
+.env*
+.vercel/
+.git/
+node_modules/
+dist/
+*.log
+qa/
