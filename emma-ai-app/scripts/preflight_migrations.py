@@ -1,35 +1,16 @@
-"""Read-only pre-flight for migrations 10-20. Run this BEFORE `supabase db push`.
+"""Read-only duplicate checks for migrations 10-20, before `supabase db push`.
 
-    python scripts/preflight_migrations.py                 # uses DATABASE_URL
-    python scripts/preflight_migrations.py --url postgres://...
+Use DATABASE_URL and --json for aggregate evidence. Every query is a SELECT;
+permission errors and timeouts are blockers. Missing objects are skipped only
+when their migration has not been applied. This is not a backup, restore test
+or a completeness check for later migrations.
 
-Nothing here writes. Every statement is a SELECT.
-
-Why this exists
----------------
-Migrations 10-20 were written against a database that already had the schema, and
-have never been run in sequence against production. Two classes of statement in
-that set can fail or destroy data on a database with real history in it, and
-neither shows up in a local test run because the local database was built by the
-same migrations:
-
-  * **Unique indexes over existing data.** `create unique index` is not
-    idempotent against *content* - `if not exists` stops it running twice, it
-    does not stop it failing the first time because production already holds two
-    rows that collide. Nine of these land in 10-20. A failure here aborts the
-    push mid-sequence, which is the worst outcome: some migrations applied, some
-    not, and the schema version now a lie.
-
-  * **One DELETE.** Migration 13 removes orphaned solver rows from
-    `agency_assignments`. It is narrowly scoped and well argued, but it is a
-    delete against production money data, and the number of rows it will take
-    should be a number somebody has seen before it runs, not after.
-
-Exit codes: 0 clean, 1 blockers found, 2 could not connect.
+Exit codes: 0 no detected blockers, 1 blockers, 2 inspection unavailable.
 """
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import pathlib
 import sys
@@ -162,8 +143,43 @@ def _applied(cur) -> list[str]:
         cur.execute("select version from supabase_migrations.schema_migrations "
                     "order by version")
         return [r[0] for r in cur.fetchall()]
-    except Exception:
-        return []
+    except Exception as exc:
+        if getattr(exc, "sqlstate", None) in {"42P01", "3F000"}:
+            return []
+        raise
+
+
+def inspect(conn) -> dict:
+    """Return aggregate evidence only; never include record contents or a DSN."""
+    versions = {
+        str(int(path.stem.split("_", 1)[0][-6:])): path.stem.split("_", 1)[0]
+        for path in (pathlib.Path(__file__).parents[1] / "supabase/migrations").glob("*.sql")
+    }
+    checks = []
+    with conn.cursor() as cur:
+        applied = _applied(cur)
+        for label, migration, severity, sql in CHECKS:
+            result = {"check": label, "migration": migration}
+            try:
+                cur.execute(sql)
+                count = len(cur.fetchall())
+            except Exception as exc:
+                code = getattr(exc, "sqlstate", None)
+                pending = versions.get(migration) not in applied
+                if code in {"42P01", "42703"} and pending:
+                    result.update(status="not_present", groups=0)
+                else:
+                    result.update(status="block", error=code or type(exc).__name__)
+            else:
+                result.update(status=severity if count else "ok", groups=count)
+            checks.append(result)
+    return {
+        "read_only": True,
+        "applied": applied,
+        "checks": checks,
+        "blockers": sum(row["status"] == "block" for row in checks),
+        "warnings": sum(row["status"] == "warn" for row in checks),
+    }
 
 
 def main() -> int:
@@ -171,6 +187,7 @@ def main() -> int:
     parser.add_argument("--url", default=os.environ.get("DATABASE_URL"),
                         help="Postgres URI. Use the SESSION pooler (port 5432), "
                              "not the transaction pooler (6543).")
+    parser.add_argument("--json", action="store_true", help="Emit aggregate evidence without database records")
     args = parser.parse_args()
     if not args.url:
         print("error: no DATABASE_URL. Pass --url or set the environment "
@@ -185,65 +202,29 @@ def main() -> int:
         return 2
 
     try:
-        conn = psycopg.connect(args.url, connect_timeout=15)
+        conn = psycopg.connect(
+            args.url, connect_timeout=15, autocommit=True,
+            options="-c default_transaction_read_only=on -c statement_timeout=30000 -c lock_timeout=5000",
+        )
     except Exception as exc:  # noqa: BLE001
-        print(f"error: could not connect - {exc}", file=sys.stderr)
+        print(f"error: could not connect ({type(exc).__name__})", file=sys.stderr)
         return 2
 
-    blockers = warnings = 0
-    with conn, conn.cursor() as cur:
-        applied = _applied(cur)
-        print(f"Connected. {len(applied)} migrations recorded as applied.")
-        if applied:
-            print(f"  earliest {applied[0]}\n  latest   {applied[-1]}")
-        else:
-            print("  (no supabase_migrations table - this database has never "
-                  "been pushed to with the CLI)")
-        print()
-
-        for label, migration, severity, sql in CHECKS:
-            try:
-                cur.execute(sql)
-                rows = cur.fetchall()
-                columns = [d.name for d in cur.description]
-            except Exception as exc:  # noqa: BLE001
-                # A missing table means the migration that creates it has not run
-                # yet, so there is nothing existing to collide with. That is a
-                # pass, not a failure.
-                print(f"  ok    [{migration}] {label}\n"
-                      f"          (table not present yet - {str(exc).splitlines()[0][:70]})")
-                continue
-
-            if not rows:
-                print(f"  ok    [{migration}] {label}")
-                continue
-
-            if severity == "block":
-                blockers += 1
-                mark = "BLOCK"
-            elif severity == "warn":
-                warnings += 1
-                mark = "WARN "
-            else:
-                mark = "info "
-            print(f"  {mark} [{migration}] {label}  -> {len(rows)} group(s)")
-            print(f"          {' | '.join(columns)}")
-            for row in rows[:10]:
-                print(f"          {' | '.join(str(v) for v in row)}")
-            if len(rows) > 10:
-                print(f"          ... and {len(rows) - 10} more")
-
-    print()
-    if blockers:
-        print(f"{blockers} BLOCKER(S). `supabase db push` will abort part-way "
-              "through. Resolve the duplicates first - see the runbook.")
-        return 1
-    if warnings:
-        print(f"No blockers. {warnings} warning(s) above are rows that will be "
-              "deleted or changed - confirm the numbers look right, then push.")
-        return 0
-    print("Clean. Nothing in migrations 10-20 collides with existing data.")
-    return 0
+    try:
+        with conn:
+            report = inspect(conn)
+    except Exception as exc:
+        print(f"error: pre-flight unavailable ({getattr(exc, 'sqlstate', None) or type(exc).__name__})", file=sys.stderr)
+        return 2
+    if args.json:
+        print(json.dumps(report, indent=2))
+    else:
+        print(f"Connected. {len(report['applied'])} migrations recorded as applied.")
+        for row in report["checks"]:
+            detail = row.get("error") or f"{row.get('groups', 0)} group(s)"
+            print(f"  {row['status']} [{row['migration']}] {row['check']}: {detail}")
+        print(f"{report['blockers']} blockers; {report['warnings']} warnings requiring review.")
+    return 1 if report["blockers"] else 0
 
 
 if __name__ == "__main__":

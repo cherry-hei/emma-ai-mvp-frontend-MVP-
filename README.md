@@ -57,6 +57,9 @@ through the caller's facility before using a service client for trusted writes.
 - NAAC workbook export uses an approved 18-sheet template and cell mapping.
   The engine is implemented; source-workbook comparison still needs the actual
   workbook. The rules PDFs, RBAC document and addendum are not that template.
+- Report previews ignore responses from an old period or signed-in identity.
+  Downloads refresh expired sessions, retain draft filenames and reject empty
+  or unexpected file responses. Changing the period cancels an active download.
 
 The source changes are not deployed until the normal deployment workflow runs.
 Passing synthetic tests does not certify live model access or client UAT.
@@ -184,6 +187,8 @@ npm run build
 ## Deployment and domain
 
 The API workflow applies migrations and deploys the backend on pushes to `main`.
+Its migration command uses `--yes` because CI cannot answer hosted-change prompts;
+review and release approval must happen before pushing or invoking the workflow.
 Amplify builds the frontend separately. Set its `NEXT_PUBLIC_API_URL` to the
 intended API. Add the final manager and Staff App origins to `CORS_ORIGINS`.
 Release approval must identify the exact source SHA and target. Review migrations
@@ -191,6 +196,23 @@ Release approval must identify the exact source SHA and target. Review migration
 ECS image does not undo leave decisions or database changes. If a release fails,
 disable external models and restore the previous image; review database recovery
 separately rather than automatically reversing accepted staff decisions.
+The migration preflight runs with read-only transactions and reports aggregate
+counts. Missing schema is skipped only for unapplied migrations; permission,
+timeout and drift errors block the release. It does not verify backup freshness.
+When Bedrock is enabled, CI verifies the task role before migrations; its deployer
+needs `iam:GetRole` and `iam:PassRole` on that exact role.
+
+Prepare scoped policies, workflow variables, migration hashes and rollback notes
+without changing AWS resources:
+
+```powershell
+python emma-ai-app/scripts/prepare_bedrock_release.py --service-arn SERVICE_ARN --runtime-role ROLE_NAME --output docs/release-plan.json
+```
+
+Add `--inspect-aws --profile PROFILE_NAME` for current account, service, role and
+inference-profile checks. Add `--synthetic-facility-id UUID` only for an approved
+synthetic tenant. The plan stays gated until the source commit, backup, runtime
+permissions and release have been reviewed; it never provisions or deploys.
 
 ```powershell
 python scripts/launch_readiness.py --api https://API --manager https://MANAGER --staff https://STAFF

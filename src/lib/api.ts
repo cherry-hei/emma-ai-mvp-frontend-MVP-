@@ -246,6 +246,7 @@ async function apiFetchForCredentials<T>(
   opts: RequestInit,
   retry: boolean,
   snapshot: CredentialSnapshot,
+  readResponse?: (response: Response) => Promise<T>,
 ): Promise<T> {
   assertPreviewNetworkAllowed()
   const headers = new Headers(opts.headers)
@@ -264,7 +265,7 @@ async function apiFetchForCredentials<T>(
       // Replay only for the identity whose refresh wrote this exact snapshot;
       // an old tenant's 401 must never replay as a newer signed-in user.
       if (fresh && isCurrentCredentials(fresh.snapshot)) {
-        return apiFetchForCredentials<T>(path, opts, false, fresh.snapshot)
+        return apiFetchForCredentials<T>(path, opts, false, fresh.snapshot, readResponse)
       }
     }
     // A stale request must not log out a person who signed in after it started.
@@ -276,11 +277,11 @@ async function apiFetchForCredentials<T>(
   }
 
   if (!res.ok) throw await toError(res)
-  if (res.status === 204) {
+  if (res.status === 204 && !readResponse) {
     if (!isCurrentCredentials(snapshot)) throw new Error('Response belongs to a superseded session; please reload.')
     return undefined as T
   }
-  const data = (await readJsonBody(res)) as T
+  const data = readResponse ? await readResponse(res) : (await readJsonBody(res)) as T
   if (!isCurrentCredentials(snapshot)) throw new Error('Response belongs to a superseded session; please reload.')
   return data
 }
@@ -697,18 +698,7 @@ export const api = {
 
 /** Download a generated report as CSV without leaving the page. */
 export async function downloadReportCsv(reportType: string): Promise<void> {
-  assertPreviewNetworkAllowed()
-  const token = getToken()
-  const res = await fetch(`${BASE}/reports/download/${reportType}.csv`, {
-    headers: token ? { Authorization: `Bearer ${token}` } : {},
-  })
-  if (!res.ok) throw await toError(res)
-  const url = URL.createObjectURL(await res.blob())
-  const a = document.createElement('a')
-  a.href = url
-  a.download = `${reportType}.csv`
-  a.click()
-  URL.revokeObjectURL(url)
+  return downloadReportFile(reportType, 'csv')
 }
 
 /** Download an authenticated report in the backend's supported CSV／XLSX／PDF formats. */
@@ -716,35 +706,49 @@ export async function downloadReportFile(
   reportType: string,
   fmt: 'csv' | 'xlsx' | 'pdf',
   periodId?: string,
+  signal?: AbortSignal,
 ): Promise<void> {
-  assertPreviewNetworkAllowed()
-  const token = getToken()
   const q = periodId ? `?period_id=${encodeURIComponent(periodId)}` : ''
-  const res = await fetch(`${BASE}/reports/download/${reportType}.${fmt}${q}`, {
-    headers: token ? { Authorization: `Bearer ${token}` } : {},
-  })
-  if (!res.ok) throw await toError(res)
-  const url = URL.createObjectURL(await res.blob())
-  const a = document.createElement('a')
-  a.href = url
-  a.download = `${reportType}.${fmt}`
-  a.click()
-  URL.revokeObjectURL(url)
+  return downloadFile(`/reports/download/${encodeURIComponent(reportType)}.${fmt}${q}`, fmt, `${reportType}.${fmt}`, signal)
 }
 
 // Download the full workbook for the selected period.
-export async function downloadNaacWorkbook(periodId: string): Promise<void> {
-  const token = getToken()
-  const response = await fetch(`${BASE}/exports/naac/tahduty.xlsx?period_id=${encodeURIComponent(periodId)}`, {
-    headers: token ? { Authorization: `Bearer ${token}` } : {},
+export async function downloadNaacWorkbook(periodId: string, signal?: AbortSignal): Promise<void> {
+  return downloadFile(`/exports/naac/tahduty.xlsx?period_id=${encodeURIComponent(periodId)}`, 'xlsx', 'NAAC-TAHDuty.xlsx', signal)
+}
+
+async function downloadFile(path: string, format: 'csv' | 'xlsx' | 'pdf', fallbackName: string, signal?: AbortSignal): Promise<void> {
+  const { blob, filename } = await apiFetchForCredentials(path, { signal }, true, credentialsSnapshot(), async response => {
+    const expectedType = {
+      csv: 'text/csv', pdf: 'application/pdf',
+      xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    }[format]
+    if (response.headers.get('content-type')?.split(';')[0].trim().toLowerCase() !== expectedType) {
+      throw new Error('The server did not return the requested report file.')
+    }
+    const blob = await response.blob()
+    if (!blob.size) throw new Error('The server returned an empty report file.')
+    if (format !== 'csv') {
+      const header = new Uint8Array(await blob.slice(0, 5).arrayBuffer())
+      const signature = format === 'xlsx' ? [0x50, 0x4b, 0x03, 0x04] : [0x25, 0x50, 0x44, 0x46, 0x2d]
+      if (!signature.every((byte, index) => header[index] === byte)) {
+        throw new Error('The server returned an invalid report file.')
+      }
+    }
+    const name = response.headers.get('content-disposition')?.match(/filename="([^"\r\n]+)"/)?.[1]
+    const filename = name && !/[\\/]/.test(name) ? name : fallbackName
+    return { blob, filename }
   })
-  if (!response.ok) throw await toError(response)
-  const url = URL.createObjectURL(await response.blob())
-  const anchor = document.createElement('a')
-  anchor.href = url
-  anchor.download = response.headers.get('content-disposition')?.match(/filename="([^"]+)"/)?.[1] || 'NAAC-TAHDuty.xlsx'
-  anchor.click()
-  URL.revokeObjectURL(url)
+  signal?.throwIfAborted()
+  const url = URL.createObjectURL(blob)
+  try {
+    const anchor = document.createElement('a')
+    anchor.href = url
+    anchor.download = filename
+    anchor.click()
+  } finally {
+    URL.revokeObjectURL(url)
+  }
 }
 
 // Enqueue a solve and wait for the resulting options.

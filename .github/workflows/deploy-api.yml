@@ -91,6 +91,24 @@ jobs:
           role-to-assume: arn:aws:iam::${{ vars.AWS_ACCOUNT_ID }}:role/github-actions-emma-api
           aws-region: ${{ vars.AWS_REGION }}
 
+      - name: Check Bedrock task role before migrations
+        if: vars.BEDROCK_ENABLED == 'true'
+        env:
+          BEDROCK_TASK_ROLE_ARN: ${{ vars.BEDROCK_TASK_ROLE_ARN }}
+        run: |
+          set -euo pipefail
+          case "$BEDROCK_TASK_ROLE_ARN" in
+            "arn:aws:iam::${AWS_ACCOUNT_ID}:role/"*) ;;
+            *) echo "::error::Bedrock task role must belong to the deployment account."; exit 1 ;;
+          esac
+          ACTUAL_ROLE="$(aws iam get-role \
+            --role-name "${BEDROCK_TASK_ROLE_ARN##*/}" \
+            --query Role.Arn --output text --no-cli-pager)"
+          if [ "$ACTUAL_ROLE" != "$BEDROCK_TASK_ROLE_ARN" ]; then
+            echo "::error::The configured Bedrock task role could not be verified."
+            exit 1
+          fi
+
       # ── Database migrations ──────────────────────────────────────────────
       - name: Read DATABASE_URL from Secrets Manager
         id: dburl
@@ -136,7 +154,7 @@ jobs:
         working-directory: emma-ai-app
         run: |
           set -euo pipefail
-          supabase db push --db-url "$DATABASE_URL" --include-all
+          supabase db push --db-url "$DATABASE_URL" --include-all --yes
           echo "--- migrations now applied ---"
           supabase migration list --db-url "$DATABASE_URL"
 

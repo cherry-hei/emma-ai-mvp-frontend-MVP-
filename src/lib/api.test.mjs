@@ -85,8 +85,112 @@ test('integration preview blocks login and API requests before fetch or credenti
     await assert.rejects(api.login('person@example.test', 'secret-password'), /Integration preview/)
     await assert.rejects(api.apiFetch('/auth/me'), /Integration preview/)
     await assert.rejects(api.downloadReportCsv('monthly'), /Integration preview/)
+    await assert.rejects(api.downloadReportFile('monthly', 'xlsx', 'period-1'), /Integration preview/)
+    await assert.rejects(api.downloadNaacWorkbook('period-1'), /Integration preview/)
     assert.equal(calls, 0)
   } finally {
+    restoreEnvironment(previous)
+  }
+})
+
+function captureDownloads() {
+  const previous = { document: globalThis.document, create: URL.createObjectURL, revoke: URL.revokeObjectURL }
+  const saved = [], released = []
+  globalThis.document = { createElement: () => ({ click() { saved.push(this.download) } }) }
+  URL.createObjectURL = () => 'blob:synthetic-report'
+  URL.revokeObjectURL = url => released.push(url)
+  return {
+    saved, released,
+    restore() {
+      globalThis.document = previous.document
+      URL.createObjectURL = previous.create
+      URL.revokeObjectURL = previous.revoke
+    },
+  }
+}
+
+function workbookResponse() {
+  return new Response(new Uint8Array([0x50, 0x4b, 0x03, 0x04, 0]), { headers: {
+    'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    'Content-Disposition': 'attachment; filename="NAAC-TAHDuty-DRAFT.xlsx"',
+  } })
+}
+
+test('workbook downloads refresh the issuing session and preserve the draft filename', async () => {
+  const previous = { preview: process.env.NEXT_PUBLIC_INTEGRATION_PREVIEW, fetch: globalThis.fetch, window: globalThis.window }
+  const downloads = captureDownloads()
+  try {
+    delete process.env.NEXT_PUBLIC_INTEGRATION_PREVIEW
+    const storage = installBrowser()
+    storage.setItem('emma_token', 'expired-access')
+    storage.setItem('emma_refresh', 'old-refresh')
+    const headers = []
+    globalThis.fetch = async (url, options) => {
+      if (String(url).endsWith('/auth/refresh')) {
+        return jsonResponse(session({ accessToken: 'fresh-access', refreshToken: 'fresh-refresh' }))
+      }
+      headers.push(new Headers(options.headers).get('Authorization'))
+      return headers.length === 1 ? jsonResponse({ detail: 'expired' }, 401) : workbookResponse()
+    }
+    const api = await loadApi()
+    await api.downloadNaacWorkbook('period-1')
+    assert.deepEqual(headers, ['Bearer expired-access', 'Bearer fresh-access'])
+    assert.deepEqual(downloads.saved, ['NAAC-TAHDuty-DRAFT.xlsx'])
+    assert.deepEqual(downloads.released, ['blob:synthetic-report'])
+  } finally {
+    downloads.restore()
+    restoreEnvironment(previous)
+  }
+})
+
+test('a download cannot finish after another user signs in or the selected period is cancelled', async () => {
+  const previous = { preview: process.env.NEXT_PUBLIC_INTEGRATION_PREVIEW, fetch: globalThis.fetch, window: globalThis.window }
+  const downloads = captureDownloads()
+  try {
+    delete process.env.NEXT_PUBLIC_INTEGRATION_PREVIEW
+    const storage = installBrowser()
+    storage.setItem('emma_token', 'old-access')
+    const api = await loadApi()
+    for (const change of ['identity', 'period']) {
+      const entered = deferred(), body = deferred()
+      const controller = new AbortController()
+      globalThis.fetch = async url => {
+        if (String(url).endsWith('/auth/login')) return jsonResponse(session({ accessToken: 'new-access', userId: 'user-2' }))
+        const response = workbookResponse()
+        response.blob = () => { entered.resolve(); return body.promise }
+        return response
+      }
+      const pending = api.downloadNaacWorkbook('period-1', controller.signal)
+      await entered.promise
+      if (change === 'identity') await api.login('new@example.test', 'synthetic')
+      else controller.abort()
+      body.resolve(await workbookResponse().blob())
+      await assert.rejects(pending, change === 'identity' ? /superseded session/ : { name: 'AbortError' })
+    }
+    assert.deepEqual(downloads.saved, [])
+  } finally {
+    downloads.restore()
+    restoreEnvironment(previous)
+  }
+})
+
+test('HTTP 200 JSON, empty bodies and invalid binary content are never downloaded as reports', async () => {
+  const previous = { preview: process.env.NEXT_PUBLIC_INTEGRATION_PREVIEW, fetch: globalThis.fetch, window: globalThis.window }
+  const downloads = captureDownloads()
+  try {
+    delete process.env.NEXT_PUBLIC_INTEGRATION_PREVIEW
+    installBrowser().setItem('emma_token', 'access')
+    const api = await loadApi()
+    for (const response of [jsonResponse({ ok: true }),
+      new Response('', { headers: { 'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' } }),
+      new Response('<html>Login</html>', { headers: { 'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' } }),
+    ]) {
+      globalThis.fetch = async () => response
+      await assert.rejects(api.downloadNaacWorkbook('period-1'), /report file/)
+    }
+    assert.deepEqual(downloads.saved, [])
+  } finally {
+    downloads.restore()
     restoreEnvironment(previous)
   }
 })

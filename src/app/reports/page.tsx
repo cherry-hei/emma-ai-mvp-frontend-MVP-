@@ -2,11 +2,12 @@
 
 // Design: Emma clinical warmth. Reports is the single NAAC output workspace:
 // selected roster period in, NAAC-format worksheet previews and XLSX files out.
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { api, downloadReportFile, downloadNaacWorkbook } from '@/lib/api'
 import type { GeneratedReport, PeriodOut, ReportRow, VersionOut } from '@/lib/apiTypes'
 import { useLang } from '@/components/layout/LanguageContext'
+import { useAuth } from '@/components/layout/AuthContext'
 
 const PINK = '#E8187A'
 
@@ -27,11 +28,13 @@ const NAAC_SHEETS = [
   { id: 'night_gender', icon: 'N', en: 'N-shift gender', zh: 'N更男女', descEn: 'Night-shift distribution by gender', descZh: '通宵更按性別分配', available: true },
 ]
 
-function ReportPreview({ report, periodId, onClose, isZH }: {
+function ReportPreview({ report, onDownload, onClose, isZH, busy, error }: {
   report: GeneratedReport
-  periodId: string
+  onDownload: () => void
   onClose: () => void
   isZH: boolean
+  busy: boolean
+  error: string
 }) {
   const { columns, rows } = report.payload
   return (
@@ -43,12 +46,13 @@ function ReportPreview({ report, periodId, onClose, isZH }: {
             <div className="mt-0.5 text-[10px] text-slate-400">{report.row_count} {isZH ? '行 · 來源：所選更表週期' : 'rows · Source: selected roster period'}</div>
           </div>
           <div className="flex items-center gap-2">
-            <button onClick={() => downloadReportFile(report.report_type, 'xlsx', periodId)} className="rounded-lg bg-[#E8187A] px-3 py-2 text-[10px] font-bold text-white">
+            <button onClick={onDownload} disabled={busy} className="rounded-lg bg-[#E8187A] px-3 py-2 text-[10px] font-bold text-white disabled:opacity-50">
               {isZH ? '下載此分頁 XLSX' : 'Download sheet XLSX'}
             </button>
             <button onClick={onClose} className="px-1 text-lg leading-none text-slate-400" aria-label={isZH ? '關閉' : 'Close'}>×</button>
           </div>
         </div>
+        {error && <div role="alert" className="px-4 py-3 text-xs text-rose-700">{error}</div>}
         <div className="overflow-auto p-4">
           <table className="w-full text-[11px]">
             <thead><tr className="border-b border-slate-200">{columns.map((column) => <th key={column.key} className="whitespace-nowrap px-2 py-2 text-left text-[9px] font-bold uppercase text-slate-400">{column.label}</th>)}</tr></thead>
@@ -61,6 +65,12 @@ function ReportPreview({ report, periodId, onClose, isZH }: {
 }
 
 export default function ReportsPage() {
+  const { user } = useAuth()
+  if (!user) return null
+  return <ReportsWorkspace key={`${user.userId}:${user.facilityId ?? ''}:${user.role ?? ''}`} />
+}
+
+function ReportsWorkspace() {
   const router = useRouter()
   const { lang } = useLang()
   const isZH = lang === 'zh'
@@ -71,20 +81,52 @@ export default function ReportsPage() {
   const [preview, setPreview] = useState<GeneratedReport | null>(null)
   const [busy, setBusy] = useState('')
   const [error, setError] = useState('')
+  const request = useRef(0)
+  const currentPeriod = useRef(periodId)
+  const activeDownload = useRef<AbortController | null>(null)
+  const mounted = useRef(true)
+  currentPeriod.current = periodId
+
+  function isCurrent(id: number, period: string) {
+    return mounted.current && request.current === id && currentPeriod.current === period
+  }
 
   useEffect(() => {
+    mounted.current = true
+    return () => {
+      mounted.current = false
+      request.current += 1
+      activeDownload.current?.abort()
+    }
+  }, [])
+
+  useEffect(() => {
+    let cancelled = false
     Promise.all([api.rosterPeriods(), api.reports()])
       .then(([periodRows, reportRows]) => {
+        if (cancelled) return
         setPeriods(periodRows)
         setPeriodId(pickCurrentPeriod(periodRows))
         setRecent(reportRows)
       })
-      .catch((e) => setError(e instanceof Error ? e.message : 'Failed to load roster reports'))
+      .catch((e) => { if (!cancelled) setError(e instanceof Error ? e.message : 'Failed to load roster reports') })
+    return () => { cancelled = true }
   }, [])
 
   useEffect(() => {
-    if (!periodId) { setVersions([]); return }
-    api.rosterVersions(periodId).then(setVersions).catch(() => setVersions([]))
+    let cancelled = false
+    request.current += 1
+    activeDownload.current?.abort()
+    setVersions([])
+    setPreview(null)
+    setBusy('')
+    setError('')
+    if (periodId) {
+      api.rosterVersions(periodId)
+        .then(rows => { if (!cancelled) setVersions(rows) })
+        .catch(e => { if (!cancelled) setError(e instanceof Error ? e.message : 'Failed to load roster versions') })
+    }
+    return () => { cancelled = true }
   }, [periodId])
 
   const sourceVersion = useMemo(
@@ -92,48 +134,72 @@ export default function ReportsPage() {
     [versions],
   )
 
-  const openPreview = useCallback(async (reportType: string) => {
+  async function openPreview(reportType: string) {
+    if (!periodId) return
+    const id = ++request.current
     setBusy(`preview-${reportType}`)
     setError('')
     try {
-      setPreview(await api.generateReport(reportType, periodId || undefined))
-      api.reports().then(setRecent).catch(() => {})
+      const report = await api.generateReport(reportType, periodId)
+      if (!isCurrent(id, periodId)) return
+      setPreview(report)
+      api.reports().then(rows => { if (isCurrent(id, periodId)) setRecent(rows) }).catch(() => {})
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Report preview failed')
+      if (isCurrent(id, periodId)) setError(e instanceof Error ? e.message : 'Report preview failed')
     } finally {
-      setBusy('')
-    }
-  }, [periodId])
-
-  async function downloadSheet(reportType: string) {
-    setBusy(`download-${reportType}`)
-    setError('')
-    try {
-      await downloadReportFile(reportType, 'xlsx', periodId || undefined)
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Report download failed')
-    } finally {
-      setBusy('')
+      if (isCurrent(id, periodId)) setBusy('')
     }
   }
 
+  async function downloadSheet(reportType: string) {
+    await runDownload(`download-${reportType}`, signal => downloadReportFile(reportType, 'xlsx', periodId, signal))
+  }
+
   async function downloadWorkbook() {
-    setBusy('workbook')
+    await runDownload('workbook', signal => downloadNaacWorkbook(periodId, signal))
+  }
+
+  async function runDownload(label: string, download: (signal: AbortSignal) => Promise<void>) {
+    if (!periodId) return
+    const id = ++request.current
+    activeDownload.current?.abort()
+    const controller = new AbortController()
+    activeDownload.current = controller
+    setBusy(label)
     setError('')
-    try { await downloadNaacWorkbook(periodId) }
-    catch (e) { setError(e instanceof Error ? e.message : 'Workbook download failed') }
-    finally { setBusy('') }
+    try { await download(controller.signal) }
+    catch (e) { if (isCurrent(id, periodId)) setError(e instanceof Error ? e.message : 'Report download failed') }
+    finally { if (isCurrent(id, periodId)) setBusy('') }
+  }
+
+  function closePreview() {
+    request.current += 1
+    activeDownload.current?.abort()
+    setPreview(null)
+    setBusy('')
+    setError('')
+  }
+
+  function changePeriod(value: string) {
+    request.current += 1
+    activeDownload.current?.abort()
+    setPreview(null)
+    setVersions([])
+    setBusy('')
+    setError('')
+    setPeriodId(value)
   }
 
   return (
     <div className="space-y-5 p-4 md:p-6">
-      {preview && <ReportPreview report={preview} periodId={periodId} isZH={isZH} onClose={() => setPreview(null)} />}
+      {preview && <ReportPreview report={preview} isZH={isZH} onClose={closePreview}
+        onDownload={() => downloadSheet(preview.report_type)} busy={!!busy} error={error} />}
 
       <header className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
         <div>
           <h1 className="text-xl font-bold text-slate-950">{isZH ? 'NAAC更表報告' : 'NAAC Roster Reports'}</h1>
           <p className="mt-1 max-w-2xl text-xs leading-relaxed text-slate-500">
-            {isZH ? '直接使用更表工作區的實時資料，產生NAAC原Excel所需的各分頁報告。毋須上載NAAC workbook。' : 'Generate the worksheet reports required by the NAAC source workbook directly from live Roster Workspace data. No workbook upload is required.'}
+            {isZH ? '使用所選更表週期產生報告。完整NAAC工作簿須先配置已確認的Excel範本。' : 'Generate reports from the selected roster period. The full NAAC workbook requires its approved Excel template to be configured.'}
           </p>
         </div>
         <button onClick={() => router.push('/roster')} className="w-fit rounded-xl border border-rose-200 bg-white px-4 py-2 text-xs font-bold text-[#E8187A] hover:bg-rose-50">
@@ -142,15 +208,10 @@ export default function ReportsPage() {
       </header>
 
       {error && <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-xs text-rose-700">{error}</div>}
-      <button onClick={downloadWorkbook} disabled={!periodId || !!busy}
-        className="rounded-xl bg-[#E8187A] px-4 py-2 text-xs font-bold text-white disabled:opacity-50">
-        {isZH ? '下載完整 NAAC 工作簿' : 'Download full NAAC workbook'}
-      </button>
-
       <section className="grid gap-3 rounded-2xl border border-slate-200 bg-white p-4 md:grid-cols-[1fr_auto] md:items-end md:p-5">
         <label className="text-[10px] font-bold uppercase tracking-[0.14em] text-slate-400">
           {isZH ? '更表週期' : 'Roster period'}
-          <select value={periodId} onChange={(event) => setPeriodId(event.target.value)} className="mt-2 block w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-xs font-medium normal-case tracking-normal text-slate-700 md:min-w-72">
+          <select value={periodId} onChange={(event) => changePeriod(event.target.value)} className="mt-2 block w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-xs font-medium normal-case tracking-normal text-slate-700 md:min-w-72">
             {!periods.length && <option value="">{isZH ? '未有更表週期' : 'No roster period'}</option>}
             {periods.map((period) => <option key={period.id} value={period.id}>{period.period_start} → {period.period_end} · {period.status}</option>)}
           </select>
@@ -192,10 +253,10 @@ export default function ReportsPage() {
         <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <h2 className="text-sm font-bold text-slate-900">{isZH ? '完整NAAC六星期Excel' : 'Complete six-week NAAC workbook'}</h2>
-            <p className="mt-1 max-w-2xl text-[10px] leading-relaxed text-slate-600">{isZH ? '一個檔案包含第一至第六週及以上報告分頁，版面、公式、繁中標籤、footer及列印設定按NAAC原檔對照。' : 'One workbook containing weeks one to six and the report sheets above, matched to the NAAC source layout, formulas, Chinese labels, footer and print settings.'}</p>
+            <p className="mt-1 max-w-2xl text-[10px] leading-relaxed text-slate-600">{isZH ? '下載所選六星期週期的18分頁工作簿。須先配置已確認的NAAC Excel範本及欄位對應。' : 'Download the 18-sheet workbook for the selected six-week period. The approved NAAC Excel template and cell mapping must be configured first.'}</p>
           </div>
-          <button disabled className="min-w-52 cursor-not-allowed rounded-xl bg-rose-200 px-4 py-3 text-xs font-bold text-rose-700 opacity-80">
-            {isZH ? '等待backend完成正式下載' : 'Awaiting final backend download'}
+          <button onClick={downloadWorkbook} disabled={!periodId || !!busy} className="min-w-52 rounded-xl bg-[#E8187A] px-4 py-3 text-xs font-bold text-white disabled:cursor-not-allowed disabled:opacity-50">
+            {busy === 'workbook' ? (isZH ? '下載中…' : 'Downloading…') : (isZH ? '下載完整 NAAC 工作簿' : 'Download full NAAC workbook')}
           </button>
         </div>
       </section>
