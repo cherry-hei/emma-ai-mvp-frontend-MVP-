@@ -131,6 +131,17 @@ def download(report_type: str, fmt: str,
     )
 
 
+@router.get("/exports/naac/tahduty.xlsx")
+def naac_tahduty(period_id: str = Query(...), version_id: str | None = Query(default=None),
+                 ctx: AuthCtx = Depends(require_read(Feature.REPORTS))):
+    from emma_core.services import naac_export
+    content, status = naac_export.export(ctx.client, ctx.facility_id, period_id,
+                                 version_id=version_id, profile_id=ctx.profile_id)
+    filename = "NAAC-TAHDuty.xlsx" if status == "published" else "NAAC-TAHDuty-DRAFT.xlsx"
+    return Response(content, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    headers={"Content-Disposition": f'attachment; filename="{filename}"'})
+
+
 @router.get("/reports/{report_id}")
 def get_report(report_id: str, ctx: AuthCtx = Depends(require_read(Feature.REPORTS))):
     row = svc.get_report(ctx.client, ctx.facility_id, report_id)

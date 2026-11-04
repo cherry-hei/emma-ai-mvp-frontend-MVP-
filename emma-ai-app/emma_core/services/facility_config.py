@@ -95,7 +95,7 @@ NAAC_DUTY_SUPERVISOR_QUOTA = {
     "distribution": "even",
     "note": "Per-person quotas are rows in staff_scheduling_constraints "
             "(constraint_type='require_quota'), never config. Seeded from the "
-            "home's DO更次數 sheet. See docs/naac/README.md.",
+            "home's DO更次數 sheet. See README.md.",
 }
 
 # Duty supervisors eat an hour after everyone else, because somebody has to be on

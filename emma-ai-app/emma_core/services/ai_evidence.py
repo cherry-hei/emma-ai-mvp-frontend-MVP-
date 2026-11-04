@@ -14,7 +14,8 @@ from . import ai_gateway, incidents, privacy
 SYSTEM = (
     "You help a Hong Kong care home manager fill a vacant shift. "
     "You are given an eligibility result that has already been computed. "
-    "Rank the eligible candidates and explain the top pick in two sentences. "
+    "The eligible candidates are already ranked. Keep their supplied order, "
+    "select the first eligible candidate and explain that pick in two sentences. "
     "Use only the aliases and figures you are given. "
     "Never name a candidate that is not listed as eligible, and never state a "
     "fact that is not in the evidence. If no candidate is eligible, return a "
@@ -120,6 +121,15 @@ def validate(answer: Any, evidence: Evidence) -> dict:
     out["ranking"] = [evidence.eligible[t] for t in ranking]
     reason = answer.get("reason")
     out["reason"] = reason.strip() if isinstance(reason, str) and reason.strip() else None
+    if out["rejected"]:
+        out["reason"] = None
+    if out["reason"]:
+        try:
+            privacy.assert_clean(out["reason"], secrets=(*evidence.secrets, *evidence.aliases.secrets()),
+                                 allow_cjk=True)
+        except privacy.LeakError:
+            out["reason"] = None
+            out["rejected"].append("identifiable content in model explanation")
     return out
 
 
@@ -129,15 +139,22 @@ def suggest(client, facility_id: str, incident: dict, *,
     """Suggest cover for a vacant shift, degrading to the ranking on failure."""
     evidence = build(client, facility_id, incident, candidates=candidates)
     deterministic = [evidence.eligible[a] for a in evidence.eligible]
+    if not deterministic:
+        return {"pick": None, "pick_alias": None, "ranking": [], "reason": None,
+                "rejected": [], "eligible_count": 0, "provider": None,
+                "explained": False, "degraded": False, "failures": [], "metrics": {}}
 
-    gw = gateway or ai_gateway.default_gateway()
+    gw = gateway or ai_gateway.default_gateway(facility_id=facility_id)
     result = gw.complete(system=SYSTEM, prompt=evidence.prompt(),
                          payload=evidence.payload, secrets=evidence.secrets)
     checked = validate(result.json(), evidence)
 
-    if not checked["ranking"]:
-        checked["ranking"] = deterministic
-        checked["pick"] = deterministic[0] if deterministic else None
+    if checked["pick"] and checked["pick"] != deterministic[0]:
+        checked["rejected"].append("model pick disagreed with the deterministic ranking")
+        checked["reason"] = None
+    checked["ranking"] = deterministic
+    checked["pick"] = deterministic[0]
+    checked["pick_alias"] = next(iter(evidence.eligible))
     return {
         **checked,
         "eligible_count": len(evidence.eligible),
@@ -145,4 +162,5 @@ def suggest(client, facility_id: str, incident: dict, *,
         "explained": bool(checked["reason"]) and result.from_model,
         "degraded": result.degraded,
         "failures": result.failures,
+        "metrics": result.metrics,
     }

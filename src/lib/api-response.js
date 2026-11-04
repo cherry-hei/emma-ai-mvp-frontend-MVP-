@@ -128,6 +128,32 @@ export function confirmLeaveRevocation(value, requestId, reason) {
   return row
 }
 
+/** Confirm the event identity, selected participants and local time window. */
+export function confirmFacilityEvent(value, requested, eventId) {
+  const operation = 'event save'
+  const row = recordFrom(value, operation)
+  requireNonEmptyString(row, 'id', operation)
+  requireNonEmptyString(row, 'event_type', operation)
+  requireNonEmptyString(row, 'event_date', operation)
+  if (eventId) requireExact(row, 'id', eventId, operation)
+  if (requested.event_date !== undefined) requireExact(row, 'event_date', requested.event_date, operation)
+  if (requested.assigned_staff_ids !== undefined) {
+    const selected = row.assigned_staff_ids
+    if (!Array.isArray(selected) || !selected.every(nonEmptyString) ||
+        JSON.stringify([...selected].sort()) !== JSON.stringify([...requested.assigned_staff_ids].sort())) {
+      throw confirmationError(operation)
+    }
+  }
+  for (const key of ['start_at', 'end_at']) {
+    if (requested[key] === undefined) continue
+    if (requested[key] === null) requireExact(row, key, null, operation)
+    else if (!Number.isFinite(Date.parse(requested[key])) || Date.parse(row[key]) !== Date.parse(requested[key])) {
+      throw confirmationError(operation)
+    }
+  }
+  return row
+}
+
 /**
  * The deployed route returns only `{ ok: true }`, although the service writes a
  * roster_publish_events row. That body does not identify the version or expose

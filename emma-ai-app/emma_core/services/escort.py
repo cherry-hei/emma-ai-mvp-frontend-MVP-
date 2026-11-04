@@ -153,6 +153,8 @@ def escorts_on_date(client, facility_id: str, on_date) -> list[dict]:
     target = str(on_date)[:10]
     out = []
     for row in rows:
+        if row.get("suspended_by_leave"):
+            continue
         shift = ((row.get("shift_assignments") or {}).get("shifts") or {})
         if str(shift.get("date"))[:10] != target:
             continue

@@ -20,7 +20,7 @@ from uuid import UUID
 from ..constants import can_cover_rank
 from ..db import get_service_client
 from ..errors import TaskEligibilityError
-from ..shifttime import day_spans, duty_spans, to_minutes
+from ..shifttime import day_spans, duty_spans, hong_kong_clock, to_minutes
 from ._common import assignments_for_shifts
 from .organisations import org_id_for
 
@@ -88,7 +88,7 @@ EVENT_TYPE_LABELS: dict[str, tuple[str, str]] = {
 }
 
 
-def event_type_catalogue() -> list[dict]:
+def event_type_catalogue(client=None, facility_id: str | None = None) -> list[dict]:
     """The event types the API accepts, with labels and their staffing template.
 
     Cherry, 1 Aug 2026, on 4.2: "I don't want the frontend hardcoding a list that
@@ -125,6 +125,13 @@ def event_type_catalogue() -> list[dict]:
             "templated": bool(requirements),
             "default_requirements": requirements,
         })
+    if client is not None and facility_id:
+        rows = (client.table("facility_events").select("event_type")
+                .eq("facility_id", facility_id).execute().data)
+        known = {item["code"] for item in out}
+        for code in sorted({row["event_type"] for row in rows} - known):
+            out.append({"code": code, "label_zh": code, "label_en": code,
+                        "aliases": [], "templated": False, "default_requirements": []})
     return out
 
 
@@ -189,6 +196,8 @@ def task_shift_matches(actual_shift: str | None, required_shift: str | None) -> 
 
 def normalise_event_type(value: str) -> str:
     code = _normalise_code(value)
+    if not code:
+        raise ValueError("event_type must not be blank")
     return EVENT_TYPE_ALIASES.get(code, code)
 
 
@@ -378,14 +387,7 @@ def _date_value(value) -> Date:
 
 
 def _time_value(value, fallback: str) -> str:
-    if not value:
-        return fallback
-    if isinstance(value, DateTime):
-        return value.strftime("%H:%M")
-    text = str(value)
-    if "T" in text:
-        text = text.split("T", 1)[1]
-    return text[:5]
+    return hong_kong_clock(value, fallback)
 
 
 def _rule_unit_id(rule: dict, units: list[dict]) -> str | None:
@@ -530,11 +532,33 @@ def evaluate_event_staffing(
     violations: list[dict] = []
     for event in events:
         date_text = str(event.get("date") or event.get("event_date"))[:10]
+        designated = set(event.get("assigned_staff_ids") or [])
+        event_assignments = assignments_by_date.get(date_text, [])
+        if designated:
+            event_assignments = [a for a in event_assignments if a.get("staff_id") in designated]
+            for staff_id in sorted(designated):
+                covered = _minimum_concurrent_count(
+                    shifts=shifts_by_date.get(date_text, []),
+                    assignments=[a for a in event_assignments if a.get("staff_id") == staff_id],
+                    staff_by_id=staff_by_id,
+                    window_start=_time_value(event.get("start_at"), "00:00"),
+                    window_end=_time_value(event.get("end_at"), "24:00"),
+                    unit_id=event.get("unit_id"), rank=None,
+                )
+                if covered < 1:
+                    violations.append({
+                        "rule_code": "event_staffing", "date": date_text,
+                        "event_id": event["id"], "staff_id": staff_id,
+                        "unit_id": event.get("unit_id"), "severity": "hard",
+                        "message": "A designated event participant is not on duty for the full event.",
+                        "details": {"reason": "designated_staff_unavailable", "staff_id": staff_id},
+                        "resolved": False,
+                    })
         event_requirements = requirements_by_event.get(event["id"], [])
         for requirement in event_requirements:
             actual = _minimum_concurrent_count(
                 shifts=shifts_by_date.get(date_text, []),
-                assignments=assignments_by_date.get(date_text, []),
+                assignments=event_assignments,
                 staff_by_id=staff_by_id,
                 window_start=_time_value(event.get("start_at"), "00:00"),
                 window_end=_time_value(event.get("end_at"), "24:00"),
@@ -719,7 +743,7 @@ def shift_type_matches(
     that cell. Matching on the code alone would reject it.
 
     A split shift therefore also matches when one of its duty segments begins
-    inside the required code's own duty window. That stays narrow on purpose —
+    inside the required code's own duty window. That stays narrow on purpose -
     it does not make an A code valid on a B or E shift, only on a split shift
     that genuinely contains the A duty.
     """
@@ -797,7 +821,7 @@ def validate_task_labels(
         client, facility_id, [staff_id], on_date=on_date).get(staff_id, set())
     shift_defs = _shift_defs_by_type(client, facility_id)
     # The cell being written is not a shift row yet, so stand in for it with the
-    # dictionary entry — that is what carries the split-shift segments.
+    # dictionary entry - that is what carries the split-shift segments.
     cell = {"shift_type": shift_type, "unit_id": staff.get("primary_unit_id"),
             "segments": (shift_defs.get(shift_type) or {}).get("segments")}
 
@@ -863,7 +887,8 @@ def list_task_assignments(
         query = query.eq("roster_version_id", roster_version_id)
     if shift_assignment_id:
         query = query.eq("shift_assignment_id", shift_assignment_id)
-    return query.order("start_at").execute().data
+    return [row for row in query.order("start_at").execute().data
+            if not row.get("suspended_by_leave")]
 
 
 def _update_legacy_task_labels(
@@ -1049,6 +1074,18 @@ def sync_task_rows_for_assignment(
     )
 
 
+def _validate_event_staff(client, facility_id: str, staff_ids: list[str]) -> list[str]:
+    if len(staff_ids) > 100 or len(set(staff_ids)) != len(staff_ids):
+        raise ValueError("event staff must be unique and limited to 100")
+    if not staff_ids:
+        return []
+    rows = (client.table("staff").select("id,status")
+            .eq("facility_id", facility_id).in_("id", staff_ids).execute().data)
+    if {r["id"] for r in rows if r.get("status", "active") == "active"} != set(staff_ids):
+        raise ValueError("event staff must be active members of this facility")
+    return list(staff_ids)
+
+
 def _validate_unit(client, facility_id: str, unit_id: str | None) -> None:
     if not unit_id:
         return
@@ -1085,6 +1122,7 @@ def _event_output(event: dict, requirements: list[dict]) -> dict:
         "title": event.get("title"),
         "notes": event.get("notes"),
         "staffing_requirements": requirements,
+        "assigned_staff_ids": event.get("assigned_staff_ids") or [],
     }
 
 
@@ -1115,6 +1153,7 @@ def list_facility_events(
 
 def create_facility_event(client, facility_id: str, payload: dict) -> dict:
     _validate_unit(client, facility_id, payload.get("unit_id"))
+    selected = _validate_event_staff(client, facility_id, payload.get("assigned_staff_ids") or [])
     event_type = normalise_event_type(payload["event_type"])
     requirements = event_requirements_for(
         event_type, payload.get("staffing_requirements"))
@@ -1128,6 +1167,7 @@ def create_facility_event(client, facility_id: str, payload: dict) -> dict:
         "title": payload.get("title"),
         "notes": payload.get("notes"),
         "required_staffing_json": requirements,
+        "assigned_staff_ids": selected,
     }
     event = client.table("facility_events").insert(event_row).execute().data[0]
     try:
@@ -1153,7 +1193,7 @@ def update_facility_event(
     _validate_unit(client, facility_id, patch.get("unit_id", current.get("unit_id")))
     update: dict = {}
     field_map = {"event_date": "date"}
-    for field in ("event_type", "event_date", "start_at", "end_at", "unit_id", "title", "notes"):
+    for field in ("event_type", "event_date", "start_at", "end_at", "unit_id", "title", "notes", "assigned_staff_ids"):
         if field not in patch:
             continue
         target = field_map.get(field, field)
@@ -1164,6 +1204,10 @@ def update_facility_event(
             value = normalise_event_type(value)
         if field == "event_date" and value:
             value = str(value)
+        if field == "assigned_staff_ids":
+            if value is None:
+                raise ValueError("assigned_staff_ids must be a list; use [] to clear it")
+            value = _validate_event_staff(client, facility_id, value)
         update[target] = value
 
     requirements_marker = (
@@ -1334,7 +1378,7 @@ def _validate_floor_condition(condition: dict) -> dict:
 
 
 def _validate_floor_window(start: str, end: str) -> None:
-    # to_minutes happily turns "25:00" into 1500 — fine for arithmetic on a
+    # to_minutes happily turns "25:00" into 1500 - fine for arithmetic on a
     # roster row, wrong as input validation, so check the clock itself here
     # rather than letting Postgres reject it as a 500.
     for value in (start, end):
@@ -1523,7 +1567,7 @@ def _reconciled_task_rows(
     This is deliberately in-memory. A read-only validation must not materialize
     ``shift_assignments.tasks`` into ``task_assignments`` or remove stale rows.
     """
-    rows = [dict(row) for row in task_rows]
+    rows = [dict(row) for row in task_rows if not row.get("suspended_by_leave")]
     for assignment in assignments:
         labels = list(assignment.get("tasks") or ())
         if not labels:
@@ -1687,6 +1731,7 @@ def validate_roster_rules(
     task_rows = (client.table("task_assignments").select("*")
                  .eq("facility_id", facility_id)
                  .eq("roster_version_id", roster_version_id).execute().data)
+    task_rows = [row for row in task_rows if not row.get("suspended_by_leave")]
     qualification_rows = []
     if staff_by_id:
         qualification_rows = (client.table("staff_qualifications").select("*")

@@ -79,6 +79,8 @@ def sync_assignment_tasks(client, facility_id: str, assignment: dict,
                 .eq("facility_id", facility_id)
                 .eq("shift_assignment_id", assignment["id"]).execute().data)
     by_label = {r["task_label"]: r for r in existing}
+    if any(row.get("suspended_by_leave") for row in existing):
+        return []
 
     stale = [r["id"] for label, r in by_label.items() if label not in labels]
     if stale:

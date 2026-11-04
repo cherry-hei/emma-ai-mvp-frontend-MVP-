@@ -31,13 +31,21 @@ IDENTITY_KEYS: dict[str, str] = {
     "incident_id": "INCIDENT",
     "facility_id": "HOME",
     "roster_version_id": "ROSTER",
+    "org_id": "ORG",
+    "staff_code": "STAFF",
+    "employee_code": "STAFF",
+    "employee_id": "STAFF",
+    "staff_number": "STAFF",
+    "rule_id": "RULE",
+    "rule_definition_id": "RULE",
 }
 
 # Removed outright. A name buys the model nothing that its alias does not.
 DROP_KEYS = frozenset({
     "name", "name_en", "unit_name", "email", "phone", "mobile", "telephone",
     "hkid", "id_number", "identity_number", "date_of_birth", "dob", "address",
-    "emergency_contact", "auth_user_id", "photo_url", "avatar_url",
+    "emergency_contact", "auth_user_id", "photo_url", "avatar_url", "name_zh",
+    "staff_name", "employee_name", "unit_label", "facility_name",
 })
 
 # Typed by a person, so it can hold anything at all.

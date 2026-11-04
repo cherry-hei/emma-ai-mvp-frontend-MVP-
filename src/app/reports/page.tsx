@@ -4,7 +4,7 @@
 // selected roster period in, NAAC-format worksheet previews and XLSX files out.
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { api, downloadReportFile } from '@/lib/api'
+import { api, downloadReportFile, downloadNaacWorkbook } from '@/lib/api'
 import type { GeneratedReport, PeriodOut, ReportRow, VersionOut } from '@/lib/apiTypes'
 import { useLang } from '@/components/layout/LanguageContext'
 
@@ -117,6 +117,14 @@ export default function ReportsPage() {
     }
   }
 
+  async function downloadWorkbook() {
+    setBusy('workbook')
+    setError('')
+    try { await downloadNaacWorkbook(periodId) }
+    catch (e) { setError(e instanceof Error ? e.message : 'Workbook download failed') }
+    finally { setBusy('') }
+  }
+
   return (
     <div className="space-y-5 p-4 md:p-6">
       {preview && <ReportPreview report={preview} periodId={periodId} isZH={isZH} onClose={() => setPreview(null)} />}
@@ -134,6 +142,10 @@ export default function ReportsPage() {
       </header>
 
       {error && <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-xs text-rose-700">{error}</div>}
+      <button onClick={downloadWorkbook} disabled={!periodId || !!busy}
+        className="rounded-xl bg-[#E8187A] px-4 py-2 text-xs font-bold text-white disabled:opacity-50">
+        {isZH ? '下載完整 NAAC 工作簿' : 'Download full NAAC workbook'}
+      </button>
 
       <section className="grid gap-3 rounded-2xl border border-slate-200 bg-white p-4 md:grid-cols-[1fr_auto] md:items-end md:p-5">
         <label className="text-[10px] font-bold uppercase tracking-[0.14em] text-slate-400">

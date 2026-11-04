@@ -70,6 +70,14 @@ class Settings(BaseSettings):
     # replaces this once the project is provisioned.
     vertex_access_token: str = ""
 
+    bedrock_enabled: bool = False
+    bedrock_region: str = ""
+    bedrock_model_id: str = "global.xai.grok-4.7"
+    bedrock_timeout_seconds: int = 30
+    ai_synthetic_facility_ids: str = ""
+    naac_workbook_template: str = ""
+    naac_workbook_mapping: str = ""
+
     # CORS allow-list for the frontend origin(s); set CORS_ORIGINS per deployment.
     # The staff PWA is listed exactly, not matched by pattern: manus.space is
     # shared hosting, so anything looser would hand credentialed requests to

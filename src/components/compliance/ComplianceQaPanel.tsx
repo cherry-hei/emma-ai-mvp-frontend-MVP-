@@ -1,10 +1,9 @@
 'use client'
 
-// Design: Emma clinical warmth — the deterministic decision is visually primary;
-// model wording is secondary and every unsupported/degraded state is explicit.
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { useAuth } from '@/components/layout/AuthContext'
 import { api } from '@/lib/api'
-import type { AiStatus, ComplianceQaAnswer } from '@/lib/apiTypes'
+import type { AiStatus, ComplianceQaAnswer, Unit } from '@/lib/apiTypes'
 
 const PINK = '#E8187A'
 
@@ -17,7 +16,7 @@ const VERDICT_STYLE: Record<string, string> = {
 }
 
 function valueSummary(value: unknown): string {
-  if (value === null || value === undefined) return '—'
+  if (value === null || value === undefined) return '-'
   if (Array.isArray(value)) return `${value.length} item${value.length === 1 ? '' : 's'}`
   if (typeof value === 'object') return `${Object.keys(value as Record<string, unknown>).length} fields`
   return String(value)
@@ -29,15 +28,37 @@ export default function ComplianceQaPanel({ isZH, date, rosterVersionId, initial
   rosterVersionId: string
   initialQuestion?: string
 }) {
+  const { user } = useAuth()
+  const scope = user ? `${user.userId}:${user.facilityId ?? ''}:${user.role ?? ''}` : ''
   const [status, setStatus] = useState<AiStatus | null>(null)
   const [question, setQuestion] = useState('')
   const [answer, setAnswer] = useState<ComplianceQaAnswer | null>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
+  const [explain, setExplain] = useState(true)
+  const [check, setCheck] = useState('')
+  const [units, setUnits] = useState<Unit[]>([])
+  const [unitId, setUnitId] = useState('')
+  const context = JSON.stringify([scope, date, rosterVersionId, unitId, check, explain, isZH])
+  const activeContext = useRef(context)
+  activeContext.current = context
+  const requests = useRef(0)
 
   useEffect(() => {
-    api.aiStatus().then(setStatus).catch(() => setStatus(null))
-  }, [])
+    setStatus(null); setUnits([]); setUnitId(''); setQuestion(''); setCheck('')
+    if (!scope) return
+    let live = true
+    api.aiStatus().then(value => { if (live) setStatus(value) }).catch(() => { if (live) setStatus(null) })
+    api.units().then(value => { if (live) setUnits(value) }).catch(() => { if (live) setUnits([]) })
+    return () => { live = false }
+  }, [scope])
+
+  useEffect(() => {
+    requests.current += 1
+    setAnswer(null); setError(''); setBusy(false)
+  }, [context])
+
+  useEffect(() => () => { requests.current += 1 }, [])
 
   useEffect(() => {
     if (initialQuestion) setQuestion(initialQuestion)
@@ -64,7 +85,9 @@ export default function ComplianceQaPanel({ isZH, date, rosterVersionId, initial
 
   async function submit(nextQuestion?: string) {
     const text = (nextQuestion ?? question).trim()
-    if (!text) return
+    if (!scope || !text) return
+    const request = ++requests.current
+    const current = () => request === requests.current && context === activeContext.current
     setQuestion(text)
     setBusy(true)
     setError('')
@@ -74,12 +97,15 @@ export default function ComplianceQaPanel({ isZH, date, rosterVersionId, initial
         question: text,
         date: date || undefined,
         roster_version_id: rosterVersionId || undefined,
+        explain,
+        intent: check || undefined,
+        unit_id: unitId || undefined,
       })
-      setAnswer(result)
+      if (current()) setAnswer(result)
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Could not answer this question')
+      if (current()) setError(e instanceof Error ? e.message : 'Could not answer this question')
     } finally {
-      setBusy(false)
+      if (current()) setBusy(false)
     }
   }
 
@@ -106,15 +132,39 @@ export default function ComplianceQaPanel({ isZH, date, rosterVersionId, initial
           ))}
         </div>
 
+        <div className="mt-4 flex flex-wrap items-center gap-3 text-xs">
+          <select value={check} onChange={(e) => setCheck(e.target.value)}
+            aria-label={isZH ? '檢查類型' : 'Compliance check'}
+            className="rounded-lg border border-gray-200 p-2">
+            <option value="">{isZH ? '從問題識別' : 'Detect from question'}</option>
+            <option value="staffing_ratio">{isZH ? '人手比例' : 'Staffing ratio'}</option>
+            <option value="breach_minutes">{isZH ? '違規分鐘' : 'Breach minutes'}</option>
+            <option value="thresholds">{isZH ? '證書提示' : 'Certificate thresholds'}</option>
+            <option value="roster_validation">{isZH ? '更表驗證' : 'Roster validation'}</option>
+          </select>
+          <select value={unitId} onChange={(e) => setUnitId(e.target.value)}
+            aria-label={isZH ? '樓層或單位' : 'Floor or unit'}
+            className="rounded-lg border border-gray-200 p-2">
+            <option value="">{isZH ? '全院或從問題識別' : 'Whole facility or detect from question'}</option>
+            {units.map((unit) => <option key={unit.id} value={unit.id}>{unit.name}</option>)}
+          </select>
+          <label className="flex items-center gap-2">
+            <input type="checkbox" checked={explain} onChange={(e) => setExplain(e.target.checked)} />
+            {isZH ? '使用 AI 解釋' : 'Use AI explanation'}
+          </label>
+        </div>
         <label className="mt-4 block text-[10px] font-semibold text-gray-600">
           {isZH ? '問題' : 'Question'}
-          <textarea value={question} onChange={(e) => setQuestion(e.target.value)} maxLength={1000} rows={5}
+          <textarea value={question} onChange={(e) => {
+            requests.current += 1
+            setQuestion(e.target.value); setAnswer(null); setBusy(false)
+          }} maxLength={1000} rows={5}
             placeholder={isZH ? '例如：今日早更護士人手比例是否合規？' : 'For example: Does the morning nursing ratio meet requirements today?'}
             className="mt-2 w-full resize-y rounded-xl border border-gray-200 bg-white p-3 text-sm leading-relaxed text-gray-900 outline-none focus:border-pink-300 focus:ring-2 focus:ring-pink-100" />
         </label>
         <div className="mt-3 flex items-center justify-between gap-3">
           <p className="text-[10px] text-gray-400">{isZH ? `日期：${date || '未選'} · 更表版本：${rosterVersionId ? '已選' : '未選'}` : `Date: ${date || 'not selected'} · Roster version: ${rosterVersionId ? 'selected' : 'not selected'}`}</p>
-          <button onClick={() => submit()} disabled={busy || !question.trim()} className="rounded-xl px-5 py-2.5 text-xs font-bold text-white disabled:cursor-not-allowed disabled:opacity-40" style={{ background: PINK }}>
+          <button onClick={() => submit()} disabled={busy || !scope || !question.trim()} className="rounded-xl px-5 py-2.5 text-xs font-bold text-white disabled:cursor-not-allowed disabled:opacity-40" style={{ background: PINK }}>
             {busy ? (isZH ? '核對證據中…' : 'Checking evidence…') : (isZH ? '提交問題' : 'Ask question')}
           </button>
         </div>
@@ -154,7 +204,7 @@ export default function ComplianceQaPanel({ isZH, date, rosterVersionId, initial
                     <div className="mt-1 break-words text-[11px] font-semibold text-white">{valueSummary(value)}</div>
                   </div>
                 ))}
-                {!factRows.length && <div className="col-span-2 text-[10px] text-slate-500">—</div>}
+                {!factRows.length && <div className="col-span-2 text-[10px] text-slate-500">-</div>}
               </div>
             </div>
             <div className="border-t border-white/10 pt-3 text-[9px] text-slate-400">

@@ -125,7 +125,7 @@ def _rank_label(rule: dict) -> str:
 
 def _requirement(rule: dict, residents: int | list[dict]) -> tuple[int | float, str]:
     resident_total = _resident_total(residents, rule)
-    w = f'{str(rule["time_window_start"])[:5]}–{str(rule["time_window_end"])[:5]}'
+    w = f'{str(rule["time_window_start"])[:5]}-{str(rule["time_window_end"])[:5]}'
     ratio_value = rule.get("ratio_residents_per_staff")
     if ratio_value is not None:
         try:
@@ -320,6 +320,7 @@ def _evaluate_day(
         required, label = _requirement(rule, residents)
         results.append(RatioResult(
             label=label, rank=rule.get("staff_rank"),
+            unit_id=rule.get("unit_id"), rule_id=rule.get("id"), rule_code=rule.get("rule_code"),
             window_start=str(rule["time_window_start"]), window_end=str(rule["time_window_end"]),
             residents=resident_total, required=_display_number(required),
             actual=_display_number(weighted_count),

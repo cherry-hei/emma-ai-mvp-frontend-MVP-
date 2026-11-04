@@ -411,7 +411,7 @@ def create_request(client, facility_id: str, *, staff_id: str, leave_type: str,
         client, facility_id, _APPROVAL_FEATURE[category],
         event_type="request_submitted",
         title=f"New {leave_type} request",
-        body=f'{iso(date_start)} – {iso(date_end)}' + (f' · {reason}' if reason else ""),
+        body=f'{iso(date_start)} - {iso(date_end)}' + (f' · {reason}' if reason else ""),
         related_type="leave_request", related_id=row["id"],
     )
     return row
@@ -429,6 +429,11 @@ def decide(client, facility_id: str, request_id: str, *, decision: str,
     if not rows:
         raise ValueError("leave request not found")
     current = rows[0]
+
+    if current.get("status") == "approved" and decision == "approve":
+        return current
+    if current.get("status") not in PENDING_STATES:
+        raise ValueError("only a request awaiting a decision can be reviewed or decided")
 
     if decision == "review":
         patch = {"status": "reviewed", "reviewed_at": now_iso()}
@@ -500,7 +505,7 @@ def decide(client, facility_id: str, request_id: str, *, decision: str,
         notify.push(
             client, facility_id, staff_id=row["staff_id"], event_type="leave_decided",
             title=f'{row["leave_type"]} request {verdict}',
-            body=f'{iso(row["date_start"])} – {iso(row["date_end"])}'
+            body=f'{iso(row["date_start"])} - {iso(row["date_end"])}'
                  + (f' · {note}' if note else ""),
             related_type="leave_request", related_id=row["id"],
         )
@@ -585,7 +590,7 @@ def revoke(client, facility_id: str, request_id: str, *, profile_id: str | None,
     notify.push(
         client, facility_id, staff_id=row["staff_id"], event_type="leave_revoked",
         title=f'{row["leave_type"]} approval withdrawn',
-        body=f'{iso(row["date_start"])} – {iso(row["date_end"])} · {reason.strip()}',
+        body=f'{iso(row["date_start"])} - {iso(row["date_end"])} · {reason.strip()}',
         related_type="leave_request", related_id=row["id"],
     )
     return row

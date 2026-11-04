@@ -2,7 +2,7 @@
 
 These three tasks were blocked from 30 Jul to 31 Jul on source files that were
 reported delivered but never arrived. Cherry attached them to ClickUp 2.2 and 4.1
-on 31 Jul; `docs/naac/README.md` records what was extracted and what was left out.
+on 31 Jul; `README.md` records what was extracted and what was left out.
 
 What is worth testing here is not that a CSV parses. It is that the two
 independent descriptions of the same duty code agree:

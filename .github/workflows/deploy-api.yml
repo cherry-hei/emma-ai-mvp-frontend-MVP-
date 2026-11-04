@@ -42,6 +42,11 @@ jobs:
 
       - name: Validate deployment variables
         env:
+          BEDROCK_ENABLED: ${{ vars.BEDROCK_ENABLED }}
+          BEDROCK_REGION: ${{ vars.BEDROCK_REGION }}
+          BEDROCK_MODEL_ID: ${{ vars.BEDROCK_MODEL_ID }}
+          BEDROCK_TASK_ROLE_ARN: ${{ vars.BEDROCK_TASK_ROLE_ARN }}
+          AI_SYNTHETIC_FACILITY_IDS: ${{ vars.AI_SYNTHETIC_FACILITY_IDS }}
           APP_ENV: ${{ vars.APP_ENV }}
           SUPABASE_URL: ${{ vars.SUPABASE_URL }}
           SUPABASE_ANON_KEY: ${{ vars.SUPABASE_ANON_KEY }}
@@ -66,6 +71,9 @@ jobs:
           )
 
           missing=0
+          if [ "${BEDROCK_ENABLED:-false}" = "true" ]; then
+            required+=(BEDROCK_REGION BEDROCK_MODEL_ID BEDROCK_TASK_ROLE_ARN AI_SYNTHETIC_FACILITY_IDS)
+          fi
           for variable in "${required[@]}"; do
             if [ -z "${!variable:-}" ]; then
               echo "::error::Repository variable $variable is empty or missing."
@@ -207,6 +215,13 @@ jobs:
           SUPABASE_ANON_KEY: ${{ vars.SUPABASE_ANON_KEY }}
           CORS_ORIGINS: ${{ vars.CORS_ORIGINS }}
           CORS_ORIGIN_REGEX: ${{ vars.CORS_ORIGIN_REGEX }}
+          BEDROCK_ENABLED: ${{ vars.BEDROCK_ENABLED }}
+          BEDROCK_REGION: ${{ vars.BEDROCK_REGION }}
+          BEDROCK_MODEL_ID: ${{ vars.BEDROCK_MODEL_ID }}
+          BEDROCK_TASK_ROLE_ARN: ${{ vars.BEDROCK_TASK_ROLE_ARN }}
+          AI_SYNTHETIC_FACILITY_IDS: ${{ vars.AI_SYNTHETIC_FACILITY_IDS }}
+          NAAC_WORKBOOK_TEMPLATE: ${{ vars.NAAC_WORKBOOK_TEMPLATE }}
+          NAAC_WORKBOOK_MAPPING: ${{ vars.NAAC_WORKBOOK_MAPPING }}
           SECRET_ARN_SERVICE_ROLE_KEY: ${{ vars.SECRET_ARN_SERVICE_ROLE_KEY }}
           SECRET_ARN_DATABASE_URL: ${{ vars.SECRET_ARN_DATABASE_URL }}
         run: |
@@ -226,11 +241,23 @@ jobs:
               --arg anon_key     "$(clean "$SUPABASE_ANON_KEY")" \
               --arg cors         "$(clean "$CORS_ORIGINS")" \
               --arg cors_regex   "$(clean "${CORS_ORIGIN_REGEX-}")" \
+              --arg bedrock_enabled "$(clean "${BEDROCK_ENABLED:-false}")" \
+              --arg bedrock_region "$(clean "${BEDROCK_REGION-}")" \
+              --arg bedrock_model "$(clean "${BEDROCK_MODEL_ID:-global.xai.grok-4.7}")" \
+              --arg synthetic_facilities "$(clean "${AI_SYNTHETIC_FACILITY_IDS-}")" \
+              --arg naac_template "$(clean "${NAAC_WORKBOOK_TEMPLATE-}")" \
+              --arg naac_mapping "$(clean "${NAAC_WORKBOOK_MAPPING-}")" \
               '[
                 {name: "APP_ENV",           value: $app_env},
                 {name: "SUPABASE_URL",      value: $supabase_url},
                 {name: "SUPABASE_ANON_KEY", value: $anon_key},
-                {name: "PORT",              value: "8080"}
+                {name: "PORT",              value: "8080"},
+                {name: "BEDROCK_ENABLED", value: $bedrock_enabled},
+                {name: "BEDROCK_REGION", value: $bedrock_region},
+                {name: "BEDROCK_MODEL_ID", value: $bedrock_model},
+                {name: "AI_SYNTHETIC_FACILITY_IDS", value: $synthetic_facilities},
+                {name: "NAAC_WORKBOOK_TEMPLATE", value: $naac_template},
+                {name: "NAAC_WORKBOOK_MAPPING", value: $naac_mapping}
               ]
               + (if $cors == "" then []
                  else [{name: "CORS_ORIGINS", value: $cors}] end)
@@ -281,12 +308,22 @@ jobs:
           echo "Previous revision: ${PREVIOUS_REVISION:-unknown}"
           echo "Requested image:   $IMAGE_REF"
 
+          TASK_ROLE_ARGS=()
+          if [ "${BEDROCK_ENABLED:-false}" = "true" ]; then
+            if [ -z "${BEDROCK_REGION-}" ] || [ -z "${BEDROCK_TASK_ROLE_ARN-}" ]; then
+              echo "::error::Bedrock requires BEDROCK_REGION and BEDROCK_TASK_ROLE_ARN."
+              exit 1
+            fi
+            TASK_ROLE_ARGS=(--task-role-arn "$(clean "$BEDROCK_TASK_ROLE_ARN")")
+          fi
+
           UPDATE_JSON="$(
             aws ecs update-express-gateway-service \
               --service-arn "$SERVICE_ARN" \
               --region "$AWS_REGION" \
               --primary-container "$PRIMARY_CONTAINER" \
               --execution-role-arn "$EXEC_ROLE_ARN" \
+              "${TASK_ROLE_ARGS[@]}" \
               --health-check-path /health \
               --scaling-target '{"minTaskCount":1,"maxTaskCount":1}' \
               --output json \

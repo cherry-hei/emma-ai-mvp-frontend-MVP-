@@ -22,6 +22,7 @@ python-multipart>=0.0.9
 # every deployed image.
 google-auth>=2.30
 requests>=2.32
+boto3>=1.35                  # Bedrock through the deployment's IAM task role
 
 # Data + Auth (Supabase: Postgres + GoTrue + RLS)
 supabase>=2.6

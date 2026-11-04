@@ -15,10 +15,11 @@ class _Says:
     name = "stub"
 
     def __init__(self, *answers):
-        self.answers, self.prompts = list(answers), []
+        self.answers, self.prompts, self.systems = list(answers), [], []
 
     def complete(self, *, system, prompt, max_tokens):
         self.prompts.append(prompt)
+        self.systems.append(system)
         return self.answers.pop(0) if self.answers else "{}"
 
 
@@ -91,15 +92,21 @@ def test_a_question_missing_its_date_says_so(ratio_check):
 
 
 # ── the verdict is ours ──────────────────────────────────────────────────────
-def test_a_passing_day_reads_as_compliant(ratio_check):
+@pytest.mark.parametrize("question,text,language", [
+    ("staffing ratio ok", "Staffing is fine that day.", "English"),
+    ("人手比例夠嗎", "當日人手符合已設定的要求。", "Traditional Chinese"),
+])
+def test_a_passing_day_reads_as_compliant(ratio_check, question, text, language):
     ratio_check("compliant", COMPLIANT)
-    answer = qa.ask(None, "home-b", "staffing ratio ok", on_date=date(2026, 9, 20),
-                    gateway=gw(json.dumps({"answer": "Staffing is fine that day.",
-                                           "verdict": "compliant"})))
+    provider = _Says(json.dumps({"answer": text, "verdict": "compliant"}))
+    answer = qa.ask(None, "home-b", question, on_date=date(2026, 9, 20),
+                    gateway=ai_gateway.Gateway([provider], attempts=1))
 
     assert answer.verdict == "compliant"
     assert answer.explained is True
-    assert answer.text == "Staffing is fine that day."
+    assert answer.text == text
+    assert language in provider.systems[-1]
+    assert question not in provider.prompts[-1]
 
 
 def test_a_shortfall_is_quantified_from_the_evidence(ratio_check):

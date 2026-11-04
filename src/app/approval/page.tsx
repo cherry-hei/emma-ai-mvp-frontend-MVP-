@@ -19,9 +19,10 @@ const STATUS_STYLE: Record<string, { bg: string; text: string }> = {
   rejected:    { bg: '#FFE4E6', text: '#9F1239' },
   withdrawn:   { bg: '#F3F4F6', text: '#6B7280' },
   cancelled:   { bg: '#F3F4F6', text: '#374151' },
+  revoked:     { bg: '#F3F4F6', text: '#374151' },
 }
 
-// Recommendation type — will be populated when API supports it
+// Recommendation type - will be populated when API supports it
 interface Recommendation {
   recommender_name: string
   recommender_role: string
@@ -42,7 +43,7 @@ function fmtDate(iso: string | null | undefined): string {
 }
 
 function fmtRange(from: string, to: string): string {
-  return from === to ? fmtDate(from) : `${fmtDate(from)} – ${fmtDate(to)}`
+  return from === to ? fmtDate(from) : `${fmtDate(from)} - ${fmtDate(to)}`
 }
 
 // ─── Reject / Withdraw Reason Modal ────────────────────────────────────────
@@ -96,7 +97,7 @@ function RecommendationBadge({ rec }: { rec: Recommendation }) {
       <span>{isApprove ? '✅' : '❌'}</span>
       <span className="font-medium">{rec.recommender_name}</span>
       <span className="text-gray-400">({rec.recommender_role})</span>
-      {rec.reason && <span className="text-gray-500 ml-1">— {rec.reason}</span>}
+      {rec.reason && <span className="text-gray-500 ml-1">- {rec.reason}</span>}
     </div>
   )
 }
@@ -125,8 +126,8 @@ function ApprovalCard({ request, role, isZH, onAction, busy }: {
 
   const statusStyle = STATUS_STYLE[request.status] ?? STATUS_STYLE.cancelled
   const statusLabel = isZH
-    ? { pending: '待審批', reviewed: '已審閱', recommended: '已建議', approved: '已批准', rejected: '已拒絕', withdrawn: '已撤回', cancelled: '已取消' }[request.status] ?? request.status
-    : { pending: 'Pending', reviewed: 'Reviewed', recommended: 'Recommended', approved: 'Approved', rejected: 'Rejected', withdrawn: 'Withdrawn', cancelled: 'Cancelled' }[request.status] ?? request.status
+    ? { pending: '待審批', reviewed: '已審閱', recommended: '已建議', approved: '已批准', rejected: '已拒絕', withdrawn: '已撤回', cancelled: '已取消', revoked: '已撤銷' }[request.status] ?? request.status
+    : { pending: 'Pending', reviewed: 'Reviewed', recommended: 'Recommended', approved: 'Approved', rejected: 'Rejected', withdrawn: 'Withdrawn', cancelled: 'Cancelled', revoked: 'Revoked' }[request.status] ?? request.status
 
   return (
     <>
@@ -239,7 +240,7 @@ function ApprovalCard({ request, role, isZH, onAction, busy }: {
                 {isZH ? 'A.5 更表同步核對' : 'A.5 roster sync verification'}
               </div>
               <div className="mt-0.5 text-xs leading-relaxed text-sky-700">
-                {isZH ? '審批狀態已保存；請核對更表限制及通知。批准假期與自動填更是不同步驟，前端不會假裝已改更。' : 'The decision is saved. Verify roster constraints and notifications. Leave approval and roster autofill are separate steps; the frontend never fabricates a roster change.'}
+                {isZH ? '已批准的假期會由後端同步至更表及相關任務。請開啟更表核對最新結果。' : 'The backend applies approved leave to the roster and related tasks. Open the roster to review the current result.'}
               </div>
             </div>
             <a href="/roster" className="shrink-0 rounded-lg border border-sky-200 bg-white px-3 py-1.5 text-xs font-semibold text-sky-700 hover:bg-sky-50">
@@ -482,7 +483,7 @@ export default function ApprovalPage() {
       }
       if (originatingScope !== activeScope.current) return false
       if (action === 'approve' || action === 'withdraw') {
-        setSyncNotice(isZH ? '後端已保存審批決定。請核對更表、限制及通知；批准不等於前端已自動填更。' : 'The backend saved the decision. Check the roster, constraints and notifications; approval does not mean the frontend has automatically filled a shift.')
+        setSyncNotice(isZH ? '決定及適用的更表和任務更新已一併保存。請重新開啟更表核對。' : 'The decision and applicable roster and task changes were saved together. Reopen the roster to review them.')
       }
       void load(); void loadStats()
       return true
@@ -567,7 +568,7 @@ export default function ApprovalPage() {
         </select>
         <input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)}
           className="border border-gray-200 rounded-lg px-2 py-2 text-xs text-gray-600 outline-none" />
-        <span className="text-gray-300 text-xs">–</span>
+        <span className="text-gray-300 text-xs">-</span>
         <input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)}
           className="border border-gray-200 rounded-lg px-2 py-2 text-xs text-gray-600 outline-none" />
       </div>

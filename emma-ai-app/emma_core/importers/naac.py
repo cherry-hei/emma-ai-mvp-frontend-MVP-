@@ -2,7 +2,7 @@
 
 Source: `NAAC更期代號註解.xlsx`, `NAAC編更安排1.docx` and `NAAC覆診地點代號.csv`,
 delivered by Cherry Siu on ClickUp tasks 2.2 and 4.1 on 31 Jul 2026. The extracted
-dictionaries live beside this module in `data/`; `docs/naac/README.md` records
+dictionaries live beside this module in `data/`; `README.md` records
 what was extracted, what was deliberately left out of the repository, and why.
 
 Why this home needs its own module rather than another entry in `vocab.py`
@@ -323,7 +323,9 @@ def load_shift_codes() -> dict[str, NaacShiftCode]:
                 category_zh=(row["category_zh"] or "").strip(),
                 time_range=(row["time_range"] or "").strip(),
                 duty_supervisor=bool(_f(row["duty_supervisor"])),
-                is_working=hours > 0,
+                is_working=hours > 0 and not re.fullmatch(
+                    r"(?:AL|BDL|FFL|FUNL|IACL|MARL|ML|NPL|NPSL|PH|PL|SL|SPL|CL)(?:x|[.,]|-\d+)*",
+                    code),
                 am_fraction=_f(row["am_fraction"]),
                 pm_fraction=_f(row["pm_fraction"]),
                 night_fraction=_f(row["night_fraction"]),

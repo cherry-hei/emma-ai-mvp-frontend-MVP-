@@ -15,7 +15,7 @@ What this deliberately does not load
 The per-person `#` quotas (15/13/9 against the nurses' 12) and the two personal
 scheduling constraints. Those are employee data; they belong in the database
 seeded from the home's own DO更次數 sheet, not in a file in this repository. See
-`docs/naac/README.md`.
+`README.md`.
 """
 from __future__ import annotations
 

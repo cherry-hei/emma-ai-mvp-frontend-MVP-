@@ -9,7 +9,7 @@ fixture and wipes those two facilities each run; this one loads a real home's re
 configuration and never deletes anything. Running the demo seed must not be able
 to take NAAC's dictionary with it.
 
-Source files and what was left out: `docs/naac/README.md`.
+Source files and what was left out: `README.md`.
 """
 from __future__ import annotations
 

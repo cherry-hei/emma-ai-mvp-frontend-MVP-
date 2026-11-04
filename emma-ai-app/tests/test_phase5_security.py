@@ -195,9 +195,11 @@ def test_part_time_policy_maps_to_solver_work_pattern():
 
 def test_saturday_part_time_writeback_uses_earliest_unoccupied_weekday():
     store = FakeSupabase()
+    store.data["facilities"] = [{"id": "f1", "org_id": "org1"}]
     store.data["shift_definitions"] = [{
         "id": "cl-definition",
         "facility_id": "f1",
+        "org_id": "org1",
         "shift_type": "CL",
         "start_time": None,
         "end_time": None,
@@ -266,6 +268,7 @@ def test_saturday_part_time_writeback_uses_earliest_unoccupied_weekday():
 
 def test_saturday_part_time_writeback_defers_boundary_cl_without_definition():
     store = FakeSupabase()
+    store.data["facilities"] = [{"id": "f1", "org_id": "org1"}]
     staff = StaffInput(
         id="pt1",
         rank="CW",

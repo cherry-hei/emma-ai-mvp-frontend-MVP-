@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from datetime import date as Date, datetime as DateTime
+from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -76,6 +77,7 @@ class FacilityEventOut(BaseModel):
     title: str | None = None
     notes: str | None = None
     staffing_requirements: list[StaffingRequirementOut] = Field(default_factory=list)
+    assigned_staff_ids: list[str] = Field(default_factory=list)
 
 
 class StaffLite(BaseModel):
@@ -114,6 +116,9 @@ class RosterGrid(BaseModel):
 
 class RatioResult(BaseModel):
     label: str
+    unit_id: str | None = None
+    rule_id: str | None = None
+    rule_code: str | None = None
     rank: str | None = None
     window_start: str
     window_end: str
@@ -734,7 +739,7 @@ class StaffingRequirementIn(BaseModel):
 
 
 class FacilityEventCreate(BaseModel):
-    event_type: str
+    event_type: str = Field(min_length=1, max_length=100)
     event_date: Date
     start_at: DateTime | None = None
     end_at: DateTime | None = None
@@ -742,6 +747,7 @@ class FacilityEventCreate(BaseModel):
     title: str | None = None
     notes: str | None = None
     staffing_requirements: list[StaffingRequirementIn] | None = None
+    assigned_staff_ids: list[UUID] = Field(default_factory=list, max_length=100)
 
 
 class FacilityEventPatch(BaseModel):
@@ -753,6 +759,7 @@ class FacilityEventPatch(BaseModel):
     title: str | None = None
     notes: str | None = None
     staffing_requirements: list[StaffingRequirementIn] | None = None
+    assigned_staff_ids: list[UUID] | None = Field(default=None, max_length=100)
 
 
 # ── 4.1 staff qualifications ────────────────────────────────────────────────

@@ -8,6 +8,7 @@ than an exception, because the deterministic answer is still worth serving.
 from __future__ import annotations
 
 import json
+import time
 from dataclasses import dataclass, field
 from typing import Any, Callable, Protocol, Sequence
 
@@ -45,6 +46,7 @@ class Result:
     from_model: bool = False
     degraded: bool = False
     failures: list[str] = field(default_factory=list)
+    metrics: dict = field(default_factory=dict)
 
     def json(self) -> Any:
         """The answer parsed as JSON, or None if it was not JSON."""
@@ -134,19 +136,92 @@ class VertexProvider:
 
 
 class BedrockProvider:
-    """Nova through a cross-region inference profile.
-
-    Left unbuilt on purpose. The profile id and its Asia Pacific availability
-    have to come from an invocation test against the real account, not from
-    documentation, and writing the call against a guessed id would hide that.
-    """
+    """One configured Bedrock model, authenticated by the AWS credential chain."""
 
     name = "bedrock"
     is_model = True
 
+    def __init__(self, *, region: str = "", model: str = "", client=None):
+        self.region = region or settings.bedrock_region
+        self.model = model or settings.bedrock_model_id
+        self._client = client
+        self.last_metrics: dict = {}
+
     def complete(self, *, system: str, prompt: str, max_tokens: int) -> str:
-        raise NotConfigured(
-            "Bedrock fallback is not wired; the inference profile id is unverified")
+        if not self.region or not self.model:
+            raise NotConfigured("BEDROCK_REGION and BEDROCK_MODEL_ID are required")
+        if not self._client:
+            import boto3
+            from botocore.config import Config
+            self._client = boto3.client(
+                "bedrock-runtime", region_name=self.region,
+                config=Config(connect_timeout=5, read_timeout=settings.bedrock_timeout_seconds,
+                              retries={"total_max_attempts": 1}),
+            )
+        started = time.monotonic()
+        self.last_metrics = {}
+        kimi = "moonshotai.kimi-k3" in self.model
+        try:
+            if kimi:
+                # These short explanations do not need Kimi's default reasoning.
+                raw = self._client.invoke_model(
+                    modelId=self.model, contentType="application/json", accept="application/json",
+                    body=json.dumps({
+                        "messages": [{"role": "system", "content": system},
+                                     {"role": "user", "content": prompt}],
+                        "max_tokens": max_tokens, "reasoning_effort": "none",
+                    }),
+                )
+                with raw["body"] as body:
+                    data = json.loads(body.read())
+                choice = (data.get("choices") or [{}])[0]
+                message = choice.get("message") or {}
+                usage = data.get("usage") or {}
+                finish = choice.get("finish_reason")
+                stop = {"stop": "end_turn", "length": "max_tokens",
+                        "content_filter": "content_filtered"}.get(finish, "incomplete")
+                if message.get("refusal"):
+                    stop = "content_filtered"
+                reply = {
+                    "output": {"message": {"content": [{"text": message.get("content") or ""}]}},
+                    "stopReason": stop, "ResponseMetadata": raw.get("ResponseMetadata", {}),
+                    "usage": {"inputTokens": usage.get("prompt_tokens"),
+                              "outputTokens": usage.get("completion_tokens"),
+                              "cacheReadInputTokens": (usage.get("prompt_tokens_details") or {}).get("cached_tokens", 0),
+                              "cacheWriteInputTokens": (usage.get("prompt_tokens_details") or {}).get("cache_write_tokens", 0)},
+                }
+            else:
+                reply = self._client.converse(
+                    modelId=self.model,
+                    system=[{"text": system}],
+                    messages=[{"role": "user", "content": [{"text": prompt}]}],
+                    inferenceConfig={"maxTokens": max_tokens, "temperature": 0},
+                )
+        except Exception as exc:
+            # Provider errors must not echo prompts or signed request details.
+            reason = type(exc).__name__
+            response = getattr(exc, "response", None)
+            if isinstance(response, dict):
+                reason = (response.get("Error") or {}).get("Code") or reason
+            raise ProviderError(f"Bedrock request failed ({reason})") from None
+        usage = reply.get("usage") or {}
+        self.last_metrics = {
+            "model_id": self.model, "region": self.region,
+            "request_id": (reply.get("ResponseMetadata") or {}).get("RequestId"),
+            "input_tokens": usage.get("inputTokens"), "output_tokens": usage.get("outputTokens"),
+            "latency_ms": round((time.monotonic() - started) * 1000),
+            "stop_reason": reply.get("stopReason"),
+            "api": "invoke_model" if kimi else "converse",
+            "cache_read_input_tokens": usage.get("cacheReadInputTokens", 0),
+            "cache_write_input_tokens": usage.get("cacheWriteInputTokens", 0),
+        }
+        if reply.get("stopReason") in {"guardrail_intervened", "content_filtered", "max_tokens", "incomplete"}:
+            raise ProviderError("Bedrock response was blocked or incomplete")
+        blocks = ((reply.get("output") or {}).get("message") or {}).get("content") or []
+        answer = "".join(block.get("text", "") for block in blocks)
+        if not answer.strip():
+            raise ProviderError("Bedrock returned no text")
+        return answer
 
 
 def _http_post(url: str, body: dict, token: str) -> tuple[int, dict]:
@@ -193,15 +268,22 @@ class Gateway:
                 if text and text.strip():
                     return Result(text=text, provider=provider.name,
                                   from_model=getattr(provider, "is_model", True),
-                                  failures=failures)
+                                  failures=failures,
+                                  degraded=bool(failures) and not getattr(provider, "is_model", True),
+                                  metrics=dict(getattr(provider, "last_metrics", {})))
                 failures.append(f"{provider.name} attempt {attempt + 1}: empty answer")
         return Result(text=None, provider=None, degraded=True, failures=failures)
 
 
-def default_gateway() -> Gateway:
-    """Whatever is actually configured, falling back to the offline provider."""
+def default_gateway(*, facility_id: str | None = None) -> Gateway:
+    """External models are limited to explicitly approved synthetic tenants."""
+    allowed = {value.strip() for value in settings.ai_synthetic_facility_ids.split(",") if value.strip()}
+    if not facility_id or facility_id not in allowed:
+        return Gateway([OfflineProvider()])
     chain: list[Provider] = []
-    if settings.vertex_project and settings.vertex_access_token:
+    if settings.bedrock_enabled:
+        chain.append(BedrockProvider())
+    elif settings.vertex_project and settings.vertex_access_token:
         chain.append(VertexProvider(token=lambda: settings.vertex_access_token))
     chain.append(OfflineProvider())
     return Gateway(chain)

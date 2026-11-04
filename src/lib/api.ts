@@ -28,6 +28,7 @@ import {
   confirmLeaveDecision,
   confirmLeaveRecommendation,
   confirmLeaveRevocation,
+  confirmFacilityEvent,
   confirmPeriodCreate,
   confirmStaffCreate,
   confirmStaffUpdate,
@@ -138,8 +139,8 @@ export function logout(): void {
 /**
  * A rule refusal that kept its reasons.
  *
- * The backend answers a blocked write with a list — wrong rank *and* not
- * medication-audited are two separate things to fix — so the UI needs them as
+ * The backend answers a blocked write with a list - wrong rank *and* not
+ * medication-audited are two separate things to fix - so the UI needs them as
  * data, not one concatenated sentence. Plain failures stay plain `Error`s.
  */
 export class ApiRuleError extends Error {
@@ -378,7 +379,7 @@ export const api = {
     return apiFetch<FacilityEvent[]>(`/facility-events${q.size ? `?${q.toString()}` : ''}`)
   },
 
-  /** 4.2 — the event types the server validates against, with labels. The
+  /** 4.2 - the event types the server validates against, with labels. The
    *  picker reads this so it cannot offer a type the API would reject. */
   facilityEventTypes: () =>
     apiFetch<{ event_types: FacilityEventType[] }>('/facility-events/types')
@@ -388,17 +389,19 @@ export const api = {
     event_type: string; event_date: string; start_at?: string; end_at?: string
     unit_id?: string; title?: string; notes?: string
     staffing_requirements?: Array<{ rank: string; count: number; is_additive?: boolean; notes?: string }>
+    assigned_staff_ids?: string[]
   }) => apiFetch<FacilityEvent>('/facility-events', {
     method: 'POST', body: JSON.stringify(body),
-  }),
+  }).then(result => confirmFacilityEvent(result, body) as FacilityEvent),
 
   updateFacilityEvent: (id: string, body: Partial<{
     event_type: string; event_date: string; start_at: string | null; end_at: string | null
     unit_id: string | null; title: string | null; notes: string | null
     staffing_requirements: Array<{ rank: string; count: number; is_additive?: boolean; notes?: string }>
+    assigned_staff_ids: string[]
   }>) => apiFetch<FacilityEvent>(`/facility-events/${id}`, {
     method: 'PATCH', body: JSON.stringify(body),
-  }),
+  }).then(result => confirmFacilityEvent(result, body, id) as FacilityEvent),
 
   deleteFacilityEvent: (id: string) =>
     apiFetch<void>(`/facility-events/${id}`, { method: 'DELETE' }),
@@ -492,7 +495,7 @@ export const api = {
 
   aiStatus: () => apiFetch<AiStatus>('/ai/status'),
 
-  complianceQa: (body: { question: string; date?: string; roster_version_id?: string }) =>
+  complianceQa: (body: { question: string; date?: string; roster_version_id?: string; unit_id?: string; intent?: string; explain?: boolean }) =>
     apiFetch<ComplianceQaAnswer>('/ai/compliance-qa', {
       method: 'POST', body: JSON.stringify(body),
     }),
@@ -729,7 +732,22 @@ export async function downloadReportFile(
   URL.revokeObjectURL(url)
 }
 
-// Enqueue an A/B/C solve and poll the job until it finishes; returns the options.
+// Download the full workbook for the selected period.
+export async function downloadNaacWorkbook(periodId: string): Promise<void> {
+  const token = getToken()
+  const response = await fetch(`${BASE}/exports/naac/tahduty.xlsx?period_id=${encodeURIComponent(periodId)}`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  })
+  if (!response.ok) throw await toError(response)
+  const url = URL.createObjectURL(await response.blob())
+  const anchor = document.createElement('a')
+  anchor.href = url
+  anchor.download = response.headers.get('content-disposition')?.match(/filename="([^"]+)"/)?.[1] || 'NAAC-TAHDuty.xlsx'
+  anchor.click()
+  URL.revokeObjectURL(url)
+}
+
+// Enqueue a solve and wait for the resulting options.
 export async function optimizeAndPoll(
   periodId: string,
   opts: { onStatus?: (s: string) => void; intervalMs?: number; timeoutMs?: number; sourceVersionId?: string } = {},

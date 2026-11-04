@@ -210,9 +210,21 @@ def list_versions(client, facility_id: str, period_id: str | None = None) -> lis
 
 
 # ── manual edit (CRUD) ──────────────────────────────────────────────────────
+def _require_unreserved_cell(client, facility_id, roster_version_id, staff_id, day):
+    """An approved request must be revoked before its cell can be edited."""
+    held = (client.table("leave_roster_changes").select("id")
+            .eq("facility_id", facility_id)
+            .eq("roster_version_id", roster_version_id)
+            .eq("staff_id", staff_id).eq("date", str(day))
+            .is_("restored_at", "null").limit(1).execute().data)
+    if held:
+        raise ValueError("revoke the approved request before editing this roster cell")
+
+
 def set_cell(client, *, facility_id, roster_version_id, staff_id, date, shift_type,
              shift_def: ShiftDef, tasks=None, changed_by=None):
     """Upsert one staff/day cell (create/replace shift + assignment) and log to manual_override_log."""
+    _require_unreserved_cell(client, facility_id, roster_version_id, staff_id, date)
     tasks = tasks or []
     staff_rows = (client.table("staff").select("id,rank,primary_unit_id")
                   .eq("facility_id", facility_id).eq("id", staff_id)
@@ -296,6 +308,7 @@ def set_cell(client, *, facility_id, roster_version_id, staff_id, date, shift_ty
 
 
 def clear_cell(client, *, facility_id, roster_version_id, staff_id, date, changed_by=None):
+    _require_unreserved_cell(client, facility_id, roster_version_id, staff_id, date)
     # SQL: select id from shifts
     #      where roster_version_id = :roster_version_id and date = :date
     existing_shifts = (client.table("shifts").select("id")
@@ -451,7 +464,7 @@ def notify_published(client, facility_id: str, roster_version_id: str) -> list[d
         return []
 
     dates = sorted(str(s["date"])[:10] for s in shifts if s.get("date"))
-    span = f"{dates[0]} – {dates[-1]}" if dates else ""
+    span = f"{dates[0]} - {dates[-1]}" if dates else ""
 
     out = []
     for staff_id in sorted(staff_ids):

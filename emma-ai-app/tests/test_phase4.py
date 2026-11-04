@@ -4,6 +4,8 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+import pytest
+
 from fastapi.testclient import TestClient
 
 from api.main import app
@@ -255,3 +257,37 @@ def test_event_types_endpoint_is_declared_before_the_id_route():
     """`/facility-events/types` must not be matched as an event id."""
     paths = client.get("/openapi.json").json()["paths"]
     assert "/facility-events/types" in paths
+
+
+@pytest.mark.parametrize("start,end", [
+    ("2026-11-02T09:00:00", "2026-11-02T11:00:00"),
+    ("2026-11-02T09:00:00+08:00", "2026-11-02T11:00:00+08:00"),
+    ("2026-11-02T01:00:00Z", "2026-11-02T03:00:00Z"),
+])
+def test_designated_participant_must_cover_the_full_event_window(start, end):
+    kwargs = {
+        "events": [
+            {
+                "id": "e1",
+                "date": "2026-11-02",
+                "event_type": "custom",
+                "start_at": start,
+                "end_at": end,
+                "assigned_staff_ids": ["s1"],
+            }
+        ],
+        "requirements": [],
+        "assignments": [{"id": "a1", "shift_id": "sh1", "staff_id": "s1"}],
+        "staff_by_id": {"s1": {"rank": "RN"}},
+    }
+    shift = {
+        "id": "sh1",
+        "date": "2026-11-02",
+        "start_time": "07:00",
+        "end_time": "10:00",
+        "is_working": True,
+    }
+    assert evaluate_event_staffing(shifts=[shift], **kwargs)
+    assert (
+        evaluate_event_staffing(shifts=[{**shift, "end_time": "15:00"}], **kwargs) == []
+    )

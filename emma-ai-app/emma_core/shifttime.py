@@ -1,8 +1,8 @@
 """The single definition of what a shift's clock times mean.
 
 Most shifts are one contiguous block, but the Code of Practice A/N shift is a
-**split shift**: per the scheduling spec, Home A works 07:00–13:30 *and* 21:30–07:00
-the next day; Home B works 07:00–14:30 *and* 21:15–07:15. Two disjoint duty
+**split shift**: per the scheduling spec, Home A works 07:00-13:30 *and* 21:30-07:00
+the next day; Home B works 07:00-14:30 *and* 21:15-07:15. Two disjoint duty
 windows, with an unpaid rest gap between them.
 
 Representing that as one 07:00→13:30-next-day span gets three separate things
@@ -22,9 +22,23 @@ a row without it is a single contiguous shift and behaves exactly as before.
 from __future__ import annotations
 
 from collections.abc import Mapping
+from datetime import datetime, timedelta, timezone
 
 # (start_min, end_min, crosses_midnight)
 Segment = tuple[int, int, bool]
+
+
+def hong_kong_clock(value, fallback: str) -> str:
+    """Read event timestamps in the same local clock as the duty dictionary."""
+    if not value:
+        return fallback
+    text = str(value)
+    if isinstance(value, datetime) or "T" in text:
+        stamp = value if isinstance(value, datetime) else datetime.fromisoformat(text.replace("Z", "+00:00"))
+        if stamp.tzinfo is not None:
+            stamp = stamp.astimezone(timezone(timedelta(hours=8)))
+        return stamp.strftime("%H:%M")
+    return text[:5]
 
 
 def to_minutes(hhmm: str | None) -> int | None:

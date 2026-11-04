@@ -89,7 +89,7 @@ export interface VersionOut {
   created_at?: string | null
 }
 
-/** One duty window of a split shift, e.g. A/N's 07:00–13:30 and 21:30–07:00. */
+/** One duty window of a split shift, e.g. A/N's 07:00-13:30 and 21:30-07:00. */
 export interface ShiftSegment {
   start: string
   end: string
@@ -231,7 +231,7 @@ export interface StaffingRequirement {
   notes?: string | null
 }
 
-/** 4.2 — one entry of GET /facility-events/types.
+/** 4.2 - one entry of GET /facility-events/types.
  *
  *  `templated` is the field the create-event form needs: a templated type fills
  *  its own staffing requirements, and an untemplated one (visiting, meetings,
@@ -248,6 +248,7 @@ export interface FacilityEventType {
 
 export interface FacilityEvent {
   id: string
+  assigned_staff_ids?: string[]
   event_type: string
   event_date: string
   start_at?: string | null
@@ -258,7 +259,7 @@ export interface FacilityEvent {
   staffing_requirements: StaffingRequirement[]
 }
 
-/** 4.1 — a capability a staff member holds, matched by the eligibility rules. */
+/** 4.1 - a capability a staff member holds, matched by the eligibility rules. */
 export interface StaffQualification {
   id: string
   staff_id: string
@@ -269,7 +270,7 @@ export interface StaffQualification {
   notes?: string | null
 }
 
-/** 4.3 — a minute-level minimum for one floor/unit over one time window. */
+/** 4.3 - a minute-level minimum for one floor/unit over one time window. */
 export interface FloorRule {
   id: string
   unit_id?: string | null
@@ -418,7 +419,7 @@ export interface LeaveRequest extends StaffBrief {
     issues?: Array<Record<string, unknown>>
     priority_weight?: number
   }
-  status: 'pending' | 'reviewed' | 'approved' | 'rejected' | 'cancelled'
+  status: 'pending' | 'reviewed' | 'approved' | 'rejected' | 'cancelled' | 'revoked'
   reviewed: boolean
   decided_at?: string | null
   decision_note?: string | null
@@ -519,11 +520,17 @@ export interface ComplianceQaAnswer {
   explained: boolean
   degraded: boolean
   rejected: string[]
+  sources?: Array<{ rule_code?: string | null; rule_id?: string | null }>
+  request_id?: string
+  metrics?: Record<string, unknown>
 }
 
 export interface AiStatus {
   providers: string[]
   intents: string[]
+  bedrock_enabled?: boolean
+  model_id?: string | null
+  inference_region?: string | null
 }
 
 export interface ImportIssue {
@@ -579,7 +586,7 @@ export interface Highlight {
   text_zh: string
 }
 
-/** 5.6 — how much of the roster is worked by part-time, agency or outsourced staff. */
+/** 5.6 - how much of the roster is worked by part-time, agency or outsourced staff. */
 export interface KpiExternalWorkforce {
   period_id?: string | null
   roster_version_id?: string | null
@@ -591,7 +598,7 @@ export interface KpiExternalWorkforce {
   by_role: { role: string; shifts: number; external: number; dependency_pct: number }[]
 }
 
-/** 5.7 — SWD staffing-ratio compliance across the period. */
+/** 5.7 - SWD staffing-ratio compliance across the period. */
 export interface KpiStaffingRatioCompliance {
   period_id?: string | null
   checks?: number
@@ -606,7 +613,7 @@ export interface KpiStaffingRatioCompliance {
 
 /** Every KPI screen in one call. The four this app does not render yet are
  *  typed loosely on purpose - narrowing them here would be a guess. */
-/** 3.1 — the KPI strip's "Completion" card: assigned task codes that were
+/** 3.1 - the KPI strip's "Completion" card: assigned task codes that were
  *  ticked off. `completion_pct` is null when the period rosters no task codes
  *  at all, which is not the same as 0% done. */
 export interface KpiTaskCompletion {
@@ -644,7 +651,7 @@ export interface DashboardSummary {
   incident_distribution: { incident_type: string; count: number; pct: number }[]
   shift_distribution: { shift_type: string; count: number; pct: number; is_working: boolean }[]
   /**
-   * The day `shift_distribution` describes — today when today is rostered, the
+   * The day `shift_distribution` describes - today when today is rostered, the
    * nearest rostered day otherwise (between cycles there are no shifts at all).
    */
   shift_distribution_date?: string | null

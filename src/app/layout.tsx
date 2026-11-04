@@ -1,12 +1,17 @@
 import type { Metadata, Viewport } from 'next'
-import { Inter } from 'next/font/google'
+import localFont from 'next/font/local'
 import './globals.css'
 import { Providers } from './providers'
 
-const inter = Inter({ subsets: ['latin'] })
+const inter = localFont({
+  src: '../../public/fonts/InterVariable.ttf',
+  weight: '100 900',
+  style: 'normal',
+  display: 'swap',
+})
 
 export const metadata: Metadata = {
-  title: 'Emma AI – Scheduling & Compliance Intelligence',
+  title: 'Emma AI - Scheduling & Compliance Intelligence',
   description: 'AI-powered roster management for RCHE',
   manifest: '/manifest.json',
   appleWebApp: { capable: true, title: 'Emma AI', statusBarStyle: 'default' },

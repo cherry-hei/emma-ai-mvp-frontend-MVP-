@@ -29,7 +29,7 @@ from ..solver import (
     solve_pareto,
 )
 from ..solver.inputs import AgencyLimitsInput, PreferenceInput
-from ..shifttime import duty_segments, envelope, paid_minutes
+from ..shifttime import duty_segments, envelope, hong_kong_clock, paid_minutes
 from ..solver.timeutils import to_minutes
 from . import compliance, validation
 from ._common import assignments_for_shifts
@@ -72,12 +72,7 @@ def _segments_json(segments) -> list[dict] | None:
 
 
 def _clock_minutes(value, fallback: str) -> int:
-    if not value:
-        return int(to_minutes(fallback))
-    text = str(value)
-    if "T" in text:
-        text = text.split("T", 1)[1]
-    return int(to_minutes(text[:5]))
+    return int(to_minutes(hong_kong_clock(value, fallback)))
 
 
 # ── load: DB rows -> pure SolverInputs ───────────────────────────────────────

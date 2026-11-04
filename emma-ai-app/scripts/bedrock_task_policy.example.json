@@ -1,0 +1,19 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": ["bedrock:InvokeModel", "bedrock:InvokeModelWithResponseStream"],
+      "Resource": [
+        "arn:aws:bedrock:*::foundation-model/MODEL_ID",
+        "arn:aws:bedrock:SOURCE_REGION:ACCOUNT_ID:inference-profile/INFERENCE_PROFILE_ID",
+        "arn:aws:bedrock:SOURCE_REGION:ACCOUNT_ID:project/default"
+      ]
+    },
+    {
+      "Effect": "Allow",
+      "Action": "bedrock:GetInferenceProfile",
+      "Resource": "arn:aws:bedrock:SOURCE_REGION:ACCOUNT_ID:inference-profile/INFERENCE_PROFILE_ID"
+    }
+  ]
+}

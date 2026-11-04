@@ -1967,6 +1967,7 @@ def load_snapshot(client, facility_id: str, roster_version_id: str) -> RosterSna
         .execute()
         .data
     )
+    task_assignments = [row for row in task_assignments if not row.get("suspended_by_leave")]
     staff_qualifications = []
     if staff:
         staff_qualifications = (

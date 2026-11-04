@@ -157,7 +157,7 @@ def facility_event_types(ctx: AuthCtx = Depends(get_ctx)):
     event id. Authenticated but not role-gated: it is a dictionary, and anyone
     who can open the roster can see the picker.
     """
-    return {"event_types": svc.event_type_catalogue()}
+    return {"event_types": svc.event_type_catalogue(ctx.client, ctx.facility_id)}
 
 
 @router.get("/facility-events", response_model=list[FacilityEventOut])

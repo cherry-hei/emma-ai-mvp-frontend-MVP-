@@ -39,7 +39,7 @@ export function CreateEventModal({ isZH, defaultDate, staffList = [], onClose, o
   }))
   const L = {
     title: isZH ? '建立特殊事件' : 'Create Special Event',
-    subtitle: isZH ? 'AI 智能排更調整' : 'AI Intelligent Scheduling',
+    subtitle: isZH ? '活動詳情及必須參加員工' : 'Event details and required participants',
     event_type: isZH ? '事件類型' : 'Event Type',
     event_title: isZH ? '標題' : 'Title',
     title_ph: isZH ? '例如：季度大掃除' : 'e.g. Quarterly deep clean',
@@ -63,6 +63,7 @@ export function CreateEventModal({ isZH, defaultDate, staffList = [], onClose, o
 
   // No hardcoded default: the first type is whatever this facility publishes.
   const [eventType, setEventType] = useState('')
+  const [customEventType, setCustomEventType] = useState('')
   const [title, setTitle] = useState('')
   const [remark, setRemark] = useState('')
   const [date, setDate] = useState(defaultDate)
@@ -96,20 +97,26 @@ export function CreateEventModal({ isZH, defaultDate, staffList = [], onClose, o
   const removeNeed = (id: string) => setNeeds((prev) => prev.filter((r) => r.id !== id))
 
   async function handleSave() {
+    if (busy) return
     setBusy(true); setErr('')
     try {
+      const selectedType = customEventType.trim() || eventType
+      if (!selectedType || !date) throw new Error(isZH ? '請選擇事件類型及日期' : 'Choose an event type and date')
+      if (startTime && endTime && endTime <= startTime) throw new Error(isZH ? '結束時間必須晚於開始時間' : 'End time must be after start time')
+      if (assignStaffEnabled && !assignedStaffIds.length) throw new Error(isZH ? '請選擇最少一名參加員工' : 'Select at least one participant')
       await api.createFacilityEvent({
-        event_type: eventType,
+        event_type: selectedType,
         event_date: date,
-        start_at: startTime ? `${date}T${startTime}:00` : undefined,
-        end_at: endTime ? `${date}T${endTime}:00` : undefined,
+        start_at: startTime ? `${date}T${startTime}:00+08:00` : undefined,
+        end_at: endTime ? `${date}T${endTime}:00+08:00` : undefined,
         title: title || undefined,
         notes: remark || undefined,
+        assigned_staff_ids: assignStaffEnabled ? assignedStaffIds : [],
         staffing_requirements: needsEnabled
           ? needs.filter((r) => r.rank && Number(r.count) > 0).map((r) => ({ rank: r.rank, count: Number(r.count) }))
           : undefined,
       })
-      onCreated(title || EVENT_TYPES.find((e) => e.value === eventType)?.label || eventType)
+      onCreated(title || customEventType.trim() || EVENT_TYPES.find((e) => e.value === eventType)?.label || eventType)
     } catch (e) {
       setErr(e instanceof Error ? e.message : 'Create failed')
     } finally {
@@ -144,6 +151,11 @@ export function CreateEventModal({ isZH, defaultDate, staffList = [], onClose, o
                 </button>
               ))}
             </div>
+            <input type="text" value={customEventType} maxLength={100}
+              onChange={(e) => setCustomEventType(e.target.value)}
+              aria-label={isZH ? '自訂事件類型' : 'Custom event type'}
+              placeholder={isZH ? '或輸入自訂事件類型' : 'Or enter a custom event type'}
+              className="mt-2 w-full px-3 py-2 border border-gray-200 rounded-xl text-sm" />
           </div>
 
           <div>
@@ -258,7 +270,7 @@ export function CreateEventModal({ isZH, defaultDate, staffList = [], onClose, o
 
         <div className="px-6 py-4 border-t border-gray-100 flex gap-2 justify-end flex-shrink-0">
           <button onClick={onClose} className="px-3 py-1.5 text-xs rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50">{L.cancel}</button>
-          <button onClick={handleSave} disabled={busy || !eventType}
+          <button onClick={handleSave} disabled={busy || !(customEventType.trim() || eventType) || !date}
             className="px-4 py-1.5 text-xs rounded-lg text-white font-semibold disabled:opacity-60" style={{ background: PINK }}>
             {busy ? '…' : L.save}
           </button>

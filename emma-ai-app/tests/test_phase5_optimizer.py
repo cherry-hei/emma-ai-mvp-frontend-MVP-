@@ -4,9 +4,11 @@ from __future__ import annotations
 from dataclasses import replace
 from datetime import date
 
+import pytest
+
 from emma_core.constants import PlanMode
 from emma_core.models import OptimizeRequest
-from emma_core.services import optimize
+from emma_core.services import organisations, optimize
 from emma_core.solver import (
     DemandSlot,
     LockedAssignment,
@@ -24,6 +26,11 @@ from tests.test_optimize_service import build_store
 
 
 LIM = SolverLimits(workers=1, seed=42, max_seconds=5)
+
+
+@pytest.fixture(autouse=True)
+def fresh_organisation_cache(monkeypatch):
+    monkeypatch.setattr(organisations, "_ORG_BY_FACILITY", {})
 
 
 def _staff(staff_id: str, rank: str = "CW", **changes) -> StaffInput:

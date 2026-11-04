@@ -6,6 +6,7 @@ import {
   confirmLeaveDecision,
   confirmLeaveRecommendation,
   confirmLeaveRevocation,
+  confirmFacilityEvent,
   confirmPeriodCreate,
   confirmStaffCreate,
   confirmStaffUpdate,
@@ -22,6 +23,19 @@ function jsonResponse(body, status = 200) {
     headers: { 'Content-Type': 'application/json' },
   })
 }
+
+test('event saves confirm selected people and equivalent Hong Kong timestamps', () => {
+  const requested = {
+    event_type: 'custom', event_date: '2026-11-03', assigned_staff_ids: ['staff-1'],
+    start_at: '2026-11-03T09:00:00+08:00', end_at: '2026-11-03T11:00:00+08:00',
+  }
+  const saved = { ...requested, id: 'event-1', start_at: '2026-11-03T01:00:00Z', end_at: '2026-11-03T03:00:00Z' }
+  assert.equal(confirmFacilityEvent(saved, requested), saved)
+  assert.throws(() => confirmFacilityEvent({ ok: true }, requested), /not confirmed/)
+  assert.throws(() => confirmFacilityEvent({ ...saved, assigned_staff_ids: ['staff-2'] }, requested), /not confirmed/)
+  assert.throws(() => confirmFacilityEvent({ ...saved, start_at: requested.end_at }, requested), /not confirmed/)
+  assert.throws(() => confirmFacilityEvent(saved, requested, 'different-event'), /not confirmed/)
+})
 
 class MemoryStorage {
   values = new Map()
