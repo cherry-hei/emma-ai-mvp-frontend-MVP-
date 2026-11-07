@@ -2,6 +2,14 @@
 
 Use this file in both Codex and Manus. Chat history is not automatically shared. Read the approved versioned task brief, API contract and acceptance criteria; record your exact branch and source commit before editing.
 
+## Founder confirmation — 7 November 2026
+
+Cherry explicitly authorises the internal real-data trial in a non-Hong-Kong environment. A complete Hong Kong production gate is not a prerequisite for this internal trial. This confirmation supersedes older blanket Hong Kong-only/no-workbook-access instructions for the internal trial, including the requested local review of the four supplied NAAC workbooks.
+
+The review may extract shift/task definitions and non-identifying roster aggregates for MVP configuration and analysis. Keep source workbooks unchanged and outside this public repository. Do not place identifiable staff/resident records or raw operational workbooks in engineering prompts or external model payloads. The trial approval does not itself authorise external model invocation or change the synthetic-tenant model gate.
+
+This is an internal trial approval, not approval for NGO staff/customer launch, a Hong Kong compliance claim, new expenditure, production deployment, migrations, AWS/IAM/DNS/billing/secrets changes or a main merge. Those actions retain their existing exact-action/target approval and review requirements.
+
 ## Current baseline and release boundary
 
 Current source/API baseline reported by Kien: main 698b9810003ead2e1cc48e53c33626bb134a185e. Amplify manager build SHA is not yet verified. The current API hostname is ap-southeast-1 Singapore. On 31 October 2026 the CEO authorised non-HK hosting and real-data internal trial for 4 November; NGO staff launch remains December. Residency is not a trial blocker. Developer tests still use disposable fixtures; only the selected live project with reviewed tenant/RBAC and backup controls may hold authorised trial data.
