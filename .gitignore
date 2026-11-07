@@ -76,6 +76,13 @@ __pycache__/
 !/docs/nov04-integration/
 /docs/nov04-integration/*
 !/docs/nov04-integration/*.md
+!/docs/nov04-integration/workflow-manifest.json
+!/docs/nov04-integration/verify-monorepo.sh
+!/docs/nov04-integration/domain/
+/docs/nov04-integration/domain/*
+!/docs/nov04-integration/domain/*.md
+!/docs/nov04-integration/domain/workflow-zh.mmd
+!/docs/nov04-integration/domain/Emma_排更工作流程圖.png
 !/docs/ZH_REVIEW.md
 !/docs/ZH_REVIEW.csv
 /.claude/launch.json

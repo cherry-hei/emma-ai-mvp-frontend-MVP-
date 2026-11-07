@@ -79,10 +79,12 @@ function confirmedMessage(value: unknown, operation: 'send' | 'read'): DirectMes
 export const messagesApi = {
   contacts: async (): Promise<MessageContact[]> => contactsFrom(await apiFetch<unknown>('/messages/contacts')),
   list: async (): Promise<DirectMessage[]> => messagesFrom(await apiFetch<unknown>('/messages')),
-  send: async (recipientProfileId: string, body: string): Promise<DirectMessage> =>
+  send: async (recipientProfileId: string, body: string, clientMessageId?: string): Promise<DirectMessage> =>
     confirmedMessage(await apiFetch<unknown>('/messages', {
       method: 'POST',
-      body: JSON.stringify({ recipient_profile_id: recipientProfileId, body }),
+      body: JSON.stringify({ recipient_profile_id: recipientProfileId, body,
+        ...(clientMessageId ? { client_message_id: clientMessageId } : {}),
+      }),
     }), 'send'),
   markRead: async (messageId: string): Promise<DirectMessage> =>
     confirmedMessage(await apiFetch<unknown>(`/messages/${encodeURIComponent(messageId)}/read`, {
