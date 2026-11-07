@@ -4,13 +4,15 @@ Use this file in both Codex and Manus. Chat history is not automatically shared.
 
 ## Current baseline and release boundary
 
-Current source/API baseline reported by Kien: main 698b9810003ead2e1cc48e53c33626bb134a185e. Amplify manager build SHA is not yet verified. The current API hostname is ap-southeast-1 Singapore. On 31 October 2026 the CEO authorised non-HK hosting and real-data internal trial for 4 November; NGO staff launch remains December. Residency is not a trial blocker. Developer tests still use disposable fixtures; only the selected live project with reviewed tenant/RBAC and backup controls may hold authorised trial data.
+Frontend main is caff1c86c44cf97231e84f24563c1bde6f414a07, released on 31 October 2026 (PR8 merged). It changed UI only; zero Actions runs and no API/DB/DNS action. Kien's previously confirmed API source/deployment baseline is 698b9810003ead2e1cc48e53c33626bb134a185e. Amplify public assets show the new UI; its build-history SHA was not independently read. The current API hostname is ap-southeast-1 Singapore. The CEO authorised non-HK hosting and coded real-data internal trial for 4 November; NGO staff launch remains December. Residency is not a trial blocker. Developer tests use disposable fixtures; only the selected live project with reviewed tenant/RBAC and backup controls may hold authorised trial data.
 
 IMPORTANT: .github/workflows/deploy-api.yml currently deploys on pushes to main and applies database migrations. A frontend-only merge can therefore affect API and database deployment. Do not push or merge main, invoke that workflow, or assume a UI release is harmless. Require reviewed exact-SHA release approval and a migration impact/rollback manifest first. Keep PR6 Draft until independently accepted.
 
 ## Responsibilities
 
 PM maintains approved scope, dependencies and evidence. UI designer/QA owns presentation and interaction acceptance. Engineer implements against actual API/schema contracts. Independent reviewer checks the diff and test evidence without trusting the implementer's claims. Business-development work drafts communications only; external sends need separate approval.
+
+1 November candidate work is agent/nov04-chat-windows-live, based on caff1c8. Chat/window implementations and independent review are by Manus; Codex CLI is installed but requires verified user authentication before execution. Saved-agent profile management is unavailable in this task; task subagents are not persistent profiles. Invitation-only onboarding and chat/window internal-UAT priority are already approved. CEO spending decision: use existing subscriptions/credits only; ask before extra credit purchases, API-key billing, paid hosts/runners or upgrades. No automatic additional spending is authorised.
 
 One task branch/worktree and one owner per editable file. No simultaneous backend edits by different workers. Resolve integration conflicts explicitly. Each task records commit, changed files, tests, runtime versus fixture evidence and remaining blockers.
 

@@ -157,10 +157,29 @@ test('messages page has no demo storage, synthetic replies, staff directory call
 
   assert.match(page, /messagesApi\.contacts\(\)/)
   assert.match(page, /messagesApi\.list\(\)/)
-  assert.match(page, /messagesApi\.send\(contactId, body\)/)
+  assert.match(page, /messagesApi\.send\(contactId, body, clientMessageId\)/)
+  assert.match(page, /sendAttempts\.current\.reset\(\)/)
+  assert.match(page, /sendAttempts\.current\.confirmed\(contactId\)/)
   assert.match(page, /requestGeneration/)
   assert.match(page, /contentGeneration/)
   assert.match(page, /draftsByContact/)
   assert.doesNotMatch(page, /localStorage|DEMO_STAFF|setTimeout|listStaff|\/staff/)
   assert.doesNotMatch(page, /Hong Kong|香港|zh-HK|synthetic/i)
+})
+
+test('an explicit retry key is sent unchanged without trusting client sender or tenant fields', async () => {
+  const previous = { preview: process.env.NEXT_PUBLIC_INTEGRATION_PREVIEW, fetch: globalThis.fetch, window: globalThis.window }
+  try {
+    delete process.env.NEXT_PUBLIC_INTEGRATION_PREVIEW
+    const storage = installBrowser()
+    storage.setItem('emma_token', 'facility-scoped-token')
+    let posted
+    globalThis.fetch = async (_url, options) => {
+      posted = JSON.parse(options.body)
+      return jsonResponse({ id: 'durable-message', sender_profile_id: 'server-profile', recipient_profile_id: 'peer-profile', body: 'Retry safely', created_at: '2026-11-01T08:00:00Z', read_at: null })
+    }
+    const { messagesApi } = await loadMessagesApi()
+    await messagesApi.send('peer-profile', 'Retry safely', 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee')
+    assert.deepEqual(posted, { recipient_profile_id: 'peer-profile', body: 'Retry safely', client_message_id: 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee' })
+  } finally { restoreEnvironment(previous) }
 })

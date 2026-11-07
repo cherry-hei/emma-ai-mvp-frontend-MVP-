@@ -28,6 +28,7 @@ from emma_core.models import (
 from emma_core.permissions import Feature, can_decide, can_read, is_self_only
 from emma_core.services import leave as svc
 from emma_core.services import recommendations as rec_svc
+from emma_core.services import request_windows as window_svc
 from emma_core.services.me import resolve_staff_id
 
 router = APIRouter(tags=["leave"])
@@ -83,13 +84,27 @@ def create_request(body: LeaveRequestCreate, ctx: AuthCtx = Depends(get_ctx)):
         .execute().data
     ):
         raise api_error(404, "not_found", "staff member not found")
-    return svc.create_request(
-        get_service_client(), ctx.facility_id,
-        staff_id=staff_id, leave_type=body.leave_type,
-        date_start=body.date_start, date_end=body.date_end, reason=body.reason,
-        remark=body.remark, requested_shift_type=body.requested_shift_type,
-        document_url=body.document_url,
-    )
+    try:
+        # User-scoped preflight gives the PWA a truthful unavailable response.
+        # The leave service repeats this for non-router callers, and the database
+        # INSERT trigger remains the final atomic authority if a window closes
+        # between these checks and the service-role write.
+        window_svc.assert_request_allowed(
+            ctx.client, ctx.facility_id, staff_id=staff_id,
+            leave_type=body.leave_type, date_start=body.date_start,
+            date_end=body.date_end,
+        )
+        return svc.create_request(
+            get_service_client(), ctx.facility_id,
+            staff_id=staff_id, leave_type=body.leave_type,
+            date_start=body.date_start, date_end=body.date_end, reason=body.reason,
+            remark=body.remark, requested_shift_type=body.requested_shift_type,
+            document_url=body.document_url,
+        )
+    except window_svc.RequestWindowUnavailable as exc:
+        raise api_error(422, "request_window_unavailable", str(exc)) from exc
+    except window_svc.RequestWindowDatabaseUnavailable as exc:
+        raise api_error(503, "request_window_unavailable", str(exc)) from exc
 
 
 @router.patch("/leave-requests/{request_id}")

@@ -64,3 +64,25 @@ The configured GitHub App refused a new Actions workflow because it lacks `workf
 - Solver successor: persistent live pin/forbid locks and literal NAAC # next-calendar-day no-work/DO, 16 solver/service and 149 related offline tests passed; full rule completeness and real month writeback remain unverified.
 - Accounts audit: existing provision scripts are not safe real-staff invite workflows; canonical role/RLS mismatch and missing unit/deputy/nurse scopes require implementation and hosted acceptance.
 - GitHub event workflow configured enabled/synced for new PR review and verified CEO Emma: commands; first executed event not yet evidenced. No automatic merge/deploy/migration, Lark/WhatsApp bot, paid always-on host or shared-chat service running.
+
+## 1 November — chat/window candidate integration
+
+This section supersedes stale baseline/PR state above. PR8 frontend main is caff1c86c44cf97231e84f24563c1bde6f414a07 and was released without API/DB/DNS actions. PR7 is open/review-ready at 72dcbb8; PR6 remains Draft. The new branch agent/nov04-chat-windows-live is a separate bounded backend candidate; no main write/deployment is authorised here.
+
+Manus chat package b66289342c683952c2c2799aa28109cd932a0917 and window package 1c38f15 were integrated as 1fb6d59 / 5d2228f. Parent registered both routers, added stable retry client_message_id intents to the manager composer, and retained inclusive legacy PWA target_end while canonical API uses target_end_exclusive. Candidate integration initially passed 129 offline backend tests, 50 UI regression tests and strict TypeScript; final rerun/DB review evidence belongs in the PR/handoff after corrections. Initial Next/Turbopack build failed solely on an external node_modules symlink; isolated dependencies and a strict rerun are being used, not ignoring errors or changing app release config.
+
+Invitation-only login lifecycle is still not implemented: existing admin seed/provision code is not invite/expiry/accept/revoke/audit acceptance. Manager profiles lacking staff/unit links and deputy system-role mapping remain explicit runtime/policy blockers. PWA/API activation, full CP-SAT/month/export, live RLS/JWT multi-user UAT and load/backup evidence remain outstanding. This work does not accept Kien's M1/M2 milestones.
+
+Codex CLI 0.166.0 installed via OpenAI's official standalone installer. Device login requested; until login status verifies authentication, all candidate implementation/review is Manus work. Lark read-only connector was created/enabled but real connection failed due to missing app credentials; no engineering conversation read and no external message sent. Persistent Manus profile management is unavailable in this task. Existing bounded GitHub event queue remains ready/synced; no duplicate trigger, paid host, extra credit purchase or constant loop was enabled. CEO numeric extra-spend cap is pending.
+
+### CEO spending update — 1 November 16:05 HKT
+
+Cherry confirmed existing subscriptions/credits only. Ask before any necessary additional spending; no automatic extra-credit purchase, API-key billing fallback, new paid runner/hosting or upgrade. This supersedes the earlier pending-numeric-cap note. Codex remains installed but not authenticated as of the check; the current device code is supplied by the CLI, not found in ChatGPT settings. The user provided the specific Lark workspace messenger URL for connection; unrelated chats and external sends remain out of scope.
+
+### 1 November SQL correction and Codex activation
+
+The independent local PostgreSQL review reproduced 3 high window defects (close/write race, semantic update bypass, unknown-role reads) and 1 reason-idempotency defect. One correction round fixed all four; the reviewer-owned fresh disposable PostgreSQL harness passed 47/47 checks and dropped its DB. This is local fixture evidence, not hosted Supabase/JWT/PostgREST acceptance. Parent integrated rerun count is recorded in final PR/handoff.
+
+Codex device login succeeded at 16:15 HKT via existing ChatGPT subscription. A real finite Codex workspace-write engineering task is now executing on agent/nov04-autoapproval-codex, separate from chat/window edits. No paid API key, upgrade, extra credit purchase, dangerous sandbox bypass or unattended loop was enabled. Staff GitHub main 689aea230b570b4bde915b8d377f6ac46048ddbc was delivered as exact source ZIP and manifest. Its chat/window wrappers still intentionally throw unavailable; a later PWA client implementation is required, not a claim that they currently call new routes.
+
+Deployment discovery: Supabase connector enabled and rechecked, projects=[]; GitHub deploy-variable reads return 403 Resource not accessible by integration. Existing deployment workflow is active/readable; last successful run 35721064048 is 698b981. Exact database/ledger/backup/CORS target facts remain unavailable. Do not dispatch deploy-api.yml and unknowingly apply all pending migrations.

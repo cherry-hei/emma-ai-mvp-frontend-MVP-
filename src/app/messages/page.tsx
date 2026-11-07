@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useLang } from '@/components/layout/LanguageContext'
 import { useAuth } from '@/components/layout/AuthContext'
 import { messagesApi, type DirectMessage, type MessageContact } from '@/lib/messages-api'
+import { MessageSendAttempts } from '@/lib/message-send-attempts'
 
 const MAX_MESSAGE_LENGTH = 1_000
 const POLL_INTERVAL_MS = 30_000
@@ -49,6 +50,7 @@ export default function MessagesPage() {
   const selectedIdRef = useRef<string | null>(null)
   const inputRef = useRef('')
   const draftsByContact = useRef<Record<string, string>>({})
+  const sendAttempts = useRef(new MessageSendAttempts())
 
   const [contacts, setContacts] = useState<MessageContact[]>([])
   const [messages, setMessages] = useState<DirectMessage[]>([])
@@ -164,6 +166,7 @@ export default function MessagesPage() {
     contentGeneration.current += 1
     sendingRef.current = false
     draftsByContact.current = {}
+    sendAttempts.current.reset()
     selectedIdRef.current = null
     inputRef.current = ''
     setContacts([])
@@ -255,7 +258,10 @@ export default function MessagesPage() {
 
   const updateDraft = useCallback((value: string) => {
     setDraft(value)
-    if (selectedIdRef.current) rememberDraft(selectedIdRef.current, value)
+    if (selectedIdRef.current) {
+      sendAttempts.current.discardIfChanged(selectedIdRef.current, value.trim())
+      rememberDraft(selectedIdRef.current, value)
+    }
     if (issue === 'send') setIssue(null)
   }, [issue, rememberDraft, setDraft])
 
@@ -273,7 +279,8 @@ export default function MessagesPage() {
     setIssue(null)
 
     try {
-      const confirmed = await messagesApi.send(contactId, body)
+      const clientMessageId = sendAttempts.current.keyFor(contactId, body)
+      const confirmed = await messagesApi.send(contactId, body, clientMessageId)
       if (confirmed.recipient_profile_id !== contactId || confirmed.body !== body) {
         throw new Error('Message confirmation did not match the selected contact.')
       }
@@ -286,6 +293,7 @@ export default function MessagesPage() {
       contentGeneration.current += 1
       setMessages((current) => mergeMessages(current, [confirmed]))
       delete draftsByContact.current[contactId]
+      sendAttempts.current.confirmed(contactId)
       setDraft('')
       // The write response, rather than an optimistic placeholder, is the only
       // source used here. Refresh in the background for other-server updates.
