@@ -10,7 +10,9 @@ from __future__ import annotations
 
 import json
 import math
+import uuid
 from collections import Counter
+from dataclasses import replace
 from datetime import date as Date, datetime, timedelta, timezone
 
 from ..constants import JobStatus, PlanMode, RosterStatus, SolveStatus
@@ -331,7 +333,7 @@ def _source_version(client, facility_id, period_id, source_version_id):
 
 def load_inputs(client, facility_id: str, period_id: str, *, source_version_id=None,
                 include_staff_ids=None, exclude_staff_ids=None,
-                locked_assignments=None) -> SolverInputs:
+                locked_assignments=None, analysis_snapshot=None) -> SolverInputs:
     # SQL: select * from roster_periods
     #      where id = :period_id and facility_id = :facility_id
     periods = (client.table("roster_periods").select("*")
@@ -355,11 +357,12 @@ def load_inputs(client, facility_id: str, period_id: str, *, source_version_id=N
     # denormalised row set.
     #
     # SQL: select * from shifts where roster_version_id = :source_version_id
-    shifts = client.table("shifts").select("*").eq("roster_version_id", src["id"]).execute().data
+    shifts = (client.table("shifts").select("*").eq("facility_id", facility_id)
+              .eq("roster_version_id", src["id"]).execute().data)
     shift_ids = [s["id"] for s in shifts]
     assigns = []
     if shift_ids:
-        assigns = assignments_for_shifts(client, shift_ids)
+        assigns = assignments_for_shifts(client, shift_ids, facility_id=facility_id)
 
     # SQL: select * from staff where facility_id = :facility_id and status = 'active'
     staff_rows = (client.table("staff").select("*")
@@ -423,6 +426,19 @@ def load_inputs(client, facility_id: str, period_id: str, *, source_version_id=N
                 .gte("date", str(period_start)).lte("date", str(period_end))
                 .execute().data)
     cal_by_date = _calendar_by_date(calendar, facility_id)
+
+    analysis_profile = None
+    nonworking_cells = ()
+    if analysis_snapshot:
+        from . import roster_analysis
+        analysis_profile = roster_analysis.parse(analysis_snapshot["profile"])
+        if analysis_profile.status != "confirmed":
+            raise ValueError("analysis profile is not confirmed")
+        shifts, nonworking_cells = roster_analysis.prepare_generation(
+            client, facility_id, analysis_profile, period_start, period_end,
+            shifts, assigns, staff_rows, leave_requests,
+        )
+        assigns = []  # reviewed demand replaces working cells; no inferred source preferences
 
     night_policy = _effective_config(
         rule_definitions, facility_id, "night_chain", period_start,
@@ -554,6 +570,25 @@ def load_inputs(client, facility_id: str, period_id: str, *, source_version_id=N
             work_pattern=_work_pattern(part_time_policy, employment_type),
         ))
 
+    if analysis_profile:
+        roles_by_rank = {role.rank: role for role in analysis_profile.roles}
+        staff = [replace(
+            st, min_rest_minutes=roles_by_rank[st.rank].min_rest_minutes,
+            allowed_shift_types=frozenset(roles_by_rank[st.rank].allowed_codes),
+            contracted_period_minutes=roles_by_rank[st.rank].weekly_minutes * 6
+                - sum(period_start <= d <= period_end for d in analysis_profile.holiday_dates)
+                * roles_by_rank[st.rank].ph_minutes,
+            max_period_minutes=0,
+            max_weekly_minutes=roles_by_rank[st.rank].max_weekly_minutes,
+            weekly_credit_offsets=tuple((day, mins) for sid, day, _, mins in nonworking_cells if sid == st.id),
+            night_cooldown=False, an_monthly_limit=0, nurse_night_monthly_limit=0,
+            prior_an_counts=(), prior_night_counts=(), long_shift_cost_scaled=100,
+            work_pattern=WorkPatternInput(),
+        ) for st in staff]
+        # Do not import the withdrawn B-home night chain or agency assumptions.
+        night_types = set()
+        agency_limits = AgencyLimitsInput(external_employment_types=frozenset())
+
     # ── demand + baseline + leave (all from the source version) ──
     assign_by_shift: dict[str, list] = {}
     for a in assigns:
@@ -563,6 +598,7 @@ def load_inputs(client, facility_id: str, period_id: str, *, source_version_id=N
     baseline: list[BaselineCell] = []
     leave: set[tuple[str, Date]] = set()
     preferences: list[PreferenceInput] = []
+    leave.update((sid, day) for sid, day, _, _ in nonworking_cells)
     for request in leave_requests:
         start = max(period_start, _as_date(request["date_start"]))
         end = min(period_end, _as_date(request["date_end"]))
@@ -622,7 +658,7 @@ def load_inputs(client, facility_id: str, period_id: str, *, source_version_id=N
             unit_id=s.get("unit_id"), required_rank=rank,
             required_count=int(s.get("required_count") or 1),
             requires_medication=rank in _AUDIT_RANKS,
-            agency_allowed=_agency_allowed(cal, s["shift_type"], agency_policy),
+            agency_allowed=False if analysis_profile else _agency_allowed(cal, s["shift_type"], agency_policy),
             agency_cost_scaled=round(float(cal["agency_cost_multiplier"]) * 10) if cal else 10,
         ))
 
@@ -666,6 +702,8 @@ def load_inputs(client, facility_id: str, period_id: str, *, source_version_id=N
     ratio_rules = _ratio_rule_inputs(
         rules, facility_id, period_start, period_end
     )
+    if not demand:
+        raise ValueError("no working demand: select a confirmed analysis configuration or fill a source roster first")
 
     resident_counts = [ResidentCountInput(
         date=_as_date(rc["date"]), resident_count=int(rc["resident_count"]),
@@ -688,6 +726,7 @@ def load_inputs(client, facility_id: str, period_id: str, *, source_version_id=N
         exclude_staff_ids=frozenset(exclude_staff_ids or []),
         night_shift_types=frozenset(night_types),
         agency_limits=agency_limits,
+        nonworking_cells=nonworking_cells,
     )
 
 
@@ -712,12 +751,11 @@ def run_optimization(client, request: OptimizeRequest, *, persist: bool = True,
             include_staff_ids=request.include_staff_ids,
             exclude_staff_ids=request.exclude_staff_ids,
             locked_assignments=request.locked_assignments,
+            analysis_snapshot=request.analysis_snapshot,
         )
         limits = SolverLimits(max_seconds=request.solver_limits.max_seconds,
                               workers=request.solver_limits.workers,
                               seed=request.solver_limits.seed)
-        if persist and request.writeback.archive_previous_auto:
-            _archive_previous(client, request.facility_id, request.period_id)
 
         meta: dict | None = None
         if pareto:
@@ -730,10 +768,25 @@ def run_optimization(client, request: OptimizeRequest, *, persist: bool = True,
         options: list[RosterOption] = []
         for res in solved:
             version_id = None
-            if persist and res.status != SolveStatus.INFEASIBLE:
+            if persist and res.status in {SolveStatus.FEASIBLE, SolveStatus.OPTIMAL}:
                 version_id = _writeback_version(client, request, inputs, res)
-            options.append(_to_option(res, version_id))
+            option = _to_option(res, version_id)
+            if request.analysis_snapshot and version_id:
+                option.hard_violation_count += 1
+                option.infeasible_reasons.append("Opening carry, PH allocation and complete task review are not recorded; draft only.")
+            options.append(option)
 
+        # Preserve earlier drafts on failure. Only replace them after new options exist.
+        if persist and request.writeback.archive_previous_auto and any(o.roster_version_id for o in options):
+            keep = {o.roster_version_id for o in options if o.roster_version_id}
+            previous = (client.table("roster_versions").select("id")
+                        .eq("facility_id", request.facility_id).eq("period_id", request.period_id)
+                        .in_("version_type", [PlanMode.A, PlanMode.B, PlanMode.C])
+                        .eq("status", RosterStatus.DRAFT).execute().data)
+            for row in previous:
+                if row["id"] not in keep:
+                    (client.table("roster_versions").update({"status": RosterStatus.ARCHIVED})
+                     .eq("facility_id", request.facility_id).eq("id", row["id"]).execute())
         _complete_job(client, job_id, options, meta=meta)
         return OptimizeResponse(job_id=job_id, status=JobStatus.COMPLETED,
                                 roster_options=options)
@@ -970,15 +1023,34 @@ def _writeback_part_time_cl(client, facility_id: str, version_id: str,
 
 
 def _writeback_version(client, request, inputs, res) -> str:
+    from .roster_analysis import INCOMPLETE_MARKER
     # SQL: insert into roster_versions
     #        (facility_id, period_id, version_type, label, status, created_by)
     #      values (:facility_id, :period_id, :plan_mode, :label, 'draft', :created_by)
     #      returning id
     version_id = (client.table("roster_versions").insert({
         "facility_id": request.facility_id, "period_id": request.period_id,
-        "version_type": str(res.plan_mode), "label": f"{res.label} · auto",
-        "status": RosterStatus.DRAFT, "created_by": request.created_by,
+        "version_type": str(res.plan_mode),
+        "label": f"{res.label}{INCOMPLETE_MARKER}" if request.analysis_snapshot else f"{res.label} · auto",
+        "status": RosterStatus.DRAFT,
+        "created_by": request.created_by,
     }).execute().data[0]["id"])
+
+    try:
+        return _writeback_version_content(client, request, inputs, res, version_id)
+    except Exception:
+        if request.analysis_snapshot:
+            # The pending marker also blocks export/publication if cleanup fails.
+            # Only a completed writeback removes it.
+            try:
+                (client.table("roster_versions").update({"status": RosterStatus.ARCHIVED})
+                 .eq("facility_id", request.facility_id).eq("id", version_id).execute())
+            except Exception:
+                pass  # retain the original writeback error and incomplete marker
+        raise
+
+
+def _writeback_version_content(client, request, inputs, res, version_id):
 
     # one fresh shift per demand slot; keep source-slot -> new-shift id map
     #
@@ -1066,6 +1138,8 @@ def _writeback_version(client, request, inputs, res) -> str:
     _writeback_part_time_cl(
         client, request.facility_id, version_id, inputs, solved_assignments
     )
+    if request.analysis_snapshot:
+        _writeback_analysis_nonworking(client, request, version_id, inputs, solved_assignments)
 
     # SQL: insert into roster_option_scores
     #        (facility_id, roster_version_id, plan_mode, constraint_score,
@@ -1078,10 +1152,10 @@ def _writeback_version(client, request, inputs, res) -> str:
     client.table("roster_option_scores").insert({
         "facility_id": request.facility_id, "roster_version_id": version_id,
         "plan_mode": str(res.plan_mode), "constraint_score": res.constraint_score,
-        "hard_violation_count": res.hard_violation_count,
+        "hard_violation_count": res.hard_violation_count + int(bool(request.analysis_snapshot)),
         "soft_penalty_total": res.soft_penalty_total,
-        "objective_weights_json": res.weights,
-        "infeasible_reasons_json": list(res.infeasible_reasons),
+        "objective_weights_json": {**res.weights, **({"analysis_snapshot": request.analysis_snapshot} if request.analysis_snapshot else {})},
+        "infeasible_reasons_json": [*res.infeasible_reasons, *(["Opening carry, PH allocation and complete task review are not recorded; draft only."] if request.analysis_snapshot else [])],
     }).execute()
 
     vrows = [{
@@ -1098,7 +1172,36 @@ def _writeback_version(client, request, inputs, res) -> str:
         #      returning *
         client.table("violation_log").insert(vrows).execute()
 
+    if request.analysis_snapshot:
+        (client.table("roster_versions").update({"status": RosterStatus.DRAFT, "label": f"{res.label} · auto"})
+         .eq("facility_id", request.facility_id).eq("id", version_id).execute())
     return version_id
+
+
+def _writeback_analysis_nonworking(client, request, version_id, inputs, assignments):
+    from .roster_analysis import parse
+    profile = parse(request.analysis_snapshot["profile"])
+    codes = {c.code: c for c in profile.codes}
+    slots = {s.id: s for s in inputs.demand}
+    occupied = {(a.staff_id, slots[a.slot_id].date) for a in assignments if a.staff_id}
+    held = {(sid, day): (code, minutes) for sid, day, code, minutes in inputs.nonworking_cells}
+    shifts, rows = [], []
+    for person in inputs.staff:
+        if (inputs.include_staff_ids and person.id not in inputs.include_staff_ids) or person.id in inputs.exclude_staff_ids:
+            continue
+        for day in _days(inputs.period_start, inputs.period_end):
+            if (person.id, day) in occupied:
+                continue
+            code, minutes = held.get((person.id, day), (profile.off_code, codes[profile.off_code].credit_minutes))
+            sid = str(uuid.uuid4())
+            shifts.append({"id": sid, "facility_id": request.facility_id, "roster_version_id": version_id,
+                           "date": day.isoformat(), "shift_type": code, "is_working": False,
+                           "paid_minutes": minutes, "required_count": 1, "cross_midnight": False})
+            rows.append({"facility_id": request.facility_id, "shift_id": sid,
+                         "staff_id": person.id, "role": person.rank, "status": "assigned", "is_agency": False})
+    for index in range(0, len(shifts), 400):
+        client.table("shifts").insert(shifts[index:index+400]).execute()
+        client.table("shift_assignments").insert(rows[index:index+400]).execute()
 
 
 # ── optimization_jobs lifecycle ──────────────────────────────────────────────

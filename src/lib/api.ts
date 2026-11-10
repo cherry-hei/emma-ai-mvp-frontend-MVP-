@@ -51,6 +51,11 @@ export interface StoredSession {
   facility_name: string | null
 }
 
+export interface RosterAnalysisConfig {
+  id: string; version: number; effective_from?: string | null
+  config_json: { label: string; status: 'proposed' | 'confirmed'; [key: string]: unknown }
+}
+
 let cachedToken: string | null = null
 let credentialsGeneration = 0
 
@@ -288,6 +293,10 @@ async function apiFetchForCredentials<T>(
 
 // ── typed endpoint helpers ───────────────────────────────────────────────────
 export const api = {
+  rosterAnalysisConfigs: () => apiFetch<RosterAnalysisConfig[]>('/facility-configs?config_key=roster_analysis'),
+  saveRosterAnalysis: (profile: Record<string, unknown>) => apiFetch<RosterAnalysisConfig>('/facility-configs', {
+    method: 'POST', body: JSON.stringify({ config_key: 'roster_analysis', config_json: profile }),
+  }),
   me: () => apiFetch<Profile>('/auth/me'),
 
   listStaff: (params?: { search?: string; rank?: string }) => {
@@ -525,13 +534,14 @@ export const api = {
     apiFetch<{ ok: boolean }>('/resident-counts', { method: 'POST', body: JSON.stringify(body) }),
 
   // Async solve - returns a pending job_id; poll job() until status === 'completed'.
-  optimizeRoster: (body: { period_id: string; plan_mode?: string; source_version_id?: string }) =>
+  optimizeRoster: (body: { period_id: string; plan_mode?: string; source_version_id?: string; analysis_config_id?: string }, signal?: AbortSignal) =>
     apiFetch<OptimizeResponse>('/optimize-roster', {
       method: 'POST',
+      signal,
       body: JSON.stringify({ facility_id: '', ...body }), // facility_id is overridden from the token
     }),
 
-  job: (jobId: string) => apiFetch<JobView>(`/optimization-jobs/${jobId}`),
+  job: (jobId: string, signal?: AbortSignal) => apiFetch<JobView>(`/optimization-jobs/${jobId}`, { signal }),
 
   // ── Phase 3 · approval centre ───────────────────────────────────────────────
   leaveRequests: (params?: {
@@ -713,8 +723,10 @@ export async function downloadReportFile(
 }
 
 // Download the full workbook for the selected period.
-export async function downloadNaacWorkbook(periodId: string, signal?: AbortSignal): Promise<void> {
-  return downloadFile(`/exports/naac/tahduty.xlsx?period_id=${encodeURIComponent(periodId)}`, 'xlsx', 'NAAC-TAHDuty.xlsx', signal)
+export async function downloadNaacWorkbook(periodId: string, signal?: AbortSignal, versionId?: string): Promise<void> {
+  const params = new URLSearchParams({ period_id: periodId })
+  if (versionId) params.set('version_id', versionId)
+  return downloadFile(`/exports/naac/tahduty.xlsx?${params}`, 'xlsx', 'NAAC-TAHDuty.xlsx', signal)
 }
 
 async function downloadFile(path: string, format: 'csv' | 'xlsx' | 'pdf', fallbackName: string, signal?: AbortSignal): Promise<void> {
@@ -754,27 +766,42 @@ async function downloadFile(path: string, format: 'csv' | 'xlsx' | 'pdf', fallba
 // Enqueue a solve and wait for the resulting options.
 export async function optimizeAndPoll(
   periodId: string,
-  opts: { onStatus?: (s: string) => void; intervalMs?: number; timeoutMs?: number; sourceVersionId?: string } = {},
+  opts: { onStatus?: (s: string) => void; intervalMs?: number; timeoutMs?: number; sourceVersionId?: string; analysisConfigId?: string; signal?: AbortSignal } = {},
 ): Promise<RosterOption[]> {
-  const { onStatus, intervalMs = 1500, timeoutMs = 120_000, sourceVersionId } = opts
-  const { job_id } = await api.optimizeRoster({ period_id: periodId, source_version_id: sourceVersionId })
+  const { onStatus, intervalMs = 1500, timeoutMs = 120_000, sourceVersionId, analysisConfigId, signal } = opts
+  signal?.throwIfAborted()
+  const identity = getSession()?.user_id + ':' + getSession()?.facility_id
+  const assertCurrent = () => {
+    signal?.throwIfAborted()
+    if (identity !== getSession()?.user_id + ':' + getSession()?.facility_id) throw new Error('Generation belongs to a previous session.')
+  }
+  const { job_id } = await api.optimizeRoster({ period_id: periodId, source_version_id: sourceVersionId, analysis_config_id: analysisConfigId }, signal)
+  assertCurrent()
+  if (!job_id) throw new Error('The server did not return a generation job.')
   onStatus?.('pending')
   const deadline = Date.now() + timeoutMs
   let transientFails = 0
   for (;;) {
     await new Promise((r) => setTimeout(r, intervalMs))
+    assertCurrent()
     if (Date.now() > deadline) throw new Error('optimization timed out')
     let job: JobView
     try {
-      job = await api.job(job_id)
+      job = await api.job(job_id, signal)
       transientFails = 0
     } catch (e) {
+      assertCurrent()
       // tolerate a few transient poll failures (network blip) before giving up
       if (++transientFails >= 3) throw e
       continue
     }
+    assertCurrent()
     onStatus?.(job.status)
-    if (job.status === 'completed') return job.result_json?.roster_options ?? []
+    if (job.status === 'completed') {
+      const options = job.result_json?.roster_options
+      if (!Array.isArray(options) || !options.length) throw new Error('Generation completed without roster options.')
+      return options
+    }
     if (job.status === 'failed') {
       throw new Error((job.error_json as { message?: string } | null)?.message || 'optimization failed')
     }

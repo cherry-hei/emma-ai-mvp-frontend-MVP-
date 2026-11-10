@@ -13,6 +13,7 @@ from api.deps import AuthCtx, api_error, get_ctx
 from emma_core.models import FacilityConfigRequest, ShiftDefinitionRequest
 from emma_core.services import audit
 from emma_core.services import facility_config as svc
+from emma_core.permissions import normalise_role, SystemRole
 
 router = APIRouter(tags=["configs"])
 WRITE_ROLES = {"superintendent", "admin"}
@@ -41,7 +42,11 @@ def config_keys():
 @router.post("/facility-configs", status_code=201)
 def put_config(body: FacilityConfigRequest, ctx: AuthCtx = Depends(get_ctx)):
     """Publish a new version of one config key, retiring the previous one."""
-    _require_write_role(ctx)
+    if body.config_key == "roster_analysis":
+        if normalise_role(ctx.profile.role) != SystemRole.OWNER:
+            raise api_error(403, "forbidden", "Only the facility owner may confirm roster analysis settings.")
+    else:
+        _require_write_role(ctx)
     previous = svc.get_config(ctx.client, ctx.facility_id, body.config_key)
     row = svc.put_config(
         ctx.client, ctx.facility_id, config_key=body.config_key,

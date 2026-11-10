@@ -1,0 +1,318 @@
+{
+  "$defs": {
+    "Code": {
+      "additionalProperties": false,
+      "properties": {
+        "code": {
+          "maxLength": 16,
+          "minLength": 1,
+          "pattern": "^[^=+@\\r\\n]+$",
+          "title": "Code",
+          "type": "string"
+        },
+        "active": {
+          "title": "Active",
+          "type": "boolean"
+        },
+        "credit_minutes": {
+          "maximum": 1440,
+          "minimum": 0,
+          "title": "Credit Minutes",
+          "type": "integer"
+        },
+        "is_working": {
+          "title": "Is Working",
+          "type": "boolean"
+        },
+        "am": {
+          "default": 0,
+          "maximum": 2,
+          "minimum": 0,
+          "title": "Am",
+          "type": "number"
+        },
+        "pm": {
+          "default": 0,
+          "maximum": 2,
+          "minimum": 0,
+          "title": "Pm",
+          "type": "number"
+        },
+        "night": {
+          "default": 0,
+          "maximum": 2,
+          "minimum": 0,
+          "title": "Night",
+          "type": "number"
+        },
+        "sleepover": {
+          "default": 0,
+          "maximum": 2,
+          "minimum": 0,
+          "title": "Sleepover",
+          "type": "number"
+        },
+        "ph": {
+          "default": 0,
+          "maximum": 1,
+          "minimum": 0,
+          "title": "Ph",
+          "type": "number"
+        },
+        "al": {
+          "default": 0,
+          "maximum": 1,
+          "minimum": 0,
+          "title": "Al",
+          "type": "number"
+        },
+        "duty_officer": {
+          "default": 0,
+          "maximum": 1,
+          "minimum": 0,
+          "title": "Duty Officer",
+          "type": "number"
+        },
+        "remarks": {
+          "default": "",
+          "maxLength": 600,
+          "title": "Remarks",
+          "type": "string"
+        },
+        "source": {
+          "maxLength": 240,
+          "minLength": 1,
+          "title": "Source",
+          "type": "string"
+        }
+      },
+      "required": [
+        "code",
+        "active",
+        "credit_minutes",
+        "is_working",
+        "source"
+      ],
+      "title": "Code",
+      "type": "object"
+    },
+    "Demand": {
+      "additionalProperties": false,
+      "properties": {
+        "code": {
+          "title": "Code",
+          "type": "string"
+        },
+        "rank": {
+          "title": "Rank",
+          "type": "string"
+        },
+        "weekdays": {
+          "items": {
+            "type": "integer"
+          },
+          "maxItems": 7,
+          "minItems": 1,
+          "title": "Weekdays",
+          "type": "array"
+        },
+        "count": {
+          "maximum": 100,
+          "minimum": 1,
+          "title": "Count",
+          "type": "integer"
+        },
+        "day_type": {
+          "default": "all",
+          "enum": [
+            "all",
+            "public_holiday",
+            "non_public_holiday"
+          ],
+          "title": "Day Type",
+          "type": "string"
+        },
+        "source": {
+          "maxLength": 240,
+          "minLength": 1,
+          "title": "Source",
+          "type": "string"
+        }
+      },
+      "required": [
+        "code",
+        "rank",
+        "weekdays",
+        "count",
+        "source"
+      ],
+      "title": "Demand",
+      "type": "object"
+    },
+    "Role": {
+      "additionalProperties": false,
+      "properties": {
+        "rank": {
+          "maxLength": 32,
+          "minLength": 1,
+          "title": "Rank",
+          "type": "string"
+        },
+        "weekly_minutes": {
+          "exclusiveMinimum": 0,
+          "maximum": 10080,
+          "title": "Weekly Minutes",
+          "type": "integer"
+        },
+        "ph_minutes": {
+          "maximum": 1440,
+          "minimum": 0,
+          "title": "Ph Minutes",
+          "type": "integer"
+        },
+        "max_weekly_minutes": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "maximum": 10080,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Max Weekly Minutes"
+        },
+        "min_rest_minutes": {
+          "maximum": 2880,
+          "minimum": 0,
+          "title": "Min Rest Minutes",
+          "type": "integer"
+        },
+        "allowed_codes": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 400,
+          "minItems": 1,
+          "title": "Allowed Codes",
+          "type": "array"
+        },
+        "leave_codes": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "title": "Leave Codes",
+          "type": "object"
+        }
+      },
+      "required": [
+        "rank",
+        "weekly_minutes",
+        "ph_minutes",
+        "min_rest_minutes",
+        "allowed_codes"
+      ],
+      "title": "Role",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": 1,
+      "default": 1,
+      "title": "Schema Version",
+      "type": "integer"
+    },
+    "label": {
+      "maxLength": 120,
+      "minLength": 1,
+      "title": "Label",
+      "type": "string"
+    },
+    "status": {
+      "default": "proposed",
+      "enum": [
+        "proposed",
+        "confirmed"
+      ],
+      "title": "Status",
+      "type": "string"
+    },
+    "evidence": {
+      "items": {
+        "type": "string"
+      },
+      "maxItems": 30,
+      "minItems": 1,
+      "title": "Evidence",
+      "type": "array"
+    },
+    "codes": {
+      "items": {
+        "$ref": "#/$defs/Code"
+      },
+      "maxItems": 400,
+      "minItems": 1,
+      "title": "Codes",
+      "type": "array"
+    },
+    "roles": {
+      "items": {
+        "$ref": "#/$defs/Role"
+      },
+      "maxItems": 40,
+      "minItems": 1,
+      "title": "Roles",
+      "type": "array"
+    },
+    "demand": {
+      "items": {
+        "$ref": "#/$defs/Demand"
+      },
+      "maxItems": 300,
+      "minItems": 1,
+      "title": "Demand",
+      "type": "array"
+    },
+    "off_code": {
+      "title": "Off Code",
+      "type": "string"
+    },
+    "duty_officer_task_code": {
+      "anyOf": [
+        {
+          "maxLength": 16,
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Duty Officer Task Code"
+    },
+    "holiday_dates": {
+      "items": {
+        "format": "date",
+        "type": "string"
+      },
+      "maxItems": 366,
+      "title": "Holiday Dates",
+      "type": "array"
+    }
+  },
+  "required": [
+    "label",
+    "evidence",
+    "codes",
+    "roles",
+    "demand",
+    "off_code"
+  ],
+  "title": "AnalysisProfile",
+  "type": "object"
+}

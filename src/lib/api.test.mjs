@@ -116,6 +116,42 @@ function workbookResponse() {
   } })
 }
 
+test('selected roster version and analysis config reach their authenticated endpoints', async () => {
+  const previous = { preview: process.env.NEXT_PUBLIC_INTEGRATION_PREVIEW, fetch: globalThis.fetch, window: globalThis.window }
+  const downloads = captureDownloads()
+  try {
+    delete process.env.NEXT_PUBLIC_INTEGRATION_PREVIEW
+    const storage = installBrowser(); storage.setItem('emma_token', 'fixture-token')
+    const requests = []
+    globalThis.fetch = async (url, options) => {
+      requests.push({ url: String(url), options })
+      if (String(url).includes('/exports/')) return workbookResponse()
+      if (String(url).endsWith('/optimize-roster')) return jsonResponse({ job_id: 'job1', status: 'pending' })
+      return jsonResponse({ id: 'job1', status: 'completed', result_json: { roster_options: [{ roster_version_id: 'generated1' }] } })
+    }
+    const api = await loadApi()
+    const result = await api.optimizeAndPoll('period1', { sourceVersionId: 'source1', analysisConfigId: 'config1', intervalMs: 0 })
+    assert.equal(result[0].roster_version_id, 'generated1')
+    assert.deepEqual(JSON.parse(requests[0].options.body), { facility_id: '', period_id: 'period1', source_version_id: 'source1', analysis_config_id: 'config1' })
+    await api.downloadNaacWorkbook('period1', undefined, 'generated1')
+    assert.match(requests.at(-1).url, /period_id=period1&version_id=generated1$/)
+    assert.equal(new Headers(requests.at(-1).options.headers).get('Authorization'), 'Bearer fixture-token')
+  } finally { downloads.restore(); restoreEnvironment(previous) }
+})
+
+test('generation rejects empty results and stops polling after cancellation', async () => {
+  const previous = { preview: process.env.NEXT_PUBLIC_INTEGRATION_PREVIEW, fetch: globalThis.fetch, window: globalThis.window }
+  try {
+    delete process.env.NEXT_PUBLIC_INTEGRATION_PREVIEW; installBrowser()
+    globalThis.fetch = async url => String(url).endsWith('/optimize-roster')
+      ? jsonResponse({ job_id: 'job1' }) : jsonResponse({ status: 'completed', result_json: {} })
+    const api = await loadApi()
+    await assert.rejects(api.optimizeAndPoll('period1', { intervalMs: 0 }), /without roster options/)
+    const controller = new AbortController(); controller.abort()
+    await assert.rejects(api.optimizeAndPoll('period1', { signal: controller.signal }), /aborted/)
+  } finally { restoreEnvironment(previous) }
+})
+
 test('workbook downloads refresh the issuing session and preserve the draft filename', async () => {
   const previous = { preview: process.env.NEXT_PUBLIC_INTEGRATION_PREVIEW, fetch: globalThis.fetch, window: globalThis.window }
   const downloads = captureDownloads()

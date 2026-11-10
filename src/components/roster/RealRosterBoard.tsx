@@ -4,7 +4,10 @@
 // generate → edit → deterministic rule check → manager publish.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { api, optimizeAndPoll } from '@/lib/api'
+import { api, optimizeAndPoll, downloadNaacWorkbook, type RosterAnalysisConfig } from '@/lib/api'
+import { useAuth } from '@/components/layout/AuthContext'
+import { canWrite, normaliseRole } from '@/lib/permissions'
+import { RosterAnalysisSettings } from './RosterAnalysisSettings'
 import type {
   OptionScoreOut, PeriodOut, RosterCell, RosterGrid, RosterOption,
   ShiftDef, TaskDefOut, ValidationOut, VersionOut,
@@ -117,6 +120,7 @@ function groupRatios(items: NonNullable<ValidationOut['ratio_checks']>): RatioGr
 }
 
 export function RealRosterBoard() {
+  const { user } = useAuth()
   const { lang } = useLang()
   const isZH = lang === 'zh'
 
@@ -124,6 +128,12 @@ export function RealRosterBoard() {
   const [periodId, setPeriodId] = useState('')
   const [versions, setVersions] = useState<VersionOut[]>([])
   const [versionId, setVersionId] = useState('') // '' = default (latest manual)
+  const [analysisConfigs, setAnalysisConfigs] = useState<RosterAnalysisConfig[]>([])
+  const [analysisConfigId, setAnalysisConfigId] = useState('')
+  const [analysisOpen, setAnalysisOpen] = useState(false)
+  const [exporting, setExporting] = useState(false)
+  const generationController = useRef<AbortController | null>(null)
+  const exportController = useRef<AbortController | null>(null)
   const [grid, setGrid] = useState<RosterGrid | null>(null)
   const [shiftDefs, setShiftDefs] = useState<ShiftDef[]>([])
   const [taskDefs, setTaskDefs] = useState<TaskDefOut[]>([])
@@ -223,6 +233,19 @@ export function RealRosterBoard() {
     validationRequestRef.current += 1
     versionsRequestRef.current += 1
   }, [])
+
+  useEffect(() => {
+    let current = true
+    setAnalysisConfigs([]); setAnalysisConfigId(''); setAnalysisOpen(false)
+    api.rosterAnalysisConfigs().then(rows => { if (current) setAnalysisConfigs(rows) })
+      .catch(e => { if (current) setError(e instanceof Error ? e.message : 'Failed to load analysis settings') })
+    return () => { current = false }
+  }, [user?.facilityId])
+
+  useEffect(() => {
+    setAiLoading(false); setExporting(false); setAiOptions(null); setAiOpen(false)
+    return () => { generationController.current?.abort(); exportController.current?.abort() }
+  }, [periodId, versionId, user?.facilityId, user?.userId])
 
   useEffect(() => {
     api.shiftDefinitions().then(setShiftDefs).catch(() => {})
@@ -479,15 +502,33 @@ export function RealRosterBoard() {
 
   async function handleAI() {
     if (aiLoading || !periodId) return
+    generationController.current?.abort()
+    const controller = new AbortController()
+    generationController.current = controller
     setAiOpen(true); setAiError(''); setPublishError(''); setAiOptions(null)
     setAiLoading(true); setAiStatus('pending')
     try {
-      const options = await optimizeAndPoll(periodId, { onStatus: setAiStatus })
+      const options = await optimizeAndPoll(periodId, {
+        onStatus: status => { if (!controller.signal.aborted) setAiStatus(status) },
+        sourceVersionId: activeVersionId || undefined,
+        analysisConfigId: analysisConfigId || undefined, signal: controller.signal,
+      })
+      if (controller.signal.aborted) return
       setAiOptions(options)
       await loadVersions(periodId) // A/B/C versions now exist → tabs + score badges
     } catch (e) {
-      setAiError(e instanceof Error ? e.message : 'Optimization failed')
-    } finally { setAiLoading(false) }
+      if (!controller.signal.aborted) setAiError(e instanceof Error ? e.message : 'Optimization failed')
+    } finally { if (generationController.current === controller && !controller.signal.aborted) setAiLoading(false) }
+  }
+
+  async function handleExport() {
+    if (!periodId || !activeVersionId || exporting) return
+    const controller = new AbortController()
+    exportController.current?.abort(); exportController.current = controller
+    setExporting(true); setError('')
+    try { await downloadNaacWorkbook(periodId, controller.signal, activeVersionId) }
+    catch (e) { if (!controller.signal.aborted) setError(e instanceof Error ? e.message : 'Export failed') }
+    finally { if (exportController.current === controller && !controller.signal.aborted) setExporting(false) }
   }
 
   async function handlePublishOption(vid: string) {
@@ -575,11 +616,24 @@ export function RealRosterBoard() {
             className="text-xs px-2.5 py-1.5 border border-gray-200 rounded-lg hover:bg-gray-50">{T.newPeriod}</button>
 
           <div className="ml-auto flex items-center gap-2">
-            <button onClick={handleAI} disabled={aiLoading || !periodId}
+            <label className="text-xs">{isZH ? '生成依據' : 'Generate from'}
+              <select value={analysisConfigId} onChange={e => setAnalysisConfigId(e.target.value)} disabled={aiLoading} className="ml-2 border rounded-lg px-2 py-1.5 max-w-56" aria-label={isZH ? '生成依據' : 'Generate from'}>
+                <option value="">{isZH ? '目前更表需求' : 'Selected roster demand'}</option>
+                {analysisConfigs.filter(c => c.config_json.status === 'confirmed').map(c => <option key={c.id} value={c.id}>{c.config_json.label} · v{c.version}</option>)}
+              </select>
+            </label>
+            {normaliseRole(user?.role) === 'OWNER' && <button onClick={() => setAnalysisOpen(v => !v)} className="text-xs border rounded-lg px-2 py-1.5">{isZH ? '分析設定' : 'Analysis settings'}</button>}
+            <button onClick={handleAI} disabled={aiLoading || loading || !periodId || !activeVersionId || !canWrite(user?.role, 'roster.ai_draft')}
               className="px-3.5 py-1.5 text-white text-xs font-semibold rounded-lg disabled:opacity-60"
               style={{ background: PINK }}>{aiLoading ? T.aiBusy : T.ai}</button>
           </div>
         </div>
+
+        {analysisOpen && <RosterAnalysisSettings key={user?.facilityId} isZH={isZH} onClose={() => setAnalysisOpen(false)} onSaved={config => {
+          setAnalysisConfigs([config]); setAnalysisConfigId(config.id); setAnalysisOpen(false)
+          flash(isZH ? '已儲存分析設定，可用於生成草稿。' : 'Analysis settings saved for draft generation.')
+        }} />}
+        {analysisConfigId && <p className="text-xs text-slate-600">{isZH ? '分析生成及連動匯出使用星期一開始的六週更期；可切換月度視圖。結轉、PH及任務未覆核前，方案保留為草稿。' : 'Analysis generation and linked export use six weeks starting Monday; monthly view remains available. Carry, PH and tasks still require review.'}</p>}
 
         <div className="grid grid-cols-2 gap-2 sm:grid-cols-4" aria-label={isZH ? '更表工作流程' : 'Roster workflow'}>
           {[
@@ -726,10 +780,10 @@ export function RealRosterBoard() {
             <button onClick={() => { setFilterRank('ALL'); setFilterFloor('ALL'); setFilterSearch('') }}
               className="text-[10px] text-gray-400 hover:text-gray-600">✕ Clear</button>
             <div className="ml-auto">
-              <button onClick={() => window.open(`/api/export/roster?period_id=${periodId}`, '_blank')}
-                disabled={!periodId}
+              <button onClick={handleExport}
+                disabled={!periodId || !activeVersionId || loading || exporting}
                 className="text-xs px-3 py-1.5 border border-gray-200 rounded-lg hover:bg-gray-50 disabled:opacity-50">
-                {T.exportRoster}
+                {exporting ? (isZH ? '匯出中…' : 'Exporting…') : T.exportRoster}
               </button>
             </div>
           </div>
@@ -1138,9 +1192,17 @@ function NewPeriodModal({ isZH, onClose, onCreated }: {
           </label>
           <label className="block">
             <span className="text-[11px] font-semibold text-gray-500">{isZH ? '週期類型' : 'Cycle'}</span>
-            <select value={cycle} onChange={(e) => setCycle(e.target.value)}
+            <select value={cycle} onChange={(e) => {
+              setCycle(e.target.value)
+              if (e.target.value === '42day') {
+                const d = new Date(`${start}T00:00:00Z`)
+                d.setUTCDate(d.getUTCDate() - ((d.getUTCDay()+6)%7))
+                setStart(d.toISOString().slice(0,10)); d.setUTCDate(d.getUTCDate()+41); setEnd(d.toISOString().slice(0,10))
+              }
+            }}
               className="w-full mt-1 px-3 py-2 rounded-lg border border-gray-200 text-sm bg-white">
               <option value="28day">28day</option>
+              <option value="42day">{isZH ? '六週（NAAC連動更表）' : 'Six weeks (NAAC linked workbook)'}</option>
               <option value="natural_month">natural_month</option>
             </select>
           </label>

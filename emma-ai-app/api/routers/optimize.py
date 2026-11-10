@@ -16,6 +16,7 @@ from pydantic import BaseModel
 from api.deps import AuthCtx, api_error, get_ctx
 from emma_core.constants import PUBLISH_THRESHOLD, JobStatus
 from emma_core.db import get_service_client
+from emma_core.permissions import can_write, Feature
 from emma_core.models import (
     JobView, OptimizeRequest, OptimizeResponse, OptionScoreOut, ValidationOut,
     ViolationOut,
@@ -61,16 +62,17 @@ def _authorize_optimize(req: OptimizeRequest, ctx: AuthCtx) -> None:
     """Stamp the tenant from the token and authorize caller-supplied ids under RLS
     before the service-role solver touches them - else a foreign source_version_id
     would leak another facility's roster."""
-    if str(ctx.profile.role) not in OPTIMIZE_WRITE_ROLES:
+    if not can_write(ctx.profile.role, Feature.ROSTER_AI_DRAFT):
         raise api_error(
             403,
             "forbidden",
-            "Only a superintendent, admin or scheduler may optimize a roster.",
+            "Your role cannot generate roster drafts.",
         )
     req.facility_id = ctx.facility_id
     # Identity is always server-derived. A client-supplied UUID must never be
     # trusted as the author of generated versions or audit rows.
     req.created_by = ctx.profile_id
+    req.analysis_snapshot = None
     # Both probes run on ctx.client (RLS), so a foreign id comes back as zero rows -
     # that empty result IS the authorization check, not just a existence check.
     #
@@ -90,6 +92,14 @@ def _authorize_optimize(req: OptimizeRequest, ctx: AuthCtx) -> None:
             .eq("period_id", req.period_id)
             .execute().data):
         raise api_error(404, "not_found", "source roster version not found")
+    if req.analysis_config_id:
+        from emma_core.services import roster_analysis
+        period = (ctx.client.table("roster_periods").select("*")
+                  .eq("id", req.period_id).eq("facility_id", ctx.facility_id).execute().data[0])
+        try:
+            req.analysis_snapshot = roster_analysis.freeze(ctx.client, ctx.facility_id, req.analysis_config_id, period)
+        except ValueError as exc:
+            raise api_error(422, "analysis_not_ready", str(exc)) from exc
 
 
 @router.post("/optimize-roster", response_model=OptimizeResponse)

@@ -52,6 +52,9 @@ class _Query:
     def lte(self, col, val):
         self._filters.append(("lte", col, val)); return self
 
+    def lt(self, col, val):
+        self._filters.append(("lt", col, val)); return self
+
     def or_(self, expr):
         terms = []
         for t in expr.split(","):
@@ -75,6 +78,8 @@ class _Query:
             if f[0] == "gte" and not (str(row.get(f[1])) >= str(f[2])):
                 return False
             if f[0] == "lte" and not (str(row.get(f[1])) <= str(f[2])):
+                return False
+            if f[0] == "lt" and not (str(row.get(f[1])) < str(f[2])):
                 return False
             if f[0] == "or":
                 ok = False
