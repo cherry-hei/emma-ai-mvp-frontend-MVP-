@@ -49,6 +49,7 @@ export interface StoredSession {
   role: string | null
   facility_id: string | null
   facility_name: string | null
+  identity_scope?: string
 }
 
 let cachedToken: string | null = null
@@ -58,6 +59,12 @@ interface CredentialSnapshot {
   generation: number
   token: string | null
   refresh: string | null
+  identityScope: string | null
+}
+
+function sessionScope(session: SessionOut): string {
+  return JSON.stringify([session.user_id, session.org_id ?? null,
+    session.facility_id ?? null, session.role ?? null, session.staff_id ?? null, session.care_workflow ?? null])
 }
 
 function readToken(): string | null {
@@ -90,6 +97,7 @@ function writeSession(s: SessionOut | null): void {
     const snap: StoredSession = {
       user_id: s.user_id, email: s.email ?? null, role: s.role ?? null,
       facility_id: s.facility_id ?? null, facility_name: s.facility_name ?? null,
+      identity_scope: sessionScope(s),
     }
     window.localStorage.setItem(SESSION_KEY, JSON.stringify(snap))
   } else {
@@ -110,6 +118,7 @@ function credentialsSnapshot(): CredentialSnapshot {
     generation: credentialsGeneration,
     token: readToken(),
     refresh: readRefresh(),
+    identityScope: getSession()?.identity_scope ?? null,
   }
 }
 
@@ -126,6 +135,19 @@ export function getSession(): StoredSession | null {
   } catch {
     return null
   }
+}
+
+/** Seed legacy cached sessions from the verified /auth/me response before UI use. */
+export function rememberVerifiedProfile(profile: Profile): void {
+  const current = getSession()
+  if (typeof window === 'undefined' || !current || !profile.auth_user_id || current.user_id !== profile.auth_user_id) return
+  const updated: StoredSession = {
+    user_id: profile.auth_user_id, email: profile.email ?? null, role: profile.role ?? null,
+    facility_id: profile.facility_id ?? null, facility_name: profile.facility?.name ?? null,
+    identity_scope: JSON.stringify([profile.auth_user_id, profile.org_id ?? null,
+      profile.facility_id ?? null, profile.role ?? null, profile.staff_id ?? null, profile.care_workflow ?? null]),
+  }
+  window.localStorage.setItem(SESSION_KEY, JSON.stringify(updated))
 }
 
 export function getToken(): string | null {
@@ -196,10 +218,15 @@ export function onUnauthorized(fn: (() => void) | null): void {
   unauthorizedHandler = fn
 }
 
+let sessionRefreshedHandler: ((session: SessionOut) => void) | null = null
+export function onSessionRefreshed(fn: ((session: SessionOut) => void) | null): void {
+  sessionRefreshedHandler = fn
+}
+
 // Swap the stored refresh token for a fresh session. De-duplicated so a burst of
 // parallel 401s triggers only one refresh. Resolves to the new access token, or
 // null when there is no refresh token or it has expired.
-type RefreshResult = { token: string; snapshot: CredentialSnapshot }
+type RefreshResult = { token: string; snapshot: CredentialSnapshot; identityChanged: boolean }
 const refreshInFlight = new Map<string, Promise<RefreshResult | null>>()
 
 function refreshAccessToken(snapshot: CredentialSnapshot): Promise<RefreshResult | null> {
@@ -224,8 +251,12 @@ function refreshAccessToken(snapshot: CredentialSnapshot): Promise<RefreshResult
       // A late refresh must not restore credentials after sign-out or replace a
       // newer identity that has signed in while this request was pending.
       if (!isCurrentCredentials(snapshot)) return null
+      const identityChanged = snapshot.identityScope !== null && snapshot.identityScope !== sessionScope(session)
       storeSession(session)
-      return { token: session.access_token, snapshot: credentialsSnapshot() }
+      // Refreshed membership is authoritative for the mounted UI as well as
+      // subsequent requests. Never keep a revoked unit/appointment on screen.
+      sessionRefreshedHandler?.(session)
+      return { token: session.access_token, snapshot: credentialsSnapshot(), identityChanged }
     } catch {
       return null
     }
@@ -265,6 +296,10 @@ async function apiFetchForCredentials<T>(
       // Replay only for the identity whose refresh wrote this exact snapshot;
       // an old tenant's 401 must never replay as a newer signed-in user.
       if (fresh && isCurrentCredentials(fresh.snapshot)) {
+        const isWrite = !['GET', 'HEAD', 'OPTIONS'].includes((opts.method ?? 'GET').toUpperCase())
+        if (fresh.identityChanged || (isWrite && snapshot.identityScope === null)) {
+          throw new Error('Account membership or permissions changed or were not verified; reload before retrying this action.')
+        }
         return apiFetchForCredentials<T>(path, opts, false, fresh.snapshot, readResponse)
       }
     }

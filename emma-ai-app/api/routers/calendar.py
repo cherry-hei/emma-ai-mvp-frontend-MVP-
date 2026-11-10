@@ -11,7 +11,6 @@ from emma_core.services import audit
 from emma_core.services import calendar_days as svc
 
 router = APIRouter(tags=["calendar"])
-WRITE_ROLES = {"superintendent", "admin", "scheduler"}
 
 
 @router.get("/calendar-days")
@@ -26,7 +25,7 @@ def list_calendar_days(date_from: Date | None = Query(default=None),
 
 @router.post("/calendar-days", status_code=201)
 def upsert_calendar_day(body: CalendarDayRequest, ctx: AuthCtx = Depends(get_ctx)):
-    if str(ctx.profile.role) not in WRITE_ROLES:
+    if not ctx.allows("rules_manage"):
         raise api_error(403, "forbidden",
                         "Only a superintendent, admin or scheduler may edit the calendar.")
     row = svc.upsert_day(

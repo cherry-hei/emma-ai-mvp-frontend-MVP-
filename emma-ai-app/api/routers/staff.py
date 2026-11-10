@@ -26,11 +26,25 @@ router = APIRouter(tags=["staff"])
 def list_staff(search: str | None = Query(default=None),
                rank: str | None = Query(default=None),
                ctx: AuthCtx = Depends(get_ctx)):
-    return svc.list_staff(ctx.client, ctx.facility_id, search=search, rank=rank)
+    if ctx.can_read(Feature.STAFF_PORTFOLIO):
+        return svc.list_staff(ctx.client, ctx.facility_id, search=search, rank=rank)
+    if ctx.profile.care_workflow.workflow == "NAAC" and ctx.allows("roster_edit"):
+        # The nurse's roster picker needs unit staff identity, not contracts,
+        # certificates or employment history. Return only this minimal subset.
+        from api.routers.roster import _scoped_staff_ids
+        allowed = _scoped_staff_ids(ctx, ctx.client)
+        rows = (ctx.client.table("staff").select("id,name,name_en,rank,employment_type")
+                .eq("facility_id", ctx.facility_id).in_("id", list(allowed)).execute().data) if allowed else []
+        if search:
+            rows = [r for r in rows if search.casefold() in (str(r.get("name", "")) + " " + str(r.get("name_en", ""))).casefold()]
+        if rank:
+            rows = [r for r in rows if r.get("rank") == rank]
+        return rows
+    raise api_error(403, "forbidden", "This workflow appointment may not read the staff directory.")
 
 
 @router.get("/staff/{staff_id}", response_model=StaffDetail)
-def staff_detail(staff_id: str, ctx: AuthCtx = Depends(get_ctx)):
+def staff_detail(staff_id: str, ctx: AuthCtx = Depends(require_read(Feature.STAFF_PORTFOLIO))):
     detail = svc.get_staff_detail(ctx.client, ctx.facility_id, staff_id)
     if detail is None:
         raise api_error(404, "not_found", "staff member not found")

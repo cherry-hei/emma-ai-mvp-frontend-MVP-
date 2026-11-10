@@ -14,7 +14,11 @@ router = APIRouter(tags=["residents"])
 
 @router.get("/units", response_model=list[Unit])
 def units(ctx: AuthCtx = Depends(get_ctx)):
-    return svc.get_units(ctx.client, ctx.facility_id)
+    rows = svc.get_units(ctx.client, ctx.facility_id)
+    if ctx.profile.care_workflow.roster_scope == "self_and_units":
+        allowed = set(ctx.profile.care_workflow.unit_ids)
+        return [row for row in rows if (row.id if hasattr(row, "id") else row["id"]) in allowed]
+    return rows
 
 
 @router.get("/resident-counts", response_model=list[ResidentCountOut])

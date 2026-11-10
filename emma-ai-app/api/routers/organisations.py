@@ -26,4 +26,5 @@ def current_organisation(ctx: AuthCtx = Depends(get_ctx)):
 
 @router.get("/organisations/current/facilities")
 def current_organisation_facilities(ctx: AuthCtx = Depends(get_ctx)):
-    return svc.homes(ctx.client)
+    # A reviewed single-home appointment does not grant every home in an NGO.
+    return [row for row in svc.homes(ctx.client) if row.get("id") == ctx.facility_id]

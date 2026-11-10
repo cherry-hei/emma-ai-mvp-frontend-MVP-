@@ -1,13 +1,17 @@
 'use client'
 import { createContext, useCallback, useContext, useEffect, useRef, useState, ReactNode } from 'react'
 import { useRouter } from 'next/navigation'
-import { api, login as apiLogin, logout as apiLogout, getToken, getSession, onUnauthorized } from '@/lib/api'
-import { normaliseRole } from '@/lib/permissions'
+import { api, login as apiLogin, logout as apiLogout, getToken, getSession, onUnauthorized, onSessionRefreshed, rememberVerifiedProfile } from '@/lib/api'
+import { normaliseRole, type PermissionSubject } from '@/lib/permissions'
+import { readCareWorkflow, type CareWorkflow } from '@/lib/care-workflow'
 
 export interface AuthUser {
   userId: string
   email: string | null
   role: string | null
+  orgId: string | null
+  staffId: string | null
+  careWorkflow: CareWorkflow | null
   facilityId: string | null
   facilityName: string | null
 }
@@ -46,6 +50,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => onUnauthorized(null)
   }, [router])
 
+  useEffect(() => {
+    onSessionRefreshed((session) => {
+      actionGeneration.current += 1
+      setUser({
+        userId: session.user_id, email: session.email ?? null, role: session.role ?? null,
+        orgId: session.org_id ?? null, facilityId: session.facility_id ?? null, staffId: session.staff_id ?? null,
+        facilityName: session.facility_name ?? null,
+        careWorkflow: readCareWorkflow(session.care_workflow, {
+          orgId: session.org_id ?? null, facilityId: session.facility_id ?? null,
+        }),
+      })
+      setStatus('authed')
+    })
+    return () => onSessionRefreshed(null)
+  }, [])
+
   // On mount: if a token is stored, optimistically restore the cached session for
   // an instant header, then verify it against /auth/me (source of truth). A dead or
   // expired token clears itself and drops us to the signed-out state.
@@ -65,15 +85,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setUser({
           userId: snap.user_id, email: snap.email, role: snap.role,
           facilityId: snap.facility_id, facilityName: snap.facility_name,
+          orgId: null, staffId: null, careWorkflow: null,
         })
       }
       try {
         const p = await api.me()
         if (cancelled || actionGeneration.current !== hydrateGeneration) return
+        rememberVerifiedProfile(p)
         setUser({
           userId: p.auth_user_id ?? p.id,
           email: p.email ?? null,
           role: p.role ?? null,
+          orgId: p.org_id ?? null,
+          staffId: p.staff_id ?? null,
+          careWorkflow: readCareWorkflow(p.care_workflow, { orgId: p.org_id ?? null, facilityId: p.facility_id ?? null }),
           facilityId: p.facility_id ?? null,
           facilityName: p.facility?.name ?? null,
         })
@@ -99,6 +124,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser({
       userId: s.user_id, email: s.email ?? null, role: s.role ?? null,
       facilityId: s.facility_id ?? null, facilityName: s.facility_name ?? null,
+      orgId: s.org_id ?? null,
+      staffId: s.staff_id ?? null,
+      careWorkflow: readCareWorkflow(s.care_workflow, { orgId: s.org_id ?? null, facilityId: s.facility_id ?? null }),
     })
     setStatus('authed')
   }, [])
@@ -116,10 +144,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
 export const useAuth = () => useContext(Ctx)
 
-// Display names for the seven system roles. zh uses the homes' own titles: 院長 is
-// what a Salvation Army superintendent is called and 主任 the NAAC equivalent, both
-// OWNER - the label shows the SA wording since the mapping is per-facility and the
-// facility name sits directly beneath it in the sidebar.
+// Legacy labels remain for pure role consumers. Authenticated screens use the
+// server's reviewed SA/NAAC appointment label, including NAAC deputy versus 主任.
 const ROLE_LABELS: Record<string, { en: string; zh: string }> = {
   OWNER:         { en: 'Superintendent',   zh: '院長' },
   NURSE_MGR:     { en: 'Nursing Officer',  zh: '護理主任' },
@@ -130,7 +156,11 @@ const ROLE_LABELS: Record<string, { en: string; zh: string }> = {
   HR_AUDITOR:    { en: 'HR / Audit',       zh: '人事及審計' },
 }
 
-export function roleLabel(role: string | null | undefined, isZH: boolean): string {
+export function roleLabel(role: PermissionSubject, isZH: boolean): string {
+  if (role && typeof role === 'object') {
+    return role.careWorkflow?.status === 'ready'
+      ? role.careWorkflow.role_label[isZH ? 'zh' : 'en'] : ''
+  }
   const resolved = normaliseRole(role)
   if (!resolved) return ''
   return ROLE_LABELS[resolved][isZH ? 'zh' : 'en']

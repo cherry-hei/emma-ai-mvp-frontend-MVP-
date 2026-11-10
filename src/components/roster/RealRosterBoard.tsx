@@ -10,6 +10,9 @@ import type {
   ShiftDef, TaskDefOut, ValidationOut, VersionOut,
 } from '@/lib/apiTypes'
 import { useLang } from '@/components/layout/LanguageContext'
+import { useAuth } from '@/components/layout/AuthContext'
+import { workflowAction, workflowPeriod, type CareWorkflow } from '@/lib/care-workflow'
+import { canRead, canWrite } from '@/lib/permissions'
 import { CreateShiftModal } from '@/components/modals/CreateShiftModal'
 import { moveRosterViewAnchor, datesForRosterView, exactPaidMinutes, formatExactMinutes, type RosterViewMode } from '@/lib/roster-ui'
 import { AiOptionsModal } from './AiOptionsModal'
@@ -38,10 +41,10 @@ function today(): string {
  * deleted): "the cycle we are living in" is the one a scheduler means by
  * "the roster", not the furthest-out one that happens to sort first.
  */
-function pickPeriod(ps: PeriodOut[]): string {
+function pickPeriod(ps: PeriodOut[], storageKey: string): string {
   if (!ps.length) return ''
   let remembered: string | null = null
-  try { remembered = window.localStorage.getItem(PERIOD_KEY) } catch { /* private mode */ }
+  try { remembered = window.localStorage.getItem(storageKey) } catch { /* private mode */ }
   if (remembered && ps.some((p) => p.id === remembered)) return remembered
   const now = today()
   const current = ps.find((p) => p.period_start <= now && now <= p.period_end)
@@ -118,10 +121,22 @@ function groupRatios(items: NonNullable<ValidationOut['ratio_checks']>): RatioGr
 
 export function RealRosterBoard() {
   const { lang } = useLang()
+  const { user } = useAuth()
   const isZH = lang === 'zh'
+  const canEditRoster = workflowAction(user?.careWorkflow, 'roster_edit')
+  const canGenerateRoster = workflowAction(user?.careWorkflow, 'roster_generate')
+  const canBatchRoster = workflowAction(user?.careWorkflow, 'roster_batch')
+  const canPublishRoster = workflowAction(user?.careWorkflow, 'roster_publish')
+  const canDeleteRoster = workflowAction(user?.careWorkflow, 'roster_delete')
+  const canManageEvents = canWrite(user, 'task_codes')
+  const finalApprover = user?.careWorkflow?.workflow === 'NAAC' ? '主任' : '院長'
+  const accountScope = JSON.stringify([user?.orgId, user?.facilityId, user?.userId, user?.staffId,
+    user?.careWorkflow?.role, user?.careWorkflow?.unit_ids])
+  const periodStorageKey = `${PERIOD_KEY}:${accountScope}`
 
   const [periods, setPeriods] = useState<PeriodOut[]>([])
   const [periodId, setPeriodId] = useState('')
+  const logStorageKey = periodId ? `${LOG_KEY}:${accountScope}:${periodId}` : ''
   const [versions, setVersions] = useState<VersionOut[]>([])
   const [versionId, setVersionId] = useState('') // '' = default (latest manual)
   const [grid, setGrid] = useState<RosterGrid | null>(null)
@@ -151,6 +166,7 @@ export function RealRosterBoard() {
   const [createShiftOpen, setCreateShiftOpen] = useState(false)
   const [pendingLog, setPendingLog] = useState<SaveItem[]>([])
   const [publishedLog, setPublishedLog] = useState<SaveItem[]>([])
+  const [logsHydratedKey, setLogsHydratedKey] = useState('')
   const [showSaveList, setShowSaveList] = useState(false)
   const [showPublishList, setShowPublishList] = useState(false)
   const [viewMode, setViewMode] = useState<RosterViewMode>('week')
@@ -164,7 +180,6 @@ export function RealRosterBoard() {
   const versionsRequestRef = useRef(0)
   // Which period's logs are currently in state, so the writer below never saves
   // an empty initial state over a stored list before the reader has run.
-  const logsHydrated = useRef('')
 
   const T = {
     period: isZH ? '週期' : 'Period', newPeriod: isZH ? '＋ 新週期' : '＋ New period',
@@ -230,51 +245,53 @@ export function RealRosterBoard() {
   }, [])
 
   useEffect(() => {
+    let cancelled = false
     api.rosterPeriods()
-      .then((ps) => { setPeriods(ps); setPeriodId((prev) => prev || pickPeriod(ps)) })
-      .catch((e) => setError(e instanceof Error ? e.message : 'Failed to load periods'))
-  }, [])
+      .then((ps) => { if (!cancelled) { setPeriods(ps); setPeriodId((prev) => prev || pickPeriod(ps, periodStorageKey)) } })
+      .catch((e) => { if (!cancelled) setError(e instanceof Error ? e.message : 'Failed to load periods') })
+    return () => { cancelled = true }
+  }, [periodStorageKey])
 
   // Remember the choice so leaving the page - or signing out and back in -
   // returns to the same period rather than to whichever one sorts first.
   useEffect(() => {
     if (!periodId) return
-    try { window.localStorage.setItem(PERIOD_KEY, periodId) } catch { /* private mode */ }
-  }, [periodId])
+    try { window.localStorage.setItem(periodStorageKey, periodId) } catch { /* private mode */ }
+  }, [periodId, periodStorageKey])
 
-  // The save/publish lists are a per-period record of what this scheduler has
-  // changed since the last publish. They outlive a page navigation for the same
-  // reason the period does: a list that empties itself looks like lost work.
+  // Scope local notes to the verified user, tenant, appointment and unit grants.
+  // A shared device must not show a director's old names/edits to a unit nurse.
+  // Legacy period-only caches are deliberately never read.
   useEffect(() => {
-    if (!periodId) return
     let stored: { pending?: SaveItem[]; published?: SaveItem[] } = {}
-    try { stored = JSON.parse(window.localStorage.getItem(`${LOG_KEY}:${periodId}`) || '{}') } catch { /* ignore */ }
+    try { if (logStorageKey) stored = JSON.parse(window.localStorage.getItem(logStorageKey) || '{}') } catch { /* ignore */ }
     setPendingLog(Array.isArray(stored.pending) ? stored.pending : [])
     setPublishedLog(Array.isArray(stored.published) ? stored.published : [])
-    logsHydrated.current = periodId
-  }, [periodId])
+    setLogsHydratedKey(logStorageKey)
+  }, [logStorageKey])
 
   useEffect(() => {
-    if (!periodId || logsHydrated.current !== periodId) return
+    if (!logStorageKey || logsHydratedKey !== logStorageKey) return
     try {
-      window.localStorage.setItem(`${LOG_KEY}:${periodId}`, JSON.stringify({
+      window.localStorage.setItem(logStorageKey, JSON.stringify({
         pending: pendingLog.slice(0, 100), published: publishedLog.slice(0, 100),
       }))
     } catch { /* quota or private mode - the lists are a convenience, not a record */ }
-  }, [periodId, pendingLog, publishedLog])
+  }, [logStorageKey, logsHydratedKey, pendingLog, publishedLog])
 
   const loadVersions = useCallback(async (pid: string) => {
     const requestId = ++versionsRequestRef.current
     const vs = await api.rosterVersions(pid)
     if (requestId !== versionsRequestRef.current) return
     setVersions(vs)
+    if (!canGenerateRoster) { setScores({}); return }
     try {
       const cmp = await api.compareOptions(pid)
       const map: Record<string, OptionScoreOut> = {}
       cmp.options.forEach((o) => { map[o.roster_version_id] = o })
       if (requestId === versionsRequestRef.current) setScores(map)
     } catch { if (requestId === versionsRequestRef.current) setScores({}) }
-  }, [])
+  }, [canGenerateRoster])
 
   useEffect(() => {
     if (!periodId) return
@@ -285,6 +302,9 @@ export function RealRosterBoard() {
   }, [periodId, loadVersions])
 
   const validateVersion = useCallback(async (vid: string) => {
+    // Full-period validation can expose other units. Unit nurses rely on the
+    // scoped deterministic checks performed by each write endpoint instead.
+    if (!canBatchRoster) return null
     const requestId = ++validationRequestRef.current
     try {
       const result = await api.validateRoster(vid)
@@ -295,7 +315,7 @@ export function RealRosterBoard() {
       if (requestId !== validationRequestRef.current) return null
       throw e
     }
-  }, [])
+  }, [canBatchRoster])
 
   const loadGrid = useCallback(async (pid: string, vid: string) => {
     const requestId = ++gridRequestRef.current
@@ -335,7 +355,7 @@ export function RealRosterBoard() {
   const activeVersionId = grid?.version_id ?? currentVersion?.id ?? ''
   // Only the manual draft is hand-editable; A/B/C solver options are read-only
   // results you publish, and published/archived versions are locked.
-  const editable = !loading && !error && grid?.period_id === periodId && grid?.version_id === currentVersion?.id && currentVersion?.version_type === 'manual' && currentVersion?.status === 'draft'
+  const editable = canEditRoster && !loading && !error && grid?.period_id === periodId && grid?.version_id === currentVersion?.id && currentVersion?.version_type === 'manual' && currentVersion?.status === 'draft'
 
   const blockingViolations = useMemo(
     () => (validation?.violations ?? []).filter((item) => !item.resolved && item.severity.toLowerCase() === 'hard'),
@@ -444,7 +464,7 @@ export function RealRosterBoard() {
   }
 
   async function handleSaveDraft() {
-    if (!activeVersionId) return
+    if (!activeVersionId || !editable) return
     setBusy('save')
     try {
       await api.saveDraft(activeVersionId)
@@ -455,13 +475,13 @@ export function RealRosterBoard() {
   }
 
   async function handlePublish() {
-    if (!activeVersionId) return
+    if (!activeVersionId || !canPublishRoster) return
     if (!validation || blockingCount > 0) {
       setRuleReviewOpen(true)
       return
     }
     if (warningCount > 0 && !window.confirm(isZH
-      ? `現時有${warningCount}項警告。規則引擎沒有阻止發佈；是否由院長確認後繼續？`
+      ? `現時有${warningCount}項警告。規則引擎沒有阻止發佈；是否由${finalApprover}確認後繼續？`
       : `There are ${warningCount} warnings. The rules engine does not block publishing; continue with manager confirmation?`)) return
     setBusy('publish'); setError('')
     try {
@@ -478,7 +498,7 @@ export function RealRosterBoard() {
   }
 
   async function handleAI() {
-    if (aiLoading || !periodId) return
+    if (aiLoading || !periodId || !canGenerateRoster) return
     setAiOpen(true); setAiError(''); setPublishError(''); setAiOptions(null)
     setAiLoading(true); setAiStatus('pending')
     try {
@@ -491,6 +511,7 @@ export function RealRosterBoard() {
   }
 
   async function handlePublishOption(vid: string) {
+    if (!canPublishRoster) return
     setPublishingId(vid); setPublishError('')
     try {
       await api.publish(vid)
@@ -504,7 +525,7 @@ export function RealRosterBoard() {
   // below; that one is for changing a code in two clicks, this one is for
   // planning a shift's work.
   function handleCreateShift() {
-    if (!grid?.rows.length || !columns.length) return
+    if (!editable || !grid?.rows.length || !columns.length) return
     setCreateShiftOpen(true)
   }
 
@@ -558,7 +579,7 @@ export function RealRosterBoard() {
         <div className="flex items-center gap-3 flex-wrap">
           <div>
             <h1 className="text-xl font-bold text-gray-900">{isZH ? '更表工作區' : 'Roster Workspace'}</h1>
-            <p className="mt-0.5 text-[10px] text-gray-400">{isZH ? '生成方案 → 編輯更表 → 規則檢查 → 院長批准發佈' : 'Generate options → edit roster → run rule checks → manager approval'}</p>
+            <p className="mt-0.5 text-[10px] text-gray-400">{isZH ? `生成方案 → 編輯更表 → 規則檢查 → ${finalApprover}批准發佈` : 'Generate options → edit roster → run rule checks → authorised final approval'}</p>
           </div>
 
           <label className="text-xs text-gray-500">{T.period}</label>
@@ -571,13 +592,13 @@ export function RealRosterBoard() {
               <option key={p.id} value={p.id}>{p.period_start} → {p.period_end} · {p.status}</option>
             ))}
           </select>
-          <button onClick={() => setNewPeriodOpen(true)}
-            className="text-xs px-2.5 py-1.5 border border-gray-200 rounded-lg hover:bg-gray-50">{T.newPeriod}</button>
+          {canGenerateRoster && <button onClick={() => setNewPeriodOpen(true)}
+            className="text-xs px-2.5 py-1.5 border border-gray-200 rounded-lg hover:bg-gray-50">{T.newPeriod}</button>}
 
           <div className="ml-auto flex items-center gap-2">
-            <button onClick={handleAI} disabled={aiLoading || !periodId}
+            {canGenerateRoster && <button onClick={handleAI} disabled={aiLoading || !periodId}
               className="px-3.5 py-1.5 text-white text-xs font-semibold rounded-lg disabled:opacity-60"
-              style={{ background: PINK }}>{aiLoading ? T.aiBusy : T.ai}</button>
+              style={{ background: PINK }}>{aiLoading ? T.aiBusy : T.ai}</button>}
           </div>
         </div>
 
@@ -658,32 +679,32 @@ export function RealRosterBoard() {
           })}
 
           <div className="ml-auto flex items-center gap-2 flex-wrap">
-            <button onClick={handleCreateShift} disabled={!editable || !grid?.rows.length}
+            {canEditRoster && <button onClick={handleCreateShift} disabled={!editable || !grid?.rows.length}
               className="text-xs px-3 py-1.5 border border-gray-200 rounded-lg hover:bg-gray-50 disabled:opacity-50">
               {T.createShift}
-            </button>
-            <button type="button" disabled title={T.batchUnavailable}
+            </button>}
+            {canBatchRoster && <button type="button" disabled title={T.batchUnavailable}
               className="text-xs px-3 py-1.5 border border-gray-200 rounded-lg cursor-not-allowed opacity-50">
               {T.batchCreate}
-            </button>
-            <button onClick={() => setCreateEventOpen(true)} disabled={!periodId}
+            </button>}
+            {canManageEvents && <button onClick={() => setCreateEventOpen(true)} disabled={!periodId}
               className="text-xs px-3 py-1.5 border border-gray-200 rounded-lg hover:bg-gray-50 disabled:opacity-50">
               {T.createEvent}
-            </button>
-            <button onClick={handleValidate} disabled={!activeVersionId || busy === 'validate'}
+            </button>}
+            {canBatchRoster && <button onClick={handleValidate} disabled={!activeVersionId || busy === 'validate'}
               className="text-xs px-3 py-1.5 border border-gray-200 rounded-lg hover:bg-gray-50 disabled:opacity-50">
               {busy === 'validate' ? '…' : T.validate}
-            </button>
-            <button onClick={handleSaveDraft} disabled={!editable || busy === 'save'}
+            </button>}
+            {canEditRoster && <button onClick={handleSaveDraft} disabled={!editable || busy === 'save'}
               className="text-xs px-3 py-1.5 border border-gray-200 rounded-lg hover:bg-gray-50 disabled:opacity-50">
               {busy === 'save' ? '…' : T.saveDraft}
-            </button>
-            <button onClick={handlePublish} disabled={!activeVersionId || busy === 'publish'}
+            </button>}
+            {canPublishRoster && <button onClick={handlePublish} disabled={!activeVersionId || busy === 'publish'}
               title={blockingCount > 0 ? (isZH ? '先檢視及處理blocking rules' : 'Review and resolve blocking rules first') : undefined}
               className="text-xs px-3 py-1.5 rounded-lg text-white font-semibold disabled:opacity-50"
               style={{ background: blockingCount > 0 ? '#475569' : PINK }}>
               {busy === 'publish' ? '…' : blockingCount > 0 ? (isZH ? '發佈前檢視規則' : 'Review rules before publishing') : T.publish}
-            </button>
+            </button>}
             <button onClick={() => setShowSaveList((v) => !v)}
               className="text-xs px-3 py-1.5 rounded-lg border border-gray-200 bg-white text-gray-700 font-semibold hover:bg-gray-50">
               {T.saveList} ({pendingLog.length})
@@ -725,13 +746,13 @@ export function RealRosterBoard() {
               className="text-xs px-2.5 py-1.5 border border-gray-200 rounded-lg bg-white w-40" />
             <button onClick={() => { setFilterRank('ALL'); setFilterFloor('ALL'); setFilterSearch('') }}
               className="text-[10px] text-gray-400 hover:text-gray-600">✕ Clear</button>
-            <div className="ml-auto">
+            {canRead(user, 'reports') && <div className="ml-auto">
               <button onClick={() => window.open(`/api/export/roster?period_id=${periodId}`, '_blank')}
                 disabled={!periodId}
                 className="text-xs px-3 py-1.5 border border-gray-200 rounded-lg hover:bg-gray-50 disabled:opacity-50">
                 {T.exportRoster}
               </button>
-            </div>
+            </div>}
           </div>
         )}
       </div>
@@ -1038,9 +1059,10 @@ export function RealRosterBoard() {
       )}
       </div>
 
-      {newPeriodOpen && (
+      {newPeriodOpen && canGenerateRoster && (
         <NewPeriodModal
           isZH={isZH}
+          workflow={user?.careWorkflow ?? null}
           onClose={() => setNewPeriodOpen(false)}
           onCreated={(pid) => { setNewPeriodOpen(false); setPeriodId(pid); api.rosterPeriods().then(setPeriods).catch(() => {}) }}
         />
@@ -1051,11 +1073,12 @@ export function RealRosterBoard() {
           options={aiOptions} loading={aiLoading} status={aiStatus} error={aiError}
           publishError={publishError} periodLabel={periodLabel} isZH={isZH}
           publishingId={publishingId} publishedIds={publishedIds}
+          canPublish={canPublishRoster}
           onPublish={handlePublishOption} onClose={() => setAiOpen(false)}
         />
       )}
 
-      {createShiftOpen && grid && (
+      {createShiftOpen && editable && grid && (
         <CreateShiftModal
           open={createShiftOpen}
           onClose={() => setCreateShiftOpen(false)}
@@ -1081,15 +1104,15 @@ export function RealRosterBoard() {
             }
             loadGrid(periodId, versionId)
           }}
-          onDeleted={({ staffName, date }) => {
+          onDeleted={canDeleteRoster ? ({ staffName, date }) => {
             logChange('delete', T.actionDelete, `${staffName} · ${date}`)
             flash(isZH ? '更次已清除' : 'Shift cleared')
             loadGrid(periodId, versionId)
-          }}
+          } : undefined}
         />
       )}
 
-      {createEventOpen && (
+      {createEventOpen && canManageEvents && (
         <CreateEventModal
           isZH={isZH}
           defaultDate={columns[0] ?? new Date().toISOString().slice(0, 10)}
@@ -1102,21 +1125,20 @@ export function RealRosterBoard() {
   )
 }
 
-function NewPeriodModal({ isZH, onClose, onCreated }: {
-  isZH: boolean; onClose: () => void; onCreated: (periodId: string) => void
+function NewPeriodModal({ isZH, workflow, onClose, onCreated }: {
+  isZH: boolean; workflow: CareWorkflow | null; onClose: () => void; onCreated: (periodId: string) => void
 }) {
   const today = new Date().toISOString().slice(0, 10)
-  const plus = (n: number) => { const d = new Date(); d.setDate(d.getDate() + n); return d.toISOString().slice(0, 10) }
   const [start, setStart] = useState(today)
-  const [end, setEnd] = useState(plus(27))
-  const [cycle, setCycle] = useState('28day')
+  const period = workflowPeriod(workflow, start)
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
 
   async function create() {
+    if (!period || !workflowAction(workflow, 'roster_generate')) return
     setBusy(true); setErr('')
     try {
-      const res = await api.createPeriod({ period_start: start, period_end: end, cycle_type: cycle, create_manual_version: true })
+      const res = await api.createPeriod({ ...period, create_manual_version: true })
       onCreated(res.period.id)
     } catch (e) { setErr(e instanceof Error ? e.message : 'Create failed'); setBusy(false) }
   }
@@ -1133,16 +1155,14 @@ function NewPeriodModal({ isZH, onClose, onCreated }: {
           </label>
           <label className="block">
             <span className="text-[11px] font-semibold text-gray-500">{isZH ? '結束日期' : 'End'}</span>
-            <input type="date" value={end} onChange={(e) => setEnd(e.target.value)}
+            <input type="date" value={period?.period_end ?? ''} readOnly
               className="w-full mt-1 px-3 py-2 rounded-lg border border-gray-200 text-sm" />
           </label>
           <label className="block">
             <span className="text-[11px] font-semibold text-gray-500">{isZH ? '週期類型' : 'Cycle'}</span>
-            <select value={cycle} onChange={(e) => setCycle(e.target.value)}
-              className="w-full mt-1 px-3 py-2 rounded-lg border border-gray-200 text-sm bg-white">
-              <option value="28day">28day</option>
-              <option value="natural_month">natural_month</option>
-            </select>
+            <p className="mt-1 text-sm text-slate-700">{workflow?.workflow === 'NAAC'
+              ? (isZH ? 'NAAC · 42 日／六星期' : 'NAAC · 42 days / six weeks')
+              : (isZH ? 'SA · 28 日' : 'SA · 28 days')}</p>
           </label>
           {err && <div className="text-xs text-rose-600">{err}</div>}
         </div>
@@ -1150,7 +1170,7 @@ function NewPeriodModal({ isZH, onClose, onCreated }: {
           <button onClick={onClose} className="px-3 py-1.5 text-xs rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50">
             {isZH ? '取消' : 'Cancel'}
           </button>
-          <button onClick={create} disabled={busy}
+          <button onClick={create} disabled={busy || !period}
             className="px-4 py-1.5 text-xs rounded-lg text-white font-semibold disabled:opacity-60" style={{ background: PINK }}>
             {busy ? '…' : (isZH ? '建立' : 'Create')}
           </button>

@@ -1,11 +1,12 @@
 """Emma AI REST API - thin routers over emma_core.services, consumed by the Next.js app."""
-from fastapi import FastAPI, Request
+from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from postgrest.exceptions import APIError as PostgrestAPIError
 
 from emma_core.config import settings
 from emma_core.errors import RuleViolationError
+from api.deps import require_workflow_ready
 
 from api.routers import ai as _ai
 from api.routers import analytics as _analytics
@@ -83,7 +84,11 @@ for _module in (_auth, _roster, _residents, _compliance, _staff, _optimize,
                 _leave, _incidents, _me, _analytics, _reports, _scheduling,
                 _imports, _calendar, _configs, _governance, _swaps,
                 _notifications, _organisations):
-    app.include_router(_module.router)
+    # Login/refresh/me must remain available to explain an unbound appointment.
+    # Operational routes never fall back to generic demo roles when no exact
+    # A/SA or B/NAAC binding has been reviewed.
+    app.include_router(_module.router, dependencies=(
+        [] if _module is _auth else [Depends(require_workflow_ready)]))
 
 
 @app.get("/health")

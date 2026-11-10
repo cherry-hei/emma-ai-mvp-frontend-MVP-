@@ -41,7 +41,7 @@ def list_swaps(status: str | None = Query(default=None),
     if not mine:
         from emma_core.permissions import can_read
 
-        if not can_read(ctx.profile.role, Feature.APPROVE_DUTY_DO):
+        if not ctx.can_read(Feature.APPROVE_DUTY_DO):
             raise api_error(403, "forbidden",
                             "Your role may not view the facility swap queue.")
         return svc.list_swaps(ctx.client, ctx.facility_id, status=status)

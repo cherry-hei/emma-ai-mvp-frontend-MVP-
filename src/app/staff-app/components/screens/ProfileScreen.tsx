@@ -52,7 +52,7 @@ function SettingsCard() {
         {(user?.facilityName || user?.role) && (
           <p className="mt-0.5 truncate text-xs text-gray-500">
             {user?.facilityName}
-            {user?.role ? ` · ${roleLabel(user.role, isZH)}` : ''}
+            {user?.role ? ` · ${roleLabel(user, isZH)}` : ''}
           </p>
         )}
       </div>

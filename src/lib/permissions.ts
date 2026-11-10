@@ -9,6 +9,13 @@
 // required: the API stops the request, this stops the user being shown a door
 // that does not open.
 
+import type { CareWorkflow } from './care-workflow'
+
+export type PermissionSubject = string | null | undefined | {
+  role?: string | null
+  careWorkflow?: CareWorkflow | null
+}
+
 export const SYSTEM_ROLES = [
   'OWNER', 'NURSE_MGR', 'ALLIED_HEALTH', 'ADMIN_CLERK',
   'SCHEDULER', 'FRONTLINE', 'HR_AUDITOR',
@@ -103,37 +110,43 @@ const READ: ReadonlySet<Grant> = new Set<Grant>(['F', 'R', 'E', 'V'])
 const WRITE: ReadonlySet<Grant> = new Set<Grant>(['F', 'E'])
 
 /** Unknown role or unknown feature denies - never default open. */
-export function grantFor(role: string | null | undefined, feature: Feature): Grant {
+export function grantFor(role: PermissionSubject, feature: Feature): Grant {
+  // Authenticated UI callers pass the full user. Never fall back to a generic
+  // OWNER role when a NAAC deputy or an unbound account has narrower authority.
+  if (role && typeof role === 'object') {
+    const workflow = role.careWorkflow
+    return workflow?.status === 'ready' ? workflow.permissions[feature] ?? '-' : '-'
+  }
   const resolved = normaliseRole(role)
   if (!resolved) return '-'
   return MATRIX[feature]?.[resolved] ?? '-'
 }
 
 /** Facility-wide read. `S` is excluded: self-only is not a facility read. */
-export function canRead(role: string | null | undefined, feature: Feature): boolean {
+export function canRead(role: PermissionSubject, feature: Feature): boolean {
   return READ.has(grantFor(role, feature))
 }
 
-export function canWrite(role: string | null | undefined, feature: Feature): boolean {
+export function canWrite(role: PermissionSubject, feature: Feature): boolean {
   return WRITE.has(grantFor(role, feature))
 }
 
 /** Final approve/reject/cancel/revoke. OWNER only, by design - the rest recommend. */
-export function canDecide(role: string | null | undefined, feature: Feature): boolean {
+export function canDecide(role: PermissionSubject, feature: Feature): boolean {
   return grantFor(role, feature) === 'F'
 }
 
-export function canRecommend(role: string | null | undefined, feature: Feature): boolean {
+export function canRecommend(role: PermissionSubject, feature: Feature): boolean {
   const g = grantFor(role, feature)
   return g === 'F' || g === 'R'
 }
 
 /** True when the caller sees the feature but only their own rows. */
-export function isSelfOnly(role: string | null | undefined, feature: Feature): boolean {
+export function isSelfOnly(role: PermissionSubject, feature: Feature): boolean {
   return grantFor(role, feature) === 'S'
 }
 
 /** Reachable at all, self-only included. Drives menu visibility. */
-export function isVisible(role: string | null | undefined, feature: Feature): boolean {
+export function isVisible(role: PermissionSubject, feature: Feature): boolean {
   return grantFor(role, feature) !== '-'
 }

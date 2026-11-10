@@ -61,7 +61,7 @@ test('roster cards use the retained task-aware editor and do not expose simulate
   assert.ok(board.includes('setFocusDate(iso)'))
   assert.ok(board.includes('setCreateShiftOpen(true)'))
   assert.ok(board.includes('assignmentId: cell?.assignment_id || null'))
-  assert.ok(board.includes('onDeleted={({ staffName, date })'))
+  assert.ok(board.includes('onDeleted={canDeleteRoster ? ({ staffName, date })'))
   assert.ok(board.includes('Batch creation needs an authenticated batch-roster API'))
   assert.ok(!board.includes('BatchCreateShiftModal'))
 })

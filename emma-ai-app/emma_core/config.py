@@ -44,6 +44,11 @@ class Settings(BaseSettings):
 
     app_env: str = "development"
 
+    # Reviewed immutable org/facility/account appointments. Server-only: never a
+    # NEXT_PUBLIC_/VITE_ setting and never inferred from Care Home A/B labels.
+    # Empty keeps business routes closed while /auth/me explains setup status.
+    care_workflow_bindings_json: str = ""
+
     # Firebase Cloud Messaging (spec SA.4 / SA.4b). Empty until the Firebase
     # project is provisioned; `push.deliver()` reports "not configured" and
     # leaves the notification queued rather than claiming a delivery that never

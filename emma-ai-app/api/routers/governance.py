@@ -15,10 +15,9 @@ from api.deps import AuthCtx, api_error, get_ctx
 from emma_core.models import EvidenceStatusRequest
 from emma_core.services import audit
 from emma_core.services import governance as svc
+from emma_core.permissions import Feature
 
 router = APIRouter(tags=["governance"])
-AUDIT_ROLES = {"superintendent", "admin", "auditor"}
-EVIDENCE_WRITE_ROLES = {"superintendent", "admin"}
 
 
 # ── 1.3 audit trail ──────────────────────────────────────────────────────────
@@ -31,9 +30,9 @@ def list_audit_logs(entity_table: str | None = Query(default=None),
                     limit: int = Query(default=100, le=500),
                     ctx: AuthCtx = Depends(get_ctx)):
     """Append-only history, newest first. Not visible to a staff-app login."""
-    if str(ctx.profile.role) not in AUDIT_ROLES:
+    if not ctx.can_read(Feature.AUDIT_LOG):
         raise api_error(403, "forbidden",
-                        "Only a superintendent, admin or auditor may read the audit log.")
+                        "This workflow appointment may not read the audit log.")
     return audit.list_logs(ctx.client, ctx.facility_id, entity_table=entity_table,
                            entity_id=entity_id, action=action,
                            date_from=date_from, date_to=date_to, limit=limit)
@@ -84,9 +83,9 @@ def evidence_items(category: str | None = Query(default=None),
 @router.patch("/evidence-items/{code}")
 def set_evidence_status(code: str, body: EvidenceStatusRequest,
                         ctx: AuthCtx = Depends(get_ctx)):
-    if str(ctx.profile.role) not in EVIDENCE_WRITE_ROLES:
+    if not ctx.allows("rules_manage"):
         raise api_error(403, "forbidden",
-                        "Only a superintendent or admin may record an evidence result.")
+                        "This workflow appointment may not record an evidence result.")
     row = svc.set_evidence_status(
         ctx.client, ctx.facility_id, code, status=body.status,
         sample_output=body.sample_output, notes=body.notes,

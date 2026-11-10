@@ -11,6 +11,9 @@ export interface SessionOut {
   user_id: string
   email?: string | null
   role?: string | null
+  org_id?: string | null
+  care_workflow?: unknown
+  staff_id?: string | null
   facility_id?: string | null
   facility_name?: string | null
 }
@@ -20,6 +23,8 @@ export interface Profile {
   auth_user_id?: string | null
   facility_id?: string | null
   email?: string | null
+  org_id?: string | null
+  care_workflow?: unknown
   role: string
   staff_id?: string | null
   facility?: { code?: string | null; name?: string | null } | null

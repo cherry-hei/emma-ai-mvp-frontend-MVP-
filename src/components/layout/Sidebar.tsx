@@ -3,6 +3,7 @@ import { usePathname, useRouter } from 'next/navigation'
 import { useLang } from '@/components/layout/LanguageContext'
 import { useAuth, roleLabel } from '@/components/layout/AuthContext'
 import { ROUTES, ROUTE_FEATURE, canOpenRoute, isActiveRoute, type RoutePath } from '@/components/layout/navRoutes'
+import { workflowLabel } from '@/lib/care-workflow'
 
 const PINK = '#E8187A'
 
@@ -17,7 +18,6 @@ const NAV: { key: string; icon: string; path: RoutePath }[] = [
   // { key: 'nav_roi',         icon: '📈',  path: ROUTES.roi        },
   { key: 'nav_reports',     icon: '📊',  path: ROUTES.reports    },
   { key: 'nav_alert',       icon: '🔔',  path: ROUTES.alert },
-  { key: 'nav_messages',   icon: '💬',  path: ROUTES.messages   },
 
   { key: 'nav_settings',    icon: '⚙️',  path: ROUTES.settings   },
 ]
@@ -31,10 +31,10 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void } = {}) {
   // Menu filtered by the RBAC matrix (spec 1.1). Before this every role was shown
   // all eight items, so a care worker saw the superintendent's sidebar including
   // ROI and could open /roi with the home's financials.
-  const nav = NAV.filter(({ path }) => canOpenRoute(user?.role, ROUTE_FEATURE[path]))
+  const nav = NAV.filter(({ path }) => canOpenRoute(user, ROUTE_FEATURE[path]))
   // The owner uses the settings hub. Other permitted roles must not lose their
   // pre-existing task-rule access merely because they cannot open facility settings.
-  if (!canOpenRoute(user?.role, 'facility.settings') && canOpenRoute(user?.role, 'task_codes')) {
+  if (!canOpenRoute(user, 'facility.settings') && canOpenRoute(user, 'task_codes')) {
     nav.push({ key: 'nav_scheduling', icon: '⚙️', path: ROUTES.scheduling })
   }
 
@@ -81,11 +81,12 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void } = {}) {
         className="mx-3 mt-3 min-h-11 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2"
       >
         <div className="text-xs font-medium tracking-wide text-slate-500">
-          {roleLabel(user?.role, lang === 'zh') || (lang === 'zh' ? '院舍' : 'Facility')}
+          {roleLabel(user, lang === 'zh') || (lang === 'zh' ? '院舍' : 'Facility')}
         </div>
         <div className="emma-reflow-text mt-0.5 break-words text-sm font-medium text-slate-700">
           {user?.facilityName ?? (lang === 'zh' ? '院舍管理' : 'Care Home Admin')}
         </div>
+        <div className="mt-1 text-xs text-slate-500">{workflowLabel(user?.careWorkflow)}</div>
       </div>
 
       {/* Nav */}

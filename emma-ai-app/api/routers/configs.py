@@ -15,13 +15,12 @@ from emma_core.services import audit
 from emma_core.services import facility_config as svc
 
 router = APIRouter(tags=["configs"])
-WRITE_ROLES = {"superintendent", "admin"}
 
 
 def _require_write_role(ctx: AuthCtx) -> None:
-    if str(ctx.profile.role) not in WRITE_ROLES:
+    if not ctx.allows("rules_manage"):
         raise api_error(403, "forbidden",
-                        "Only a superintendent or admin may change facility configuration.")
+                        "This workflow appointment may not change facility configuration.")
 
 
 @router.get("/facility-configs")

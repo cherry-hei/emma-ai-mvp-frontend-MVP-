@@ -29,7 +29,7 @@ test('dialog reasons survive failed saves and responses are scoped to identity a
 })
 test('settings rules are not duplicated in the sidebar or fake alert badges', () => {
   const sidebar=readFileSync(new URL('../components/layout/Sidebar.tsx', import.meta.url),'utf8')
-  assert.match(sidebar, /if \(!canOpenRoute\(user\?\.role, 'facility.settings'\) && canOpenRoute\(user\?\.role, 'task_codes'\)\)/)
+  assert.match(sidebar, /if \(!canOpenRoute\(user, 'facility.settings'\) && canOpenRoute\(user, 'task_codes'\)\)/)
   assert.doesNotMatch(sidebar, /key: 'nav_shiftcodes'.*path:/)
   assert.doesNotMatch(sidebar, /badge: '3'/)
 })

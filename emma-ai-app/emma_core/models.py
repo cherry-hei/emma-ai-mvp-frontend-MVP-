@@ -7,6 +7,7 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from .constants import EmploymentType, JobStatus, PlanMode, Rank, Role, SolveStatus
+from .care_workflows import CareWorkflowContext
 
 
 # ── boundary rows (parsed from PostgREST) ───────────────────────────────────
@@ -32,6 +33,9 @@ class ShiftDef(BaseModel):
 
 class FacilityLite(BaseModel):
     model_config = ConfigDict(extra="ignore")
+    id: str | None = None
+    org_id: str | None = None
+    scheduling_cycle_days: int | None = None
     code: str | None = None
     name: str | None = None
 
@@ -54,6 +58,7 @@ class Profile(BaseModel):
     staff_id: str | None = None
     facility: FacilityLite | None = None
     organisation: OrganisationLite | None = None
+    care_workflow: CareWorkflowContext = Field(default_factory=CareWorkflowContext)
 
 
 # ── roster grid view (already typed) ────────────────────────────────────────
@@ -217,6 +222,8 @@ class SessionUser(BaseModel):
     staff_id: str | None = None
     facility_id: str | None = None
     facility_name: str | None = None
+    org_id: str | None = None
+    care_workflow: CareWorkflowContext = Field(default_factory=CareWorkflowContext)
 
 
 class SessionOut(BaseModel):
@@ -230,6 +237,9 @@ class SessionOut(BaseModel):
     role: Role | None = None
     facility_id: str | None = None
     facility_name: str | None = None
+    org_id: str | None = None
+    staff_id: str | None = None
+    care_workflow: CareWorkflowContext = Field(default_factory=CareWorkflowContext)
     # Same identity as the flat fields, nested. Read one shape or the other.
     user: SessionUser | None = None
 

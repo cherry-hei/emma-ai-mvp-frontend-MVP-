@@ -43,7 +43,7 @@ def _my_shifts(client, facility_id: str, staff_id: str,
     period = resolve_period(client, facility_id, None)
     if not period:
         return []
-    version = operative_version(client, facility_id, period["id"])
+    version = operative_version(client, facility_id, period["id"], published_only=True)
     if not version:
         return []
     # SQL: select * from shifts
@@ -169,7 +169,7 @@ def summary(client, facility_id: str, staff_id: str) -> dict:
     ratio_headline = None
     period = resolve_period(client, facility_id, None)
     if period:
-        version = operative_version(client, facility_id, period["id"])
+        version = operative_version(client, facility_id, period["id"], published_only=True)
         if version:
             checks = compute_ratios(client, facility_id, today,
                                     roster_version_id=version["id"])
@@ -245,7 +245,7 @@ def colleagues_on(client, facility_id: str, on: Date) -> list[dict]:
     period = resolve_period(client, facility_id, None)
     if not period:
         return []
-    version = operative_version(client, facility_id, period["id"])
+    version = operative_version(client, facility_id, period["id"], published_only=True)
     if not version:
         return []
     # SQL: select * from shifts
