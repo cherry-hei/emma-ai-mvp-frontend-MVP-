@@ -9,7 +9,6 @@ from emma_core.importers import LAYOUT_NAMES
 from emma_core.services import imports as svc
 
 router = APIRouter(tags=["imports"])
-WRITE_ROLES = {"superintendent", "admin", "scheduler"}
 # openpyxl loads the whole workbook, so the ceiling is memory, not storage. The
 # real rosters are ~400 KB; 20 MB leaves room for a home with a year per file.
 MAX_UPLOAD_BYTES = 20 * 1024 * 1024
@@ -50,7 +49,7 @@ async def import_roster_excel(
     `validate` is the default on purpose: an import is easier to review than to
     undo, so the caller sees the validation summary before anything is written.
     """
-    if str(ctx.profile.role) not in WRITE_ROLES:
+    if not ctx.allows("roster_batch"):
         raise api_error(403, "forbidden",
                         "Only a superintendent, admin or scheduler may import a roster.")
     content = await file.read()

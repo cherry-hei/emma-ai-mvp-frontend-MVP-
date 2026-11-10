@@ -12,12 +12,12 @@ export default function SettingsPage() {
   const isZH = lang === 'zh'
   const items = [
     {
-      href: '/scheduling', visible: canRead(user?.role, 'task_codes'),
+      href: '/scheduling', visible: canRead(user, 'task_codes'),
       title: isZH ? '工作規則、資格及活動' : 'Task Rules, Qualifications & Events',
       description: isZH ? '管理現有MVP的工作資格、活動及單位人手規則；讀寫仍由後端核對權限。' : 'Open the existing MVP qualification, event and unit staffing controls. The backend still enforces read/write permissions.',
     },
     {
-      href: '/shift-codes', visible: canRead(user?.role, 'roster.view'),
+      href: '/shift-codes', visible: canRead(user, 'roster.view'),
       title: isZH ? '更期代號字典' : 'Shift Code Dictionary',
       description: isZH ? '查看目前登入機構的更碼、工作時段及已確認工時；不使用博愛Demo字典。' : 'Read shift codes, time ranges and credited hours from the signed-in organisation, not the PoKoi demo.',
     },

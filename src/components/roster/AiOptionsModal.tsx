@@ -29,13 +29,14 @@ export interface AiOptionsModalProps {
   isZH: boolean
   publishingId: string
   publishedIds: Set<string>
+  canPublish: boolean
   onPublish: (versionId: string) => void
   onClose: () => void
 }
 
 export function AiOptionsModal({
   options, loading, status, error, publishError, periodLabel, isZH,
-  publishingId, publishedIds, onPublish, onClose,
+  publishingId, publishedIds, canPublish, onPublish, onClose,
 }: AiOptionsModalProps) {
   const meta = planMeta(isZH)
   const L = {
@@ -131,7 +132,7 @@ export function AiOptionsModal({
                       </div>
                     )}
 
-                    <button
+                    {canPublish && <button
                       disabled={!publishable || published || publishingId === o.roster_version_id}
                       onClick={() => o.roster_version_id && onPublish(o.roster_version_id)}
                       className="mt-auto py-2.5 rounded-xl text-xs font-bold text-white transition-colors disabled:cursor-not-allowed"
@@ -139,7 +140,7 @@ export function AiOptionsModal({
                       {published ? L.published
                         : publishingId === o.roster_version_id ? '…'
                         : publishable ? L.publish : L.notPublishable}
-                    </button>
+                    </button>}
                   </div>
                 )
               })}

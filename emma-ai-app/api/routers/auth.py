@@ -29,6 +29,9 @@ def _session_out(session, prof: Profile) -> SessionOut:
         role=prof.role,
         facility_id=prof.facility_id,
         facility_name=facility_name,
+        org_id=prof.org_id,
+        staff_id=prof.staff_id,
+        care_workflow=prof.care_workflow,
         user=SessionUser(
             id=session.user.id,
             email=session.user.email,
@@ -36,6 +39,8 @@ def _session_out(session, prof: Profile) -> SessionOut:
             staff_id=prof.staff_id,
             facility_id=prof.facility_id,
             facility_name=facility_name,
+            org_id=prof.org_id,
+            care_workflow=prof.care_workflow,
         ),
     )
 

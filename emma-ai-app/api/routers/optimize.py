@@ -13,7 +13,7 @@ import uuid
 from fastapi import APIRouter, BackgroundTasks, Depends, Query
 from pydantic import BaseModel
 
-from api.deps import AuthCtx, api_error, get_ctx
+from api.deps import AuthCtx, api_error, get_ctx, require_action, require_read
 from emma_core.constants import PUBLISH_THRESHOLD, JobStatus
 from emma_core.db import get_service_client
 from emma_core.models import (
@@ -22,10 +22,9 @@ from emma_core.models import (
 )
 from emma_core.services import optimize as opt
 from emma_core.services import validation as validation_svc
+from emma_core.permissions import Feature
 
 router = APIRouter(tags=["optimize"])
-VALIDATION_WRITE_ROLES = {"superintendent", "admin", "scheduler"}
-OPTIMIZE_WRITE_ROLES = {"superintendent", "admin", "scheduler"}
 
 
 class ValidateRequest(BaseModel):
@@ -61,11 +60,11 @@ def _authorize_optimize(req: OptimizeRequest, ctx: AuthCtx) -> None:
     """Stamp the tenant from the token and authorize caller-supplied ids under RLS
     before the service-role solver touches them - else a foreign source_version_id
     would leak another facility's roster."""
-    if str(ctx.profile.role) not in OPTIMIZE_WRITE_ROLES:
+    if not ctx.allows("roster_generate"):
         raise api_error(
             403,
             "forbidden",
-            "Only a superintendent, admin or scheduler may optimize a roster.",
+            "This workflow appointment may not generate a roster.",
         )
     req.facility_id = ctx.facility_id
     # Identity is always server-derived. A client-supplied UUID must never be
@@ -124,7 +123,7 @@ def optimize_pareto(req: OptimizeRequest, background: BackgroundTasks,
 
 
 @router.get("/optimization-jobs/{job_id}", response_model=JobView)
-def optimization_job(job_id: str, ctx: AuthCtx = Depends(get_ctx)):
+def optimization_job(job_id: str, ctx: AuthCtx = Depends(require_action("roster_generate"))):
     try:
         uuid.UUID(job_id)
     except ValueError:
@@ -137,14 +136,14 @@ def optimization_job(job_id: str, ctx: AuthCtx = Depends(get_ctx)):
 
 # ── option scores (compare / review) ─────────────────────────────────────────
 @router.get("/roster-option-scores/compare/{period_id}")
-def compare_options(period_id: str, ctx: AuthCtx = Depends(get_ctx)):
+def compare_options(period_id: str, ctx: AuthCtx = Depends(require_action("roster_generate"))):
     rows = opt.list_period_option_scores(ctx.client, period_id)
     return {"period_id": period_id,
             "options": [_to_option_score_out(r, with_violations=False) for r in rows]}
 
 
 @router.get("/roster-option-scores/{roster_version_id}", response_model=OptionScoreOut)
-def option_scores(roster_version_id: str, ctx: AuthCtx = Depends(get_ctx)):
+def option_scores(roster_version_id: str, ctx: AuthCtx = Depends(require_action("roster_generate"))):
     row = opt.get_option_scores(ctx.client, roster_version_id)
     if row is None:
         raise api_error(404, "not_found", "no solver scores for this roster version")
@@ -153,8 +152,8 @@ def option_scores(roster_version_id: str, ctx: AuthCtx = Depends(get_ctx)):
 
 # ── validate ──────────────────────────────────────────────────────────────────
 @router.post("/validate-roster", response_model=ValidationOut)
-def validate_roster(body: ValidateRequest, ctx: AuthCtx = Depends(get_ctx)):
-    persist = str(ctx.profile.role) in VALIDATION_WRITE_ROLES
+def validate_roster(body: ValidateRequest, ctx: AuthCtx = Depends(require_action("roster_batch"))):
+    persist = ctx.allows("roster_batch")
     # Authorize the caller-supplied version with the user's RLS client before
     # allowing the service client to persist authoritative audit evidence.
     if not (

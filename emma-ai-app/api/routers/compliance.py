@@ -17,15 +17,14 @@ from emma_core.services.compliance import (
 )
 
 router = APIRouter(tags=["compliance"])
-WRITE_ROLES = {"superintendent", "admin", "scheduler"}
 
 
 def _require_write_role(ctx: AuthCtx) -> None:
-    if str(ctx.profile.role) not in WRITE_ROLES:
+    if not ctx.allows("rules_manage"):
         raise api_error(
             403,
             "forbidden",
-            "Only a superintendent, admin or scheduler may change compliance rules.",
+            "This workflow appointment may not change compliance rules.",
         )
 
 

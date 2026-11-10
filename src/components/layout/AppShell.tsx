@@ -1,9 +1,10 @@
 'use client'
-import { ReactNode, useEffect, useRef, useState } from 'react'
+import { Fragment, ReactNode, useEffect, useRef, useState } from 'react'
 import { usePathname, useRouter } from 'next/navigation'
 import { Sidebar } from './Sidebar'
 import { TopNav } from './TopNav'
 import { useAuth } from './AuthContext'
+import { useLang } from './LanguageContext'
 import {
   CHROMELESS, canOpenRoute, fallbackRoute, isGuardedRoute, routeFeature,
 } from './navRoutes'
@@ -35,7 +36,10 @@ function Splash() {
 export function AppShell({ children }: { children: ReactNode }) {
   const pathname = usePathname()
   const router = useRouter()
-  const { status, user } = useAuth()
+  const { status, user, signOut } = useAuth()
+  const { lang } = useLang()
+  const workflowReady = user?.careWorkflow?.status === 'ready'
+  const identityKey = JSON.stringify([user?.userId, user?.orgId, user?.facilityId, user?.staffId, user?.careWorkflow])
   const isLogin = pathname === '/login'
   const bare = CHROMELESS.includes(pathname)
 
@@ -51,14 +55,29 @@ export function AppShell({ children }: { children: ReactNode }) {
   const guarded = isGuardedRoute(pathname)
   const feature = guarded ? routeFeature(pathname) : undefined
   const forbidden =
-    status === 'authed' && guarded &&
-    (feature === undefined || !canOpenRoute(user?.role, feature))
+    status === 'authed' && workflowReady && guarded &&
+    (feature === undefined || !canOpenRoute(user, feature))
 
   useEffect(() => {
     if (status === 'anon' && !isLogin) router.replace('/login')
-    if (status === 'authed' && isLogin) router.replace(fallbackRoute(user?.role))
-    if (forbidden) router.replace(fallbackRoute(user?.role))
-  }, [status, isLogin, forbidden, user?.role, router])
+    if (status === 'authed' && workflowReady && isLogin) router.replace(fallbackRoute(user))
+    if (forbidden) router.replace(fallbackRoute(user))
+  }, [status, isLogin, forbidden, workflowReady, user, router])
+
+  if (status === 'authed' && !workflowReady) {
+    return (
+      <main className="flex min-h-[100dvh] items-center justify-center bg-slate-50 p-6">
+        <section className="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-6 shadow-sm" role="status">
+          <p className="text-sm font-bold text-pink-600">Emma AI</p>
+          <h1 className="mt-3 text-xl font-semibold text-slate-900">{lang === 'zh' ? '帳戶設定待完成' : 'Account setup pending'}</h1>
+          <p className="mt-3 text-sm leading-6 text-slate-600">{lang === 'zh'
+            ? '你的院舍及職責尚未核實。請聯絡院舍管理員完成帳戶設定，再使用更表及審批功能。'
+            : 'Your care home and appointment have not been verified. Contact your care-home administrator to complete account setup before using rosters or approvals.'}</p>
+          <button type="button" onClick={signOut} className="mt-5 min-h-11 rounded-xl bg-pink-600 px-5 py-2 text-sm font-semibold text-white">{lang === 'zh' ? '登出' : 'Sign out'}</button>
+        </section>
+      </main>
+    )
+  }
 
   if (isLogin) {
     // Already signed in and sitting on /login → we're about to bounce to the app.
@@ -70,10 +89,10 @@ export function AppShell({ children }: { children: ReactNode }) {
   // Hold the splash rather than paint a screen we are leaving.
   if (forbidden) return <Splash />
 
-  if (bare) return <>{children}</>
+  if (bare) return <Fragment key={identityKey}>{children}</Fragment>
 
   return (
-    <ResponsiveShell>
+    <ResponsiveShell key={identityKey}>
       {children}
     </ResponsiveShell>
   )

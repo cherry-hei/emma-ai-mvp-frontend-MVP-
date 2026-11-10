@@ -108,7 +108,7 @@ def resolve_period(client, facility_id: str, period_id: str | None) -> dict | No
     return rows[0] if rows else None
 
 
-def operative_version(client, facility_id: str, period_id: str) -> dict | None:
+def operative_version(client, facility_id: str, period_id: str, *, published_only: bool = False) -> dict | None:
     """The version that represents reality for a period: the published one if there
     is one, else the manual draft. Never an A/B/C candidate - those are proposals."""
     # SQL: select * from roster_versions
@@ -121,6 +121,8 @@ def operative_version(client, facility_id: str, period_id: str) -> dict | None:
     published = [v for v in rows if v.get("status") == "published"]
     if published:
         return published[0]
+    if published_only:
+        return None
     manual = [v for v in rows if v.get("version_type") == "manual"]
     return manual[0] if manual else None
 

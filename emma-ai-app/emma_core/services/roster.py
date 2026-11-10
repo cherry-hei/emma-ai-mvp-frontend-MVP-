@@ -33,8 +33,11 @@ def _latest_version(client, facility_id: str, period_id: str | None = None,
     A/B/C options don't hijack the main view; pass ``version_type=None`` for any, or an
     explicit ``version_id`` for a specific option."""
     if version_id:
-        # SQL: select * from roster_versions where id = :version_id
-        rows = client.table("roster_versions").select("*").eq("id", version_id).execute().data
+        query = (client.table("roster_versions").select("*")
+                 .eq("facility_id", facility_id).eq("id", version_id))
+        if period_id:
+            query = query.eq("period_id", period_id)
+        rows = query.execute().data
         return rows[0] if rows else None
     # SQL: select * from roster_versions
     #      where facility_id = :facility_id

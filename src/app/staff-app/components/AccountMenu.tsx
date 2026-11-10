@@ -77,7 +77,7 @@ export default function AccountMenu() {
                 <p className="truncate text-xs font-semibold text-gray-800">{user?.email ?? '-'}</p>
                 <p className="mt-0.5 truncate text-[10px] text-gray-500">
                   {user?.facilityName}
-                  {user?.role ? ` · ${roleLabel(user.role, isZH)}` : ''}
+                  {user?.role ? ` · ${roleLabel(user, isZH)}` : ''}
                 </p>
               </div>
 

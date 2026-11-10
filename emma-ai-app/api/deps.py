@@ -84,7 +84,32 @@ class AuthCtx:
         return normalise_role(self.profile.role)
 
     def grant(self, feature: Feature) -> Grant:
-        return grant_for(self.profile.role, feature)
+        access = self.profile.care_workflow
+        if (access.status != "ready" or access.org_id != self.org_id
+                or access.facility_id != self.facility_id):
+            return Grant.NONE
+        return access.permissions.get(feature.value, Grant.NONE)
+
+    def can_read(self, feature: Feature) -> bool:
+        return self.grant(feature) in (Grant.FULL, Grant.RECOMMEND, Grant.EDIT, Grant.VIEW)
+
+    def can_write(self, feature: Feature) -> bool:
+        return self.grant(feature) in (Grant.FULL, Grant.EDIT)
+
+    def can_recommend(self, feature: Feature) -> bool:
+        return self.grant(feature) in (Grant.FULL, Grant.RECOMMEND)
+
+    def can_decide(self, feature: Feature) -> bool:
+        return self.grant(feature) == Grant.FULL
+
+    def is_self_only(self, feature: Feature) -> bool:
+        return self.grant(feature) == Grant.SELF
+
+    def allows(self, action: str) -> bool:
+        access = self.profile.care_workflow
+        return (access.status == "ready" and access.org_id == self.org_id
+                and access.facility_id == self.facility_id
+                and getattr(access.actions, action, False) is True)
 
 
 def get_ctx(token: str = Depends(bearer_token)) -> AuthCtx:
@@ -116,12 +141,52 @@ def _denied(feature: Feature, action: str) -> HTTPException:
                      f"Your role may not {action} {feature.value.replace('.', ' ')}.")
 
 
+def require_workflow_ready(request: Request, ctx: AuthCtx = Depends(get_ctx)) -> AuthCtx:
+    """All operational routers require a verified binding; auth remains usable."""
+    access = ctx.profile.care_workflow
+    if (access.status != "ready" or access.org_id != ctx.org_id
+            or access.facility_id != ctx.facility_id):
+        raise api_error(403, "workflow_not_configured",
+                        "This account has no verified care-home workflow appointment.")
+    if access.workflow == "NAAC":
+        from api.workflow_gate import naac_route_enabled
+        route = request.scope.get("route")
+        if not naac_route_enabled(ctx, getattr(route, "path", ""), request.method):
+            raise api_error(403, "workflow_feature_unavailable",
+                            "This feature is not enabled for the account's NAAC workflow.")
+    return ctx
+
+
+def require_action(action: str):
+    def dep(ctx: AuthCtx = Depends(get_ctx)) -> AuthCtx:
+        if not ctx.allows(action):
+            raise api_error(403, "forbidden", "This workflow appointment may not perform this action.")
+        return ctx
+    return dep
+
+
+def require_staff_in_roster_scope(ctx: AuthCtx, staff_id: str) -> None:
+    """Before a manual edit, resolve the target within the bound home and units."""
+    access = ctx.profile.care_workflow
+    rows = (ctx.client.table("staff").select("id,primary_unit_id")
+            .eq("facility_id", ctx.facility_id).eq("id", staff_id).execute().data)
+    if not rows:
+        raise api_error(404, "not_found", "staff member not found")
+    if access.roster_scope == "facility":
+        return
+    if access.roster_scope == "self_and_units" and rows[0].get("primary_unit_id") in access.unit_ids:
+        return
+    if access.roster_scope in ("self", "self_and_units") and staff_id == ctx.profile.staff_id:
+        return
+    raise api_error(403, "out_of_scope", "The staff member is outside this appointment's roster scope.")
+
+
 def require_read(feature: Feature):
     """Facility-wide read. Self-only roles are refused here on purpose: a
     self-only caller needs a `/me`-shaped endpoint that filters by user, not the
     facility aggregate."""
     def dep(ctx: AuthCtx = Depends(get_ctx)) -> AuthCtx:
-        if not can_read(ctx.profile.role, feature):
+        if not ctx.can_read(feature):
             raise _denied(feature, "view")
         return ctx
     return dep
@@ -129,7 +194,7 @@ def require_read(feature: Feature):
 
 def require_write(feature: Feature):
     def dep(ctx: AuthCtx = Depends(get_ctx)) -> AuthCtx:
-        if not can_write(ctx.profile.role, feature):
+        if not ctx.can_write(feature):
             raise _denied(feature, "change")
         return ctx
     return dep
@@ -139,7 +204,7 @@ def require_recommend(feature: Feature):
     """Attach a suggest-approve/reject with a reason. Held by OWNER and the R
     roles; the decision itself still needs `require_decide`."""
     def dep(ctx: AuthCtx = Depends(get_ctx)) -> AuthCtx:
-        if not can_recommend(ctx.profile.role, feature):
+        if not ctx.can_recommend(feature):
             raise _denied(feature, "recommend on")
         return ctx
     return dep
@@ -151,7 +216,7 @@ def require_decide(feature: Feature):
     This is the guard that makes "recommend != approve" real: a nursing officer
     passes `require_recommend` on the same feature and is refused here."""
     def dep(ctx: AuthCtx = Depends(get_ctx)) -> AuthCtx:
-        if not can_decide(ctx.profile.role, feature):
+        if not ctx.can_decide(feature):
             raise _denied(feature, "give the final decision on")
         return ctx
     return dep

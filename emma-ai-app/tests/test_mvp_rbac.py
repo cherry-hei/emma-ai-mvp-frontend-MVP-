@@ -25,6 +25,7 @@ from api.deps import (
 )
 from api.routers import leave as leave_router
 from emma_core.models import Profile
+from tests.care_workflow_fixtures import sa_profile
 from emma_core.permissions import (
     Feature,
     Grant,
@@ -46,7 +47,7 @@ def _ctx(role: str, *, staff_id: str | None = "staff-1") -> AuthCtx:
     return AuthCtx(
         token="test-token",
         client=object(),
-        profile=Profile(id="profile-1", facility_id="f1", role=role, staff_id=staff_id),
+        profile=sa_profile(role, staff_id=staff_id),
     )
 
 

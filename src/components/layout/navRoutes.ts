@@ -4,7 +4,7 @@
 // by two different paths - that split (`/personnel` on the top bar vs `/staff` on
 // the sidebar) is what left the two navs highlighting different things.
 
-import { canRead, type Feature } from '@/lib/permissions'
+import { canRead, type Feature, type PermissionSubject } from '@/lib/permissions'
 
 export const ROUTES = {
   dashboard:  '/dashboard',
@@ -56,7 +56,8 @@ export const ROUTE_FEATURE: Record<string, Feature> = {
   // The Emma AI workspace is management-only and reuses the existing `kpi` read
   // permission until the backend RBAC matrix defines a dedicated AI capability.
   [ROUTES.insights]:   'kpi',
-  [ROUTES.messages]:   'approve.leave',
+  // /messages remains unregistered until its proposed backend contract exists.
+  // Approval permission must never imply a messaging capability.
   '/shift-codes':      'roster.view',
 }
 
@@ -83,13 +84,13 @@ export function isGuardedRoute(pathname: string | null | undefined): boolean {
  *  cell as "- (app: own)" - so `S` must not open the desktop screen, which renders
  *  the whole home. FRONTLINE therefore holds no desktop route at all, which is
  *  what "any management feature: triple block" means. */
-export function canOpenRoute(role: string | null | undefined, feature: Feature): boolean {
+export function canOpenRoute(role: PermissionSubject, feature: Feature): boolean {
   return canRead(role, feature)
 }
 
 /** Where to send a user who may not see `pathname`: their first permitted screen,
  *  or the Staff App when they hold no desktop module at all (FRONTLINE). */
-export function fallbackRoute(role: string | null | undefined): string {
+export function fallbackRoute(role: PermissionSubject): string {
   const first = NAV_ORDER.find((p) => canOpenRoute(role, ROUTE_FEATURE[p]))
   return first ?? '/staff-app'
 }

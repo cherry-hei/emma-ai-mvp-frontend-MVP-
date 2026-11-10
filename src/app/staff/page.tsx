@@ -328,7 +328,7 @@ export default function StaffPage() {
   const [addOpen, setAddOpen] = useState(false)
   const [notice, setNotice] = useState('')
   const requestSequence = useRef(0)
-  const canWriteStaff = canWrite(user?.role, 'staff.profile_write')
+  const canWriteStaff = canWrite(user, 'staff.profile_write')
 
   const reloadStaff = useCallback(async () => {
     const sequence = ++requestSequence.current

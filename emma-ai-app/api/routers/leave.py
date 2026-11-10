@@ -42,10 +42,10 @@ def list_requests(group: str | None = Query(default=None, pattern="^(pending|app
                   date_to: Date | None = Query(default=None),
                   staff_id: str | None = Query(default=None),
                   ctx: AuthCtx = Depends(get_ctx)):
-    if is_self_only(ctx.profile.role, Feature.APPROVE_LEAVE):
+    if ctx.is_self_only(Feature.APPROVE_LEAVE):
         # Ignore whatever staff_id was asked for - self-only means self.
         staff_id = resolve_staff_id(ctx.profile)
-    elif not can_read(ctx.profile.role, Feature.APPROVE_LEAVE):
+    elif not ctx.can_read(Feature.APPROVE_LEAVE):
         raise api_error(403, "forbidden", "Your role may not view leave requests.")
     rows = svc.list_requests(ctx.client, ctx.facility_id, group=group,
                              category=category, search=search, unit_id=unit_id,
@@ -65,13 +65,15 @@ def request_stats(on: Date | None = Query(default=None, alias="date"),
 
 @router.post("/leave-requests", status_code=201)
 def create_request(body: LeaveRequestCreate, ctx: AuthCtx = Depends(get_ctx)):
-    if is_self_only(ctx.profile.role, Feature.APPROVE_LEAVE):
+    if not (ctx.can_read(Feature.APPROVE_LEAVE) or ctx.is_self_only(Feature.APPROVE_LEAVE)):
+        raise api_error(403, "forbidden", "This workflow appointment may not create leave requests.")
+    if not ctx.can_decide(Feature.APPROVE_LEAVE):
         own_staff_id = resolve_staff_id(ctx.profile)
         if body.staff_id and body.staff_id != own_staff_id:
             raise api_error(
                 403,
                 "forbidden",
-                "staff accounts may only create their own requests",
+                "Only the final approver may create a request for another staff member.",
             )
         staff_id = own_staff_id
     else:
@@ -186,7 +188,7 @@ def withdraw_request(request_id: str, body: WithdrawRequest | None = None,
         raise api_error(404, "not_found", "leave request not found")
     reason = body.reason if body else None
     own_staff_id = None
-    if not can_decide(ctx.profile.role, Feature.APPROVE_LEAVE):
+    if not ctx.can_decide(Feature.APPROVE_LEAVE):
         # Anyone who is not the final approver may only act on their own request,
         # whatever their role - resolved from the caller's profile, never the body.
         own_staff_id = resolve_staff_id(ctx.profile)

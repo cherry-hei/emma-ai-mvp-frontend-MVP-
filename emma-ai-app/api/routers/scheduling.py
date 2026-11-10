@@ -5,7 +5,7 @@ from datetime import date as Date
 
 from fastapi import APIRouter, Depends, Query, Response
 
-from api.deps import AuthCtx, api_error, get_ctx
+from api.deps import AuthCtx, api_error, get_ctx, require_staff_in_roster_scope
 from emma_core.models import (
     EscortLocationAssign,
     EscortLocationOut,
@@ -25,19 +25,42 @@ from emma_core.models import (
 )
 from emma_core.services import escort as escort_svc
 from emma_core.services import scheduling as svc
+from emma_core.permissions import Feature
 
 router = APIRouter(tags=["task scheduling"])
 
-WRITE_ROLES = {"superintendent", "admin", "scheduler"}
 
 
-def _require_write_role(ctx: AuthCtx) -> None:
-    if str(ctx.profile.role) not in WRITE_ROLES:
+def _require_write_role(ctx: AuthCtx, feature: Feature = Feature.ROSTER_AI_DRAFT) -> None:
+    if not ctx.can_write(feature):
         raise api_error(
             403,
             "forbidden",
-            "Only a superintendent, admin or scheduler may change scheduling data.",
+            "This workflow appointment may not change scheduling data.",
         )
+
+
+def _assignment_scope(ctx: AuthCtx, assignment_id: str, *, write: bool) -> None:
+    """Resolve through the bound home before any task read/write."""
+    rows = (ctx.client.table("shift_assignments").select("staff_id,shift_id")
+            .eq("facility_id", ctx.facility_id).eq("id", assignment_id).execute().data)
+    if not rows:
+        raise api_error(404, "not_found", "shift assignment not found")
+    require_staff_in_roster_scope(ctx, rows[0]["staff_id"])
+    if write:
+        shifts = (ctx.client.table("shifts").select("roster_version_id")
+                  .eq("facility_id", ctx.facility_id)
+                  .eq("id", rows[0]["shift_id"]).execute().data)
+        if not shifts:
+            raise api_error(404, "not_found", "shift not found")
+        from api.routers.roster import _require_editable_version
+        _require_editable_version(ctx, shifts[0]["roster_version_id"])
+
+
+def _task_editor(ctx: AuthCtx, assignment_id: str) -> None:
+    if not ctx.allows("roster_edit"):
+        raise api_error(403, "forbidden", "This appointment may not edit roster tasks.")
+    _assignment_scope(ctx, assignment_id, write=True)
 
 
 @router.get("/task-assignments", response_model=list[TaskAssignmentOut])
@@ -46,6 +69,12 @@ def task_assignments(
     shift_assignment_id: str | None = Query(default=None),
     ctx: AuthCtx = Depends(get_ctx),
 ):
+    if ctx.profile.care_workflow.roster_scope != "facility":
+        if not ctx.allows("roster_edit") or not shift_assignment_id:
+            raise api_error(403, "forbidden", "A scoped shift assignment is required.")
+        _assignment_scope(ctx, shift_assignment_id, write=False)
+    elif not ctx.can_read(Feature.TASK_CODES):
+        raise api_error(403, "forbidden", "This appointment may not read task assignments.")
     return svc.list_task_assignments(
         ctx.client,
         ctx.facility_id,
@@ -59,7 +88,7 @@ def create_task_assignment(
     body: TaskAssignmentCreate,
     ctx: AuthCtx = Depends(get_ctx),
 ):
-    _require_write_role(ctx)
+    _task_editor(ctx, body.shift_assignment_id)
     return svc.create_task_assignment(
         ctx.client,
         ctx.facility_id,
@@ -73,7 +102,11 @@ def update_task_assignment(
     body: TaskAssignmentPatch,
     ctx: AuthCtx = Depends(get_ctx),
 ):
-    _require_write_role(ctx)
+    rows = (ctx.client.table("task_assignments").select("shift_assignment_id")
+            .eq("facility_id", ctx.facility_id).eq("id", task_assignment_id).execute().data)
+    if not rows:
+        raise api_error(404, "not_found", "task assignment not found")
+    _task_editor(ctx, rows[0]["shift_assignment_id"])
     return svc.update_task_assignment(
         ctx.client,
         ctx.facility_id,
@@ -110,7 +143,7 @@ def upsert_escort_location(
     body: EscortLocationRequest,
     ctx: AuthCtx = Depends(get_ctx),
 ):
-    _require_write_role(ctx)
+    _require_write_role(ctx, Feature.FACILITY_SETTINGS)
     return escort_svc.upsert_location(
         ctx.client, ctx.facility_id, code=body.code, name_en=body.name_en,
         name_zh=body.name_zh, aliases=body.aliases,
@@ -229,7 +262,7 @@ def create_staff_qualification(
     body: StaffQualificationCreate,
     ctx: AuthCtx = Depends(get_ctx),
 ):
-    _require_write_role(ctx)
+    _require_write_role(ctx, Feature.STAFF_PROFILE_WRITE)
     return svc.create_staff_qualification(
         ctx.client, ctx.facility_id, body.model_dump(mode="json"))
 
@@ -241,7 +274,7 @@ def update_staff_qualification(
     body: StaffQualificationPatch,
     ctx: AuthCtx = Depends(get_ctx),
 ):
-    _require_write_role(ctx)
+    _require_write_role(ctx, Feature.STAFF_PROFILE_WRITE)
     return svc.update_staff_qualification(
         ctx.client, ctx.facility_id, qualification_id,
         body.model_dump(mode="json", exclude_unset=True))
@@ -252,7 +285,7 @@ def delete_staff_qualification(
     qualification_id: str,
     ctx: AuthCtx = Depends(get_ctx),
 ):
-    _require_write_role(ctx)
+    _require_write_role(ctx, Feature.STAFF_PROFILE_WRITE)
     svc.delete_staff_qualification(ctx.client, ctx.facility_id, qualification_id)
     return Response(status_code=204)
 
@@ -273,7 +306,7 @@ def create_floor_rule(
     body: FloorRuleCreate,
     ctx: AuthCtx = Depends(get_ctx),
 ):
-    _require_write_role(ctx)
+    _require_write_role(ctx, Feature.ROSTER_RULE_ENGINE)
     return svc.create_floor_rule(
         ctx.client, ctx.facility_id, body.model_dump(mode="json"))
 
@@ -284,7 +317,7 @@ def update_floor_rule(
     body: FloorRulePatch,
     ctx: AuthCtx = Depends(get_ctx),
 ):
-    _require_write_role(ctx)
+    _require_write_role(ctx, Feature.ROSTER_RULE_ENGINE)
     return svc.update_floor_rule(
         ctx.client, ctx.facility_id, rule_id,
         body.model_dump(mode="json", exclude_unset=True))
@@ -295,6 +328,6 @@ def delete_floor_rule(
     rule_id: str,
     ctx: AuthCtx = Depends(get_ctx),
 ):
-    _require_write_role(ctx)
+    _require_write_role(ctx, Feature.ROSTER_RULE_ENGINE)
     svc.delete_floor_rule(ctx.client, ctx.facility_id, rule_id)
     return Response(status_code=204)

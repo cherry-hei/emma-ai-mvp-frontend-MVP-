@@ -24,9 +24,9 @@ export function TopNav({ onMenuToggle }: { onMenuToggle?: () => void } = {}) {
   const { user, signOut } = useAuth()
   const isZH = lang === 'zh'
 
-  // 'A' / 'B' from "Care Home A (…)", else first letter of the email.
+  // A/B comes from the reviewed server binding, never the facility display name.
   const avatarLetter =
-    user?.facilityName?.match(/Home\s*([A-Za-z0-9])/)?.[1]?.toUpperCase()
+    user?.careWorkflow?.care_home
     ?? user?.email?.charAt(0).toUpperCase()
     ?? 'U'
 
@@ -65,7 +65,7 @@ export function TopNav({ onMenuToggle }: { onMenuToggle?: () => void } = {}) {
       {/* The sidebar is the only primary navigation; header carries utilities. */}
       <div className="min-w-2 flex-1" />
 
-      {canOpenRoute(user?.role, ROUTE_FEATURE[ROUTES.insights]) && (
+      {canOpenRoute(user, ROUTE_FEATURE[ROUTES.insights]) && (
         <button
           type="button"
           onClick={() => router.push(ROUTES.insights)}
@@ -132,7 +132,7 @@ export function TopNav({ onMenuToggle }: { onMenuToggle?: () => void } = {}) {
       </div>
 
       {/* Alert utility intentionally does not fabricate a badge count. */}
-      {canOpenRoute(user?.role, ROUTE_FEATURE[ROUTES.alert]) && <button type="button" onClick={() => router.push(ROUTES.alert)} className="flex min-h-11 min-w-11 items-center justify-center rounded-xl text-slate-600 hover:bg-slate-50" aria-label={isZH ? '開啟警報' : 'Open alerts'}>
+      {canOpenRoute(user, ROUTE_FEATURE[ROUTES.alert]) && <button type="button" onClick={() => router.push(ROUTES.alert)} className="flex min-h-11 min-w-11 items-center justify-center rounded-xl text-slate-600 hover:bg-slate-50" aria-label={isZH ? '開啟警報' : 'Open alerts'}>
         <span aria-hidden>🔔</span>
       </button>}
 
@@ -157,7 +157,7 @@ export function TopNav({ onMenuToggle }: { onMenuToggle?: () => void } = {}) {
               {user?.facilityName ?? '-'}
             </div>
             <div className="emma-reflow-text break-words text-xs text-gray-500">
-              {roleLabel(user?.role, isZH) || user?.email}
+              {roleLabel(user, isZH) || user?.email}
             </div>
           </div>
           <span className="text-gray-400 text-[10px]">▾</span>
@@ -176,11 +176,11 @@ export function TopNav({ onMenuToggle }: { onMenuToggle?: () => void } = {}) {
                 <div className="text-[10px] text-gray-400">{isZH ? '已登入帳戶' : 'Signed-in account'}</div>
                 <div className="break-words text-xs font-semibold text-gray-800">{user?.email ?? '-'}</div>
                 <div className="mt-0.5 break-words text-[10px] text-gray-500">
-                  {user?.facilityName}{user?.role ? ` · ${roleLabel(user.role, isZH)}` : ''}
+                  {user?.facilityName}{user?.role ? ` · ${roleLabel(user, isZH)}` : ''}
                 </div>
               </div>
               <div className="h-px bg-gray-100 my-1" />
-              {canOpenRoute(user?.role, ROUTE_FEATURE[ROUTES.settings]) && (
+              {canOpenRoute(user, ROUTE_FEATURE[ROUTES.settings]) && (
                 <button
                   type="button"
                   role="menuitem"

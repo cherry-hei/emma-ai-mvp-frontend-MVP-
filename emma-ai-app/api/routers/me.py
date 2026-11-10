@@ -25,6 +25,7 @@ from emma_core.services import me as svc
 from emma_core.services import notifications as notify
 from emma_core.services import replacement_offers as offers
 from emma_core.services import tasks as task_svc
+from emma_core.permissions import Feature
 
 router = APIRouter(tags=["staff-app"])
 
@@ -63,7 +64,10 @@ def _readable(ctx: AuthCtx, call):
 @router.get("/me/summary")
 def my_summary(ctx: AuthCtx = Depends(get_ctx)):
     staff_id = _staff_id(ctx)
-    return _readable(ctx, lambda: svc.summary(ctx.client, ctx.facility_id, staff_id))
+    result = _readable(ctx, lambda: svc.summary(ctx.client, ctx.facility_id, staff_id))
+    if not ctx.can_read(Feature.KPI_STAFFING_RATIO):
+        result["facility_ratio"] = None
+    return result
 
 
 @router.get("/me/roster")
@@ -202,7 +206,12 @@ def my_leave(ctx: AuthCtx = Depends(get_ctx)):
 @router.get("/me/colleagues")
 def colleagues(on: Date | None = Query(default=None, alias="date"),
                ctx: AuthCtx = Depends(get_ctx)):
-    return svc.colleagues_on(ctx.client, ctx.facility_id, on or Date.today())
+    rows = svc.colleagues_on(ctx.client, ctx.facility_id, on or Date.today())
+    if ctx.profile.care_workflow.roster_scope in ("self", "self_and_units"):
+        from api.routers.roster import _scoped_staff_ids
+        allowed = _scoped_staff_ids(ctx, ctx.client)
+        return [row for row in rows if row["staff_id"] in allowed]
+    return rows
 
 
 @router.get("/me/notifications")

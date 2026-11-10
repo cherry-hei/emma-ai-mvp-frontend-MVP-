@@ -64,6 +64,81 @@ function restoreEnvironment(previous) {
   globalThis.window = previous.window
 }
 
+test('refresh publishes changed membership to the UI and never replays an old write into it', async () => {
+  const previous = { preview: process.env.NEXT_PUBLIC_INTEGRATION_PREVIEW, fetch: globalThis.fetch, window: globalThis.window }
+  try {
+    delete process.env.NEXT_PUBLIC_INTEGRATION_PREVIEW
+    installBrowser()
+    const first = { ...session({ accessToken: 'old', refreshToken: 'refresh' }), org_id: 'org-a', care_workflow: { role: 'director' } }
+    const updated = { ...session({ accessToken: 'new', refreshToken: 'new-refresh' }), org_id: 'org-b', facility_id: 'facility-b', care_workflow: { role: 'staff' } }
+    let writes = 0
+    globalThis.fetch = async (url) => {
+      if (String(url).endsWith('/auth/login')) return jsonResponse(first)
+      if (String(url).endsWith('/auth/refresh')) return jsonResponse(updated)
+      writes += 1
+      return jsonResponse({ detail: 'expired' }, 401)
+    }
+    const api = await loadApi()
+    await api.login('fixture@example.test', 'fixture-only')
+    let received
+    api.onSessionRefreshed((value) => { received = value })
+    await assert.rejects(api.apiFetch('/leave-requests', { method: 'POST', body: '{}' }), /membership or permissions changed/)
+    assert.equal(writes, 1)
+    assert.deepEqual(received, updated)
+    assert.equal(api.getToken(), 'new')
+  } finally { restoreEnvironment(previous) }
+})
+
+test('legacy session hydration seeds scope; an unverified or changed scope never replays a write', async () => {
+  const previous = { preview: process.env.NEXT_PUBLIC_INTEGRATION_PREVIEW, fetch: globalThis.fetch, window: globalThis.window }
+  try {
+    delete process.env.NEXT_PUBLIC_INTEGRATION_PREVIEW
+    for (const hydrate of [true, false]) {
+      const storage = installBrowser()
+      storage.setItem('emma_token', 'legacy-access')
+      storage.setItem('emma_refresh', 'legacy-refresh')
+      storage.setItem('emma_session', JSON.stringify({ user_id: 'user-1', role: 'OWNER', facility_id: 'facility-1' }))
+      const profile = { id: 'profile-a', auth_user_id: 'user-1', role: 'OWNER', org_id: 'org-a', facility_id: 'facility-1', care_workflow: { role: 'director' } }
+      let writes = 0
+      globalThis.fetch = async url => {
+        if (String(url).endsWith('/auth/me')) return jsonResponse(profile)
+        if (String(url).endsWith('/auth/refresh')) return jsonResponse({ ...session({ accessToken: 'fresh', refreshToken: 'fresh-refresh' }), org_id: 'org-b', facility_id: 'facility-b' })
+        writes += 1
+        return jsonResponse({ detail: 'expired' }, 401)
+      }
+      const api = await loadApi()
+      if (hydrate) {
+        api.rememberVerifiedProfile(await api.api.me())
+        assert.ok(JSON.parse(storage.getItem('emma_session')).identity_scope.includes('org-a'))
+      }
+      await assert.rejects(api.apiFetch('/leave-requests', { method: 'POST', body: '{}' }), /membership or permissions changed/)
+      assert.equal(writes, 1)
+      assert.equal(api.getToken(), 'fresh')
+    }
+  } finally { restoreEnvironment(previous) }
+})
+
+test('a changed staff link within the same account and home prevents self-service write replay', async () => {
+  const previous = { preview: process.env.NEXT_PUBLIC_INTEGRATION_PREVIEW, fetch: globalThis.fetch, window: globalThis.window }
+  try {
+    delete process.env.NEXT_PUBLIC_INTEGRATION_PREVIEW
+    installBrowser()
+    const first = { ...session({ accessToken: 'old', refreshToken: 'refresh' }), org_id: 'org-a', staff_id: 'staff-one' }
+    const updated = { ...first, access_token: 'fresh', staff_id: 'staff-two' }
+    let writes = 0
+    globalThis.fetch = async url => {
+      if (String(url).endsWith('/auth/login')) return jsonResponse(first)
+      if (String(url).endsWith('/auth/refresh')) return jsonResponse(updated)
+      writes += 1
+      return jsonResponse({ detail: 'expired' }, 401)
+    }
+    const api = await loadApi()
+    await api.login('fixture@example.test', 'fixture-only')
+    await assert.rejects(api.apiFetch('/leave-requests', { method: 'POST', body: '{}' }), /membership or permissions changed/)
+    assert.equal(writes, 1)
+  } finally { restoreEnvironment(previous) }
+})
+
 test('integration preview blocks login and API requests before fetch or credentials leave the browser', async () => {
   const previous = {
     preview: process.env.NEXT_PUBLIC_INTEGRATION_PREVIEW,
@@ -343,6 +418,7 @@ test('a new session replaces all credential fields instead of retaining old refr
     assert.equal(storage.getItem('emma_refresh'), null)
     assert.deepEqual(JSON.parse(storage.getItem('emma_session')), {
       user_id: 'new-user', email: null, role: 'OWNER', facility_id: 'facility-1', facility_name: null,
+      identity_scope: JSON.stringify(['new-user', null, 'facility-1', 'OWNER', null, null]),
     })
   } finally {
     restoreEnvironment(previous)

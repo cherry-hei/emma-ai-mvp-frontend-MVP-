@@ -7,6 +7,7 @@ from api.main import app
 from emma_core.models import Profile
 from emma_core.services import ai_compliance, ai_gateway, audit
 from fastapi.testclient import TestClient
+from tests.care_workflow_fixtures import sa_profile
 
 
 def test_staff_cannot_query_compliance_suggestions_or_download_exports():
@@ -48,7 +49,7 @@ def test_a_manager_cannot_enable_external_ai_for_an_unlisted_tenant(monkeypatch)
     ))
     monkeypatch.setattr(audit, "record", lambda *a, **k: None)
     ctx = AuthCtx(token="synthetic", client=None,
-                  profile=Profile(id="manager", role="OWNER", facility_id="unlisted-tenant"))
+                  profile=sa_profile("OWNER"))
     original = dict(app.dependency_overrides)
     app.dependency_overrides[get_ctx] = lambda: ctx
     try:

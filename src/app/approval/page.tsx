@@ -6,7 +6,7 @@ import { approvalCsv } from '@/lib/approval-csv.js'
 import type { LeaveCategory, LeaveGroup, LeaveRequest, LeaveStats, Unit } from '@/lib/apiTypes'
 import { useLang } from '@/components/layout/LanguageContext'
 import { useAuth } from '@/components/layout/AuthContext'
-import { canDecide, canRecommend, canRead } from '@/lib/permissions'
+import { canDecide, canRecommend, canRead, type PermissionSubject } from '@/lib/permissions'
 
 const PINK = '#E8187A'
 const PINK_HOVER = '#cf126b'
@@ -105,7 +105,7 @@ function RecommendationBadge({ rec }: { rec: Recommendation }) {
 // ─── Approval Card (stacked list item) ──────────────────────────────────────
 function ApprovalCard({ request, role, isZH, onAction, busy }: {
   request: LeaveRequestExtended
-  role: string | null
+  role: PermissionSubject
   isZH: boolean
   onAction: (id: string, action: string, note?: string) => Promise<boolean>
   busy: boolean
@@ -356,7 +356,7 @@ function ApprovalCard({ request, role, isZH, onAction, busy }: {
 export default function ApprovalPage() {
   const { lang } = useLang()
   const { user } = useAuth()
-  const role = user?.role ?? null
+  const role = user
   const isZH = lang === 'zh'
 
   const [group, setGroup] = useState<LeaveGroup>('pending')

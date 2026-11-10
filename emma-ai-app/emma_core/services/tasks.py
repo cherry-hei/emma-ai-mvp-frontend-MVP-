@@ -290,7 +290,7 @@ def for_staff_date(client, facility_id: str, staff_id: str, on: Date) -> list[di
     period = resolve_period(client, facility_id, None)
     if not period:
         return []
-    version = operative_version(client, facility_id, period["id"])
+    version = operative_version(client, facility_id, period["id"], published_only=True)
     if not version:
         return []
     # SQL: select * from shifts
