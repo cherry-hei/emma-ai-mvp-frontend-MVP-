@@ -441,11 +441,11 @@ test('task-assignment escort destinations use the published create and clear con
       return jsonResponse({ id: 'task-1', shift_assignment_id: 'shift-1', task_label: 'Escort' })
     }
 
-    const module = await loadApi()
-    await module.api.createTaskAssignment({
+    const apiModule = await loadApi()
+    await apiModule.api.createTaskAssignment({
       shift_assignment_id: 'shift-1', task_id: 'task-1', escort_location: 'CLINIC-A',
     })
-    await module.api.updateTaskAssignment('task-1', { escort_location: null })
+    await apiModule.api.updateTaskAssignment('task-1', { escort_location: null })
 
     assert.equal(requests.length, 2)
     assert.equal(requests[0].url, 'http://localhost:8000/task-assignments')

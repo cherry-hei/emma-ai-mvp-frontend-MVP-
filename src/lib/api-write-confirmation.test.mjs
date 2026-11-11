@@ -225,15 +225,15 @@ test('valid 204 deletes remain accepted only for the credentials that issued the
       }
       return deleteResponse.promise
     }
-    const module = await loadApi()
-    const deleting = module.apiFetch('/shifts?roster_version_id=version-1', { method: 'DELETE' })
+    const apiModule = await loadApi()
+    const deleting = apiModule.apiFetch('/shifts?roster_version_id=version-1', { method: 'DELETE' })
     await new Promise((resolve) => setImmediate(resolve))
-    await module.login('new@example.test', 'password')
+    await apiModule.login('new@example.test', 'password')
     deleteResponse.resolve(new Response(null, { status: 204 }))
     await assert.rejects(deleting, /superseded session/)
 
     globalThis.fetch = async () => new Response(null, { status: 204 })
-    await assert.doesNotReject(module.apiFetch('/shifts?roster_version_id=version-1', { method: 'DELETE' }))
+    await assert.doesNotReject(apiModule.apiFetch('/shifts?roster_version_id=version-1', { method: 'DELETE' }))
   } finally {
     restoreEnvironment(previous)
   }

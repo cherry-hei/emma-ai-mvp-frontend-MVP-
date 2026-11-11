@@ -1,0 +1,101 @@
+# Verification for the approved PR #17 lint queue only. It grants no release approval.
+name: Phone engineering checks (PR 17)
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    branches: [fix/care-home-workflows-20261111]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: phone-api-pr-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    if: >-
+      github.repository == 'cherry-hei/emma-ai-mvp-frontend-MVP-' &&
+      github.event.pull_request.number == 17 &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.head.ref == 'agent/phone-dev-lint-20261111'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      NEXT_PUBLIC_API_URL: http://localhost:8000
+    steps:
+      - name: Check out exact PR head
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Enforce the approved change scope
+        env:
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$PR_BASE_SHA" != b9095a7a296e31cd0a72f58d16d9b2ad5a1e67b5 ]]; then
+            echo '::error::PR base changed; review and update this bounded verification scope.'
+            exit 1
+          fi
+          baseline=adc5a14a041f72eabb69c4b00a448bb9a7589047
+          git fetch --no-tags --depth=1 origin "$baseline"
+          git diff --name-only -z "$baseline" HEAD -- > "$RUNNER_TEMP/phone-api-changes"
+          while IFS= read -r -d '' path; do
+            case "$path" in
+              .github/workflows/phone-api-regression.yml|src/lib/api.test.mjs|src/lib/api-write-confirmation.test.mjs|src/lib/api.ts|next.config.ts|src/components/layout/AppShell.tsx|src/components/ai/EmmaAiWorkspace.tsx|src/components/modals/CreateEventModal.tsx|src/app/staff/page.tsx|src/app/scheduling/page.tsx) ;;
+              *)
+                if [[ ! "$path" =~ ^src/lib/[^/]+[.]test[.]mjs$ && ! "$path" =~ ^src/components/[^/]+/[^/]+[.]test[.]mjs$ ]]; then
+                  echo '::error::Changes exceed the approved lint queue and regression-test files.'
+                  exit 1
+                fi
+                ;;
+            esac
+          done < "$RUNNER_TEMP/phone-api-changes"
+
+      - name: Set up the scheduled worker Node version
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '22.16.0'
+          package-manager-cache: false
+
+      - name: Install locked dependencies without lifecycle scripts
+        run: npm ci --ignore-scripts --no-audit --no-fund
+
+      - name: Run the existing fixture-only UI and API regressions
+        run: npm run test:ui
+
+      - name: Run added or changed regression files
+        shell: bash
+        run: |
+          set -euo pipefail
+          changed_tests=()
+          while IFS= read -r -d '' path; do
+            if [[ "$path" =~ [.]test[.]mjs$ ]]; then
+              changed_tests+=("$path")
+            fi
+          done < "$RUNNER_TEMP/phone-api-changes"
+          if (( ${#changed_tests[@]} > 0 )); then
+            node --experimental-strip-types --test "${changed_tests[@]}"
+          fi
+
+      - name: Check TypeScript
+        run: npm run typecheck
+
+      - name: Lint the queued files changed by this draft
+        shell: bash
+        run: |
+          set -euo pipefail
+          lint_files=(src/lib/api.test.mjs src/lib/api-write-confirmation.test.mjs)
+          while IFS= read -r -d '' path; do
+            case "$path" in
+              src/lib/api.test.mjs|src/lib/api-write-confirmation.test.mjs) ;;
+              *.js|*.mjs|*.ts|*.tsx) lint_files+=("$path") ;;
+            esac
+          done < "$RUNNER_TEMP/phone-api-changes"
+          ./node_modules/.bin/eslint -- "${lint_files[@]}"
+
