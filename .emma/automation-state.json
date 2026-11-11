@@ -1,7 +1,7 @@
 {
   "schema_version": 2,
-  "revision": 2,
-  "updated_at": "2026-11-11T13:14:23.000Z",
+  "revision": 3,
+  "updated_at": "2026-11-11T13:16:07.000Z",
   "purpose": "Technical progress for the approved draft lint fixes; this control branch is not an application release.",
   "repository": "cherry-hei/emma-ai-mvp-frontend-MVP-",
   "source": {
@@ -21,7 +21,40 @@
     "expires_at": "2026-11-11T13:54:23.000Z",
     "execution_deadline": "2026-11-11T13:43:40Z"
   },
-  "publication_intent": null,
+  "publication_intent": {
+    "task_id": "LINT-002",
+    "claim_token": "2a705ed4-7b7f-4e7d-ab75-5c2e886fd4f4",
+    "status": "prepared",
+    "branch": "agent/phone-dev-lint-20261111",
+    "expected_head": "bc0251f0373634fc04ab9c05ac8c85caed2d4122",
+    "paths": [
+      "src/lib/api.test.mjs",
+      "src/lib/api-write-confirmation.test.mjs"
+    ],
+    "result_blobs": {
+      "src/lib/api.test.mjs": "651d118e9d6734cafc6df519c35201e38207ce8c",
+      "src/lib/api-write-confirmation.test.mjs": "02ea82fc075630c62b2a25cf94a70d169ad1bae5"
+    },
+    "local_validation": {
+      "runtime": "Node24.22.1",
+      "before": {
+        "tests": 19,
+        "passed": 19,
+        "failed": 0,
+        "skipped": 0,
+        "exit_code": 0
+      },
+      "after": {
+        "tests": 19,
+        "passed": 19,
+        "failed": 0,
+        "skipped": 0,
+        "exit_code": 0
+      },
+      "source_review": "independent byte-for-byte identifier-only review passed"
+    },
+    "prepared_at": "2026-11-11T13:16:07.000Z"
+  },
   "policy": {
     "writes": "Only this technical state file and scoped source changes on the owned Draft PR branch. All mutations require a fresh state/ownership read and a current content/ref guard.",
     "releases": "No main merge, deployment, migration, live-data operation, DNS cutover, credential expansion or paid service activation.",
@@ -80,7 +113,7 @@
     },
     {
       "id": "LINT-002",
-      "status": "running",
+      "status": "publishing",
       "priority": 1,
       "scope": [
         "src/lib/api.test.mjs",
