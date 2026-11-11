@@ -1,7 +1,7 @@
 {
   "schema_version": 2,
-  "revision": 1,
-  "updated_at": "2026-11-11T12:51:00Z",
+  "revision": 2,
+  "updated_at": "2026-11-11T13:14:23.000Z",
   "purpose": "Technical progress for the approved draft lint fixes; this control branch is not an application release.",
   "repository": "cherry-hei/emma-ai-mvp-frontend-MVP-",
   "source": {
@@ -11,8 +11,16 @@
     "base_branch": "fix/care-home-workflows-20261111",
     "base_sha": "b9095a7a296e31cd0a72f58d16d9b2ad5a1e67b5"
   },
-  "scheduler_status": "paused_platform_action_required",
-  "lease": null,
+  "scheduler_status": "executing_user_initiated_run",
+  "lease": {
+    "task_id": "LINT-002",
+    "claim_token": "2a705ed4-7b7f-4e7d-ab75-5c2e886fd4f4",
+    "run_id": "lint002-2a705ed4-7b7f-4e7d-ab75-5c2e886fd4f4",
+    "owner": "chatgpt-worker",
+    "claimed_at": "2026-11-11T13:14:23.000Z",
+    "expires_at": "2026-11-11T13:54:23.000Z",
+    "execution_deadline": "2026-11-11T13:43:40Z"
+  },
   "publication_intent": null,
   "policy": {
     "writes": "Only this technical state file and scoped source changes on the owned Draft PR branch. All mutations require a fresh state/ownership read and a current content/ref guard.",
@@ -72,7 +80,7 @@
     },
     {
       "id": "LINT-002",
-      "status": "ready",
+      "status": "running",
       "priority": 1,
       "scope": [
         "src/lib/api.test.mjs",
