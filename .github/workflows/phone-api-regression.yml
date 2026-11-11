@@ -48,8 +48,12 @@ jobs:
           while IFS= read -r -d '' path; do
             case "$path" in
               .github/workflows/phone-api-regression.yml|src/lib/api.test.mjs|src/lib/api-write-confirmation.test.mjs|src/lib/api.ts|next.config.ts|src/components/layout/AppShell.tsx|src/components/ai/EmmaAiWorkspace.tsx|src/components/modals/CreateEventModal.tsx|src/app/staff/page.tsx|src/app/scheduling/page.tsx) ;;
-              src/lib/*.test.mjs|src/components/*/*.test.mjs) ;;
-              *) echo '::error::Changes exceed the approved lint queue and regression-test files.'; exit 1 ;;
+              *)
+                if [[ ! "$path" =~ ^src/lib/[^/]+[.]test[.]mjs$ && ! "$path" =~ ^src/components/[^/]+/[^/]+[.]test[.]mjs$ ]]; then
+                  echo '::error::Changes exceed the approved lint queue and regression-test files.'
+                  exit 1
+                fi
+                ;;
             esac
           done < "$RUNNER_TEMP/phone-api-changes"
 
@@ -64,6 +68,20 @@ jobs:
 
       - name: Run the existing fixture-only UI and API regressions
         run: npm run test:ui
+
+      - name: Run added or changed regression files
+        shell: bash
+        run: |
+          set -euo pipefail
+          changed_tests=()
+          while IFS= read -r -d '' path; do
+            if [[ "$path" =~ [.]test[.]mjs$ ]]; then
+              changed_tests+=("$path")
+            fi
+          done < "$RUNNER_TEMP/phone-api-changes"
+          if (( ${#changed_tests[@]} > 0 )); then
+            node --experimental-strip-types --test "${changed_tests[@]}"
+          fi
 
       - name: Check TypeScript
         run: npm run typecheck
@@ -80,3 +98,4 @@ jobs:
             esac
           done < "$RUNNER_TEMP/phone-api-changes"
           ./node_modules/.bin/eslint -- "${lint_files[@]}"
+
