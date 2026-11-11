@@ -1,0 +1,166 @@
+{
+  "schema_version": 2,
+  "revision": 0,
+  "updated_at": "2026-11-11 12:44:48 UTC",
+  "purpose": "Technical progress for the approved draft lint fixes; this control branch is not an application release.",
+  "repository": "cherry-hei/emma-ai-mvp-frontend-MVP-",
+  "source": {
+    "branch": "agent/phone-dev-lint-20261111",
+    "pr": 17,
+    "head": "bc0251f0373634fc04ab9c05ac8c85caed2d4122",
+    "base_branch": "fix/care-home-workflows-20261111",
+    "base_sha": "b9095a7a296e31cd0a72f58d16d9b2ad5a1e67b5"
+  },
+  "scheduler_status": "recovery_prepared",
+  "lease": null,
+  "publication_intent": null,
+  "policy": {
+    "writes": "Only this technical state file and scoped source changes on the owned Draft PR branch. All mutations require a fresh state/ownership read and a current content/ref guard.",
+    "releases": "No main merge, deployment, migration, live-data operation, DNS cutover, credential expansion or paid service activation.",
+    "decisions": "Material product/business/permission decisions remain for the authenticated founder in ChatGPT. Private approval text and data do not belong in this public file.",
+    "privacy": "Only public technical task scope, statuses, source/check identifiers and sanitized diagnostics. Never copy private conversations, credentials, account mappings, customer data or private repository source here.",
+    "retries": "Reconcile remote publication intent and exact commits before retrying. No force push, silent overwrite or duplicated PR.",
+    "idle": "When no approved work is runnable, wait quietly. Do not invent features."
+  },
+  "bootstrap": {
+    "method": "Read exact-ref files through the authorized GitHub connector, materialize UTF-8 bytes in a fresh isolated workspace, and validate Git blob hashes. Shell git clone/network access is not a prerequisite.",
+    "files": [
+      {
+        "path": "src/lib/api.test.mjs",
+        "initial_blob": "835b3b2687f04af7b0176fe372eb0b5436685968"
+      },
+      {
+        "path": "src/lib/api-write-confirmation.test.mjs",
+        "initial_blob": "a06fb814b05794975f3cdcfd3e7a6cd2afbeb5a5"
+      },
+      {
+        "path": "src/lib/api.ts",
+        "initial_blob": "e43c5d7cddad7ee4420713bad7060e8a3d24bd2b"
+      },
+      {
+        "path": "src/lib/api-response.js",
+        "initial_blob": "3c35a35c1c8a752eecaba4f4c989051c879a4033"
+      },
+      {
+        "path": "src/lib/previewGate.js",
+        "initial_blob": "a68a961a011d0b8888e64314e66372b2c50b33ec"
+      }
+    ],
+    "test_command": "node --experimental-strip-types --test src/lib/api.test.mjs src/lib/api-write-confirmation.test.mjs",
+    "test_environment": {
+      "NEXT_PUBLIC_API_URL": "http://localhost:8000"
+    },
+    "expected_tests": 19,
+    "note": "The five-file runtime path has no third-party dependency. CI provides npm-backed lint/type/full-suite evidence. initial_blob values describe the initial source baseline; later accepted source changes must be read at their exact new head."
+  },
+  "verification": {
+    "workflow": ".github/workflows/phone-api-regression.yml",
+    "workflow_name": "Phone engineering checks (PR 17)",
+    "runs": "pull_request only; fixed PR17, repository, head/base branch; no dispatch, main push or deployment",
+    "evidence": "Require exact source-head CI conclusion plus job logs/counts. A queued run is not a pass. If CI is pending, persist awaiting_ci, release the lease, and collect it on the next run.",
+    "runtime_only": "Node's19tests do not prove ESLint/typecheck/full UI checks. Keep missing checks explicit."
+  },
+  "tasks": [
+    {
+      "id": "LINT-001",
+      "status": "ready_for_review",
+      "scope": [
+        "package.json"
+      ],
+      "result_commit": "adc5a14a041f72eabb69c4b00a448bb9a7589047",
+      "result": "Direct ESLint command restored; manual baseline12errors7warnings across90files, not green."
+    },
+    {
+      "id": "LINT-002",
+      "status": "ready",
+      "priority": 1,
+      "scope": [
+        "src/lib/api.test.mjs",
+        "src/lib/api-write-confirmation.test.mjs"
+      ],
+      "instruction": "Rename only each offending local variable named module and its scoped references. Preserve all19test definitions/assertions. Run the19tests before and after; publish one atomic commit and verify the exact-head PR-only CI.",
+      "acceptance": [
+        "19 local Node tests pass with zero skipped",
+        "No assertion removal or unrelated code change",
+        "Exact-head CI fixture suite, TypeScript and targeted ESLint pass"
+      ]
+    },
+    {
+      "id": "LINT-003",
+      "status": "ready",
+      "priority": 2,
+      "depends_on": [
+        "LINT-002"
+      ],
+      "scope": [
+        "src/lib/api.ts"
+      ],
+      "instruction": "Resolve the existing prefer-const finding only after confirming the request binding is never reassigned; preserve auth/session behavior. Use the five-file runtime tests and exact-head CI."
+    },
+    {
+      "id": "LINT-004",
+      "status": "ready",
+      "priority": 3,
+      "depends_on": [
+        "LINT-003"
+      ],
+      "scope": [
+        "next.config.ts"
+      ],
+      "instruction": "Correct the existing TypeScript suppression using actual Next16 types and established intent. No any/ts-ignore/suppression or change of build/runtime policy. Require exact-head type/lint checks; mark a genuine behavior question for decision."
+    },
+    {
+      "id": "LINT-005",
+      "status": "ready",
+      "priority": 4,
+      "depends_on": [
+        "LINT-004"
+      ],
+      "scope": [
+        "src/components/layout/AppShell.tsx",
+        "src/components/ai/EmmaAiWorkspace.tsx",
+        "src/components/modals/CreateEventModal.tsx",
+        "src/app/staff/page.tsx",
+        "src/app/scheduling/page.tsx"
+      ],
+      "instruction": "Address the8existing set-state-in-effect errors one component per run. Preserve identity invalidation, draft retention, hydration/modal resets and tenant scope. Add targeted regression tests as needed within the reviewed test paths. Do not blanket-disable rules or introduce timing tricks. Ask about unclear product behavior.",
+      "components_completed": []
+    }
+  ],
+  "receipts": [
+    {
+      "kind": "manual_preflight",
+      "source": "b9095a7a296e31cd0a72f58d16d9b2ad5a1e67b5",
+      "result": "adc5a14a041f72eabb69c4b00a448bb9a7589047",
+      "api_tests": {
+        "passed": 19,
+        "failed": 0,
+        "skipped": 0,
+        "exit_code": 0
+      },
+      "lint": {
+        "checked_files": 90,
+        "errors": 12,
+        "warnings": 7,
+        "exit_code": 1
+      }
+    },
+    {
+      "kind": "scheduled_capability_check",
+      "started_at": "2026-11-11T12:36:05Z",
+      "completed_at": "2026-11-11T12:38:19Z",
+      "result": "blocked_before_edit",
+      "runtime": {
+        "node": "22.16.0",
+        "npm": "10.9.2",
+        "git": "2.47.3"
+      },
+      "github_connector_read": "passed",
+      "blocker_codes": [
+        "QUEUE_PROVIDER_UNAVAILABLE",
+        "SHELL_GITHUB_DNS_UNAVAILABLE"
+      ],
+      "code_changed": false
+    }
+  ]
+}
