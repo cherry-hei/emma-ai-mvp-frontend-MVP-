@@ -1,7 +1,7 @@
 {
   "schema_version": 2,
-  "revision": 0,
-  "updated_at": "2026-11-11 12:44:48 UTC",
+  "revision": 1,
+  "updated_at": "2026-11-11T12:51:00Z",
   "purpose": "Technical progress for the approved draft lint fixes; this control branch is not an application release.",
   "repository": "cherry-hei/emma-ai-mvp-frontend-MVP-",
   "source": {
@@ -11,7 +11,7 @@
     "base_branch": "fix/care-home-workflows-20261111",
     "base_sha": "b9095a7a296e31cd0a72f58d16d9b2ad5a1e67b5"
   },
-  "scheduler_status": "recovery_prepared",
+  "scheduler_status": "paused_platform_action_required",
   "lease": null,
   "publication_intent": null,
   "policy": {
@@ -161,6 +161,16 @@
         "SHELL_GITHUB_DNS_UNAVAILABLE"
       ],
       "code_changed": false
+    },
+    {
+      "kind": "scheduled_recovery_probe",
+      "started_at": "2026-11-11T12:46:46Z",
+      "completed_at": "2026-11-11T12:47:28Z",
+      "result": "requires_user_action",
+      "action_details": "not_returned_by_platform",
+      "code_changed": false,
+      "state_claim_written": false,
+      "source_head_unchanged": "bc0251f0373634fc04ab9c05ac8c85caed2d4122"
     }
   ]
 }
