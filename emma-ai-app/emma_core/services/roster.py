@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from . import audit
 from ..constants import AssignmentStatus, OverrideAction, PublishEvent, RosterStatus
 from ..models import RosterCell, RosterGrid, RosterRow, ShiftDef, StaffLite
-from ._common import as_date, assignments_for_shifts
+from ._common import as_date, assignments_for_shifts, fetch_all
 from .organisations import org_id_for
 
 
@@ -34,7 +34,10 @@ def _latest_version(client, facility_id: str, period_id: str | None = None,
     explicit ``version_id`` for a specific option."""
     if version_id:
         # SQL: select * from roster_versions where id = :version_id
-        rows = client.table("roster_versions").select("*").eq("id", version_id).execute().data
+        q = client.table("roster_versions").select("*").eq("facility_id", facility_id).eq("id", version_id)
+        if period_id:
+            q = q.eq("period_id", period_id)
+        rows = q.execute().data
         return rows[0] if rows else None
     # SQL: select * from roster_versions
     #      where facility_id = :facility_id
@@ -67,13 +70,13 @@ def get_roster_grid(client, facility_id: str, period_id: str | None = None, *,
         period = p[0] if p else None
 
     # SQL: select * from shifts where roster_version_id = :version_id
-    shifts = client.table("shifts").select("*").eq("roster_version_id", ver["id"]).execute().data
+    shifts = fetch_all(lambda: client.table("shifts").select("*").eq("facility_id", facility_id).eq("roster_version_id", ver["id"]))
     shift_by_id = {s["id"]: s for s in shifts}
     shift_ids = list(shift_by_id)
 
     assigns = []
     if shift_ids:
-        assigns = assignments_for_shifts(client, shift_ids)
+        assigns = assignments_for_shifts(client, shift_ids, facility_id=facility_id)
 
     # SQL: select s.*, jsonb_build_object('name', u.name) as unit
     #      from staff s

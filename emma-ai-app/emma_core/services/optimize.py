@@ -34,7 +34,7 @@ from ..solver.inputs import AgencyLimitsInput, PreferenceInput
 from ..shifttime import duty_segments, envelope, hong_kong_clock, paid_minutes
 from ..solver.timeutils import to_minutes
 from . import compliance, validation
-from ._common import assignments_for_shifts
+from ._common import assignments_for_shifts, fetch_all
 from .organisations import org_id_for
 
 _AUDIT_RANKS = {"RN", "EN", "HW"}      # slots of these ranks involve medication duty
@@ -275,11 +275,10 @@ def _prior_night_history(client, facility_id: str, period_start: Date,
     )
     if not versions:
         return Counter(), Counter(), set()
-    shifts = (
+    shifts = fetch_all(lambda:
         client.table("shifts").select("*")
         .eq("facility_id", facility_id)
         .in_("roster_version_id", [row["id"] for row in versions])
-        .execute().data
     )
     shifts = [
         row for row in shifts
@@ -357,8 +356,8 @@ def load_inputs(client, facility_id: str, period_id: str, *, source_version_id=N
     # denormalised row set.
     #
     # SQL: select * from shifts where roster_version_id = :source_version_id
-    shifts = (client.table("shifts").select("*").eq("facility_id", facility_id)
-              .eq("roster_version_id", src["id"]).execute().data)
+    shifts = fetch_all(lambda: client.table("shifts").select("*").eq("facility_id", facility_id)
+              .eq("roster_version_id", src["id"]))
     shift_ids = [s["id"] for s in shifts]
     assigns = []
     if shift_ids:
@@ -572,19 +571,47 @@ def load_inputs(client, facility_id: str, period_id: str, *, source_version_id=N
 
     if analysis_profile:
         roles_by_rank = {role.rank: role for role in analysis_profile.roles}
-        staff = [replace(
-            st, min_rest_minutes=roles_by_rank[st.rank].min_rest_minutes,
-            allowed_shift_types=frozenset(roles_by_rank[st.rank].allowed_codes),
-            contracted_period_minutes=roles_by_rank[st.rank].weekly_minutes * 6
-                - sum(period_start <= d <= period_end for d in analysis_profile.holiday_dates)
-                * roles_by_rank[st.rank].ph_minutes,
-            max_period_minutes=0,
-            max_weekly_minutes=roles_by_rank[st.rank].max_weekly_minutes,
-            weekly_credit_offsets=tuple((day, mins) for sid, day, _, mins in nonworking_cells if sid == st.id),
-            night_cooldown=False, an_monthly_limit=0, nurse_night_monthly_limit=0,
-            prior_an_counts=(), prior_night_counts=(), long_shift_cost_scaled=100,
-            work_pattern=WorkPatternInput(),
-        ) for st in staff]
+        staff_weekly_hours = {row["id"]: row.get("contracted_hours") for row in staff_rows}
+        analysis_staff = []
+        for st in staff:
+            role = roles_by_rank[st.rank]
+            contract = contract_by_staff.get(st.id) or {}
+            allowed_codes = frozenset(role.allowed_codes)
+            if st.allowed_shift_types:
+                allowed_codes &= st.allowed_shift_types
+            # Empty StaffInput.allowed_shift_types means unrestricted, not banned.
+            if not allowed_codes:
+                raise ValueError("individual contract and analysis role have no common shift codes")
+            weekly_hours = contract.get("weekly_hours")
+            if weekly_hours is None:
+                weekly_hours = staff_weekly_hours.get(st.id)
+            if weekly_hours is not None and float(weekly_hours) * 60 != role.weekly_minutes:
+                # Export currently has role-level targets only; do not disguise a
+                # different individual contract as the role's weekly entitlement.
+                raise ValueError("individual weekly hours differ from analysis role; a matching role profile is required")
+            caps = [role.max_weekly_minutes] if role.max_weekly_minutes is not None else []
+            if contract.get("max_weekly_hours") is not None:
+                cap = round(float(contract["max_weekly_hours"]) * 60)
+                if cap < 0:
+                    raise ValueError("individual weekly cap cannot be negative")
+                caps.append(cap)
+            minimum_rest = role.min_rest_minutes
+            if contract.get("min_rest_minutes") is not None:
+                minimum_rest = max(minimum_rest, int(contract["min_rest_minutes"]))
+            analysis_staff.append(replace(
+                st, min_rest_minutes=minimum_rest,
+                allowed_shift_types=allowed_codes,
+                contracted_period_minutes=role.weekly_minutes * 6
+                    - sum(period_start <= d <= period_end for d in analysis_profile.holiday_dates)
+                    * role.ph_minutes,
+                max_period_minutes=0,
+                max_weekly_minutes=min(caps) if caps else None,
+                weekly_credit_offsets=tuple((day, mins) for sid, day, _, mins in nonworking_cells if sid == st.id),
+                night_cooldown=False, an_monthly_limit=0, nurse_night_monthly_limit=0,
+                prior_an_counts=(), prior_night_counts=(), long_shift_cost_scaled=100,
+                work_pattern=WorkPatternInput(),
+            ))
+        staff = analysis_staff
         # Do not import the withdrawn B-home night chain or agency assumptions.
         night_types = set()
         agency_limits = AgencyLimitsInput(external_employment_types=frozenset())

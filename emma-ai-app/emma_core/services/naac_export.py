@@ -24,6 +24,7 @@ from ._common import (
     as_date,
     assignments_for_shifts,
     fetch_in,
+    fetch_all,
     iso,
     operative_version,
     resolve_period,
@@ -65,13 +66,11 @@ def load_context(
         raise ValueError("roster version not found")
     if roster_analysis.INCOMPLETE_MARKER in (version.get("label") or ""):
         raise ValueError("roster generation did not finish; generate again before exporting")
-    shifts = (
+    shifts = fetch_all(lambda:
         client.table("shifts")
         .select("*")
         .eq("facility_id", facility_id)
         .eq("roster_version_id", version["id"])
-        .execute()
-        .data
     )
     assignments = [
         a

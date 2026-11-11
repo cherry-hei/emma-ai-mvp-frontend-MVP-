@@ -11,7 +11,7 @@ from api.deps import AuthCtx, get_ctx
 from api.main import app
 from api.routers import optimize as router
 from emma_core.models import OptimizeRequest, Profile, SolverLimitsModel
-from emma_core.services import naac_export, optimize, roster_analysis, validation
+from emma_core.services import naac_export, optimize, roster, roster_analysis, validation
 from tests.test_optimize_service import build_store
 
 
@@ -94,6 +94,95 @@ def test_draft_cannot_publish_just_because_solver_succeeded():
     result=validation.validate_roster(db,'f1',version,persist=False)
     assert result['passes'] is False
     assert any(v['rule_code']=='analysis_review_required' for v in result['violations'])
+
+
+def test_analysis_retains_individual_contract_restrictions_in_actual_solve():
+    db=store()
+    contract=next(c for c in db.data['staff_contracts'] if c['staff_id']=='cw1')
+    contract.update(allowed_shift_types=['P'],min_rest_minutes=900,max_weekly_hours=24)
+    snap=roster_analysis.freeze(db,'f1','cfg1',db.data['roster_periods'][0])
+    inputs=optimize.load_inputs(db,'f1','p1',source_version_id='mv1',analysis_snapshot=snap)
+    worker=next(s for s in inputs.staff if s.id=='cw1')
+    assert worker.allowed_shift_types==frozenset({'P'})
+    assert worker.min_rest_minutes==900 and worker.max_weekly_minutes==1440
+    version=solve(db)
+    context=naac_export.load_context(db,'f1','p1',version)
+    shifts={s['id']:s for s in context['shifts']}
+    assert not any(a['staff_id']=='cw1' and shifts[a['shift_id']]['is_working'] for a in context['assignments'])
+
+
+@pytest.mark.parametrize('patch,reason', [
+    ({'allowed_shift_types':['N']},'no common shift codes'),
+    ({'weekly_hours':24},'individual weekly hours differ'),
+])
+def test_contract_conflict_fails_before_creating_versions(patch,reason):
+    db=store()
+    next(c for c in db.data['staff_contracts'] if c['staff_id']=='cw1').update(patch)
+    with pytest.raises(ValueError,match=reason): solve(db)
+    assert len(db.data['roster_versions'])==1
+
+
+def test_staff_weekly_target_without_contract_cannot_be_overwritten_by_role():
+    db=store()
+    db.data['staff_contracts']=[c for c in db.data['staff_contracts'] if c['staff_id']!='cw1']
+    next(s for s in db.data['staff'] if s['id']=='cw1')['contracted_hours']=24
+    with pytest.raises(ValueError,match='individual weekly hours differ'): solve(db)
+    assert len(db.data['roster_versions'])==1
+
+
+def test_individual_weekly_cap_is_enforced_not_just_mapped():
+    db=store()
+    next(c for c in db.data['staff_contracts'] if c['staff_id']=='cw1')['max_weekly_hours']=8
+    version=solve(db)
+    context=naac_export.load_context(db,'f1','p1',version)
+    shifts={s['id']:s for s in context['shifts']}
+    totals={}
+    for a in context['assignments']:
+        if a['staff_id']!='cw1': continue
+        s=shifts[a['shift_id']]; day=date.fromisoformat(s['date'])
+        week=day-timedelta(days=day.weekday())
+        totals[week]=totals.get(week,0)+s['paid_minutes']
+    assert len(totals)==6 and max(totals.values())<=480
+
+
+def test_large_generated_roster_survives_postgrest_cap_in_all_flow_readers():
+    db=store()
+    worker,contract=deepcopy(db.data['staff'][0]),deepcopy(db.data['staff_contracts'][1])
+    db.data['staff']=[{**worker,'id':f'cw{i:02}','name':f'Invented worker {i:02}'} for i in range(40)]
+    db.data['staff_contracts']=[{**contract,'id':f'contract{i:02}','staff_id':f'cw{i:02}'} for i in range(40)]
+    version=solve(db)
+    # The fake server caps every SELECT at the configured 1,000 rows.
+    assert len(db.table('shifts').select('*').eq('roster_version_id',version).execute().data)==1000
+    context=naac_export.load_context(db,'f1','p1',version)
+    assert len(context['assignments'])==1680
+    assert len({(a['staff_id'],a['shift_id']) for a in context['assignments']})==1680
+    grid=roster.get_roster_grid(db,'f1','p1',version_id=version)
+    assert len(grid.rows)==40 and len(grid.dates)==42
+    assert sum(bool(c.shift_type) for row in grid.rows for c in row.cells)==1680
+    snapshot=validation.load_snapshot(db,'f1',version)
+    assert len(snapshot.shifts)==len(context['shifts']) and len(snapshot.assignments)==1680
+    inputs=optimize.load_inputs(db,'f1','p1',source_version_id=version)
+    assert len(inputs.baseline)==1680
+    content,_=naac_export.export(db,'f1','p1',version_id=version)
+    book=load_workbook(BytesIO(content))
+    assert sum(bool(book[name].cell(row,4+day*3).value) for name in roster_analysis.SHEETS[4:10]
+               for row in range(5,45) for day in range(7))==1680
+
+
+def test_paged_assignment_fanout_preserves_scope_beyond_one_thousand_rows():
+    from emma_core.services._common import assignments_for_shifts
+    db=store()
+    db.data['shift_assignments']=[{'id':f'a{i:04}','facility_id':'f1','staff_id':'cw1','shift_id':'shared'} for i in range(1200)]
+    db.data['shift_assignments'].append({'id':'foreign','facility_id':'f2','staff_id':'cw1','shift_id':'shared'})
+    rows=assignments_for_shifts(db,['shared'],facility_id='f1',staff_id='cw1')
+    assert len(rows)==1200 and len({r['id'] for r in rows})==1200
+    assert all(r['facility_id']=='f1' for r in rows)
+
+
+def test_grid_cannot_resolve_a_version_outside_selected_facility_or_period():
+    db=store()
+    assert roster.get_roster_grid(db,'f2','p1',version_id='mv1').version_id is None
+    assert roster.get_roster_grid(db,'f1','other',version_id='mv1').version_id is None
 
 
 def test_failed_writeback_stays_incomplete_and_old_draft_survives(monkeypatch):

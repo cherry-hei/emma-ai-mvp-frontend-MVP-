@@ -20,7 +20,7 @@ from typing import Iterable, Mapping
 from ..constants import can_cover_rank
 from ..shifttime import envelope, paid_minutes, to_minutes
 from . import compliance, scheduling
-from ._common import assignments_for_shifts
+from ._common import assignments_for_shifts, fetch_all
 from .organisations import org_id_for
 
 
@@ -1851,14 +1851,12 @@ def _load_prior_nights(
     )
     if not versions:
         return []
-    shifts = (
+    shifts = fetch_all(lambda:
         client.table("shifts")
         .select("id,date,shift_type")
         .eq("facility_id", facility_id)
         .in_("roster_version_id", [row["id"] for row in versions])
         .in_("shift_type", ["AN", "N", "7P"])
-        .execute()
-        .data
     )
     if not shifts:
         return []
@@ -1927,13 +1925,11 @@ def load_snapshot(client, facility_id: str, roster_version_id: str) -> RosterSna
         .data
     )
     facility = facilities[0] if facilities else {"id": facility_id}
-    shifts = (
+    shifts = fetch_all(lambda:
         client.table("shifts")
         .select("*")
         .eq("facility_id", facility_id)
         .eq("roster_version_id", roster_version_id)
-        .execute()
-        .data
     )
     assignments = []
     if shifts:
@@ -1961,13 +1957,11 @@ def load_snapshot(client, facility_id: str, roster_version_id: str) -> RosterSna
         .execute()
         .data
     )
-    task_assignments = (
+    task_assignments = fetch_all(lambda:
         client.table("task_assignments")
         .select("*")
         .eq("facility_id", facility_id)
         .eq("roster_version_id", roster_version_id)
-        .execute()
-        .data
     )
     task_assignments = [row for row in task_assignments if not row.get("suspended_by_leave")]
     staff_qualifications = []

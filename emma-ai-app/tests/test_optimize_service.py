@@ -23,6 +23,7 @@ class _Query:
         self._store, self._t = store, table
         self._mode, self._payload = "select", None
         self._filters, self._order, self._desc, self._limit = [], None, False, None
+        self._range = None
 
     # builders
     def select(self, *a, **k):
@@ -67,6 +68,9 @@ class _Query:
 
     def limit(self, n):
         self._limit = n; return self
+
+    def range(self, start, end):
+        self._range = (start, end); return self
 
     # terminal
     def _match(self, row):
@@ -123,6 +127,9 @@ class _Query:
             out.sort(key=lambda r: r.get(self._order) or r.get("_seq", 0), reverse=self._desc)
         if self._limit is not None:
             out = out[: self._limit]
+        if self._range is not None:
+            out = out[self._range[0]:self._range[1]+1]
+        out = out[:1000]  # supabase/config.toml max_rows; catches silent truncation
         return _Result(out)
 
 

@@ -1,5 +1,31 @@
 # Emma AI shared engineering instructions
 
+## Founder review decision — 11 November 2026 (D-042)
+
+Codex is the default reviewer. Routine low-risk changes require a separate Codex
+review of the final diff and relevant tests; they do not require Kien review.
+Only high-risk changes go to Kien for focused independent review: scheduling
+eligibility/coverage/rest, hours/AL/PH/carry/OT accounting, tenant isolation,
+auth/permissions/personal data, database/migrations, deployment/infrastructure,
+or material reliability/performance impact. Mixed changes take the highest risk;
+unresolved material impact is not silently downgraded. Record risk and rationale,
+reviewed commit, findings and resolution. Author self-checks are not independent
+review. Keep one lead/one critic and at most two review rounds.
+
+This supersedes blanket Kien-review wording in D-028/D-040, not Founder-only
+release authority, tests or business-rule confirmation. Current Generate/linked
+export PR #15 is high risk. Continue its authorised local synthetic testing and
+fixes while Kien review is pending; file-transfer acceptance is engineering work,
+not an extra Founder permission gate. No merge, deployment, migration execution,
+cloud action, additional spend or external message is authorised. Do not alter
+branch protection or deployment triggers. Details: `docs/tasks/review-policy.md`.
+
+For the approved D-040 Generate/linked-export task, the current contract has
+17 visible sheets; `#` denotes duty supervisor and does not imply next-day Day
+Off. The withdrawn B-home workflow supplies no scheduling policy. These confirmed
+terms supersede the conflicting 18-sheet and `#` recovery wording below for this
+task. Follow `docs/tasks/generate-linked-export.md`; do not activate withdrawn rules.
+
 Use this file in both Codex and Manus. Chat history is not automatically shared. Read the approved versioned task brief, API contract and acceptance criteria; record your exact branch and source commit before editing.
 
 ## Current baseline and release boundary
