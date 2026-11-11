@@ -20,6 +20,7 @@ class FakeQuery:
         self.sort_column = None
         self.sort_desc = False
         self.row_limit = None
+        self.row_range = None
 
     def select(self, _columns="*"):
         return self
@@ -61,6 +62,10 @@ class FakeQuery:
 
     def limit(self, value):
         self.row_limit = value
+        return self
+
+    def range(self, start, end):
+        self.row_range = (start, end)
         return self
 
     def _matches(self, row):
@@ -109,6 +114,8 @@ class FakeQuery:
             )
         if self.row_limit is not None:
             selected = selected[:self.row_limit]
+        if self.row_range is not None:
+            selected = selected[self.row_range[0]:self.row_range[1]+1]
         return SimpleNamespace(data=selected)
 
 

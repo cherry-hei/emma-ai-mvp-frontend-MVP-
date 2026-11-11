@@ -358,10 +358,19 @@ def build_model(inputs: SolverInputs) -> SolverModel:
     for s in inputs.staff:
         worked = [sl.duration_min * x[(s.id, sl.id)] for sl in inputs.demand if (s.id, sl.id) in x]
         total = sum(worked)
+        credit_offset = sum(minutes for _, minutes in s.weekly_credit_offsets)
+        if s.max_weekly_minutes is not None:
+            weeks = {d - timedelta(days=d.weekday()) for d in dates}
+            for week in weeks:
+                week_work = sum(sl.duration_min * x[(s.id, sl.id)] for sl in inputs.demand
+                                if (s.id, sl.id) in x and week <= sl.date < week + timedelta(days=7))
+                week_credit = sum(minutes for day, minutes in s.weekly_credit_offsets
+                                  if week <= day < week + timedelta(days=7))
+                model.Add(week_work + week_credit <= s.max_weekly_minutes)
         if s.max_period_minutes and s.max_period_minutes > 0:
             model.Add(total <= s.max_period_minutes)
-        ot[s.id] = model.NewIntVar(0, total_demand_minutes, f"ot_{s.id}")
-        model.Add(ot[s.id] >= total - s.contracted_period_minutes)
+        ot[s.id] = model.NewIntVar(0, total_demand_minutes + credit_offset, f"ot_{s.id}")
+        model.Add(ot[s.id] >= total + credit_offset - s.contracted_period_minutes)
 
     # ── day-worked indicator (future-debt + unmet-request) ───────────────────
     works: dict[tuple, object] = {}
@@ -546,7 +555,7 @@ def _build_penalties(model, inputs, dates, total_demand_minutes, x, agency, ot, 
         if sl.duration_min >= 720 and (s.id, sl.id) in x
     )
     p_ot = sum(ot.values()) + long_shift_surcharge
-    ub_ot = total_demand_minutes + sum(
+    ub_ot = total_demand_minutes + sum(minutes for s in inputs.staff for _, minutes in s.weekly_credit_offsets) + sum(
         sl.duration_min * max(0, s.long_shift_cost_scaled - 100) // 100
         for s in inputs.staff
         for sl in inputs.demand

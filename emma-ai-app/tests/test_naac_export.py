@@ -6,6 +6,7 @@ from io import BytesIO
 
 import pytest
 from emma_core.services import naac_export
+from emma_core.services.roster_analysis import SHEETS
 from openpyxl import Workbook, load_workbook
 
 
@@ -56,7 +57,7 @@ def context():
 def template():
     workbook = Workbook()
     workbook.remove(workbook.active)
-    names = [f"Week{i}" for i in range(1, 7)] + [f"Summary{i}" for i in range(1, 13)]
+    names = list(SHEETS)
     for name in names:
         sheet = workbook.create_sheet(name)
         sheet["A1"] = "Approved heading"
@@ -76,13 +77,14 @@ def template():
                 "name_column": 2,
                 "rank_column": 3,
                 "day_columns": list(range(4, 11)),
+                "task_columns": list(range(13, 20)),
                 "date_cells": [f"{col}2" for col in "DEFGHIJ"],
             }
-            for name in names[:6]
+            for name in names[4:10]
         ],
         "summaries": [
             {
-                "sheet": "Summary1",
+                "sheet": "Hours",
                 "staff_rows": [3],
                 "columns": {
                     "name": 2,
@@ -97,18 +99,19 @@ def template():
     }
 
 
-def test_export_preserves_18_sheets_and_removes_old_names(context, template):
+def test_export_preserves_17_sheets_and_removes_old_names(context, template):
     raw, mapping = template
     workbook = load_workbook(BytesIO(naac_export.render(context, raw, mapping)))
     assert workbook.sheetnames == mapping["sheet_names"]
-    assert workbook["Week1"]["B3"].value == "Synthetic RN"
-    assert workbook["Week1"]["D3"].value == "A7 #"
-    assert workbook["Week1"]["E3"].value == "AL"
-    assert workbook["Week1"]["F3"].font.color.rgb == "00FF0000"
-    assert workbook["Week1"]["L3"].value == "=SUM(D3:J3)"
-    assert workbook["Summary1"]["C3"].value == 16
-    assert workbook["Summary1"]["D3"].value == 1
-    assert workbook["Week6"]["D2"].value.date() == date(2026, 12, 6)
+    assert workbook["第一週"]["B3"].value == "Synthetic RN"
+    assert workbook["第一週"]["D3"].value == "A7"
+    assert workbook["第一週"]["M3"].value == "#"
+    assert workbook["第一週"]["E3"].value == "AL"
+    assert workbook["第一週"]["F3"].font.color.rgb == "00FF0000"
+    assert workbook["第一週"]["L3"].value == "=SUM(D3:J3)"
+    assert workbook["Hours"]["C3"].value == 16
+    assert workbook["Hours"]["D3"].value == 1
+    assert workbook["第六週"]["D2"].value.date() == date(2026, 12, 6)
     assert all(
         cell.value != "OLD STAFF NAME"
         for sheet in workbook
@@ -127,6 +130,6 @@ def test_staff_name_cannot_be_written_as_an_excel_formula(context, template):
     context["staff"][0]["name"] = '=HYPERLINK("https://example.invalid")'
     raw, mapping = template
     workbook = load_workbook(BytesIO(naac_export.render(context, raw, mapping)))
-    cell = workbook["Week1"]["B3"]
+    cell = workbook["第一週"]["B3"]
     assert cell.data_type != "f"
     assert cell.value.startswith("'=")

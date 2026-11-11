@@ -1,0 +1,114 @@
+{
+  "schema_version": 1,
+  "label": "Invented test profile",
+  "status": "proposed",
+  "evidence": [
+    "Synthetic test; not a facility policy"
+  ],
+  "codes": [
+    {
+      "code": "A",
+      "credit_minutes": 480,
+      "is_working": true,
+      "active": true,
+      "am": 1,
+      "pm": 0,
+      "ph": 0,
+      "al": 0,
+      "source": "Invented test dictionary"
+    },
+    {
+      "code": "P",
+      "credit_minutes": 480,
+      "is_working": true,
+      "active": true,
+      "am": 0,
+      "pm": 1,
+      "ph": 0,
+      "al": 0,
+      "source": "Invented test dictionary"
+    },
+    {
+      "code": "O",
+      "credit_minutes": 0,
+      "is_working": false,
+      "active": true,
+      "am": 0,
+      "pm": 0,
+      "ph": 0,
+      "al": 0,
+      "source": "Invented test dictionary"
+    },
+    {
+      "code": "AL",
+      "credit_minutes": 480,
+      "is_working": false,
+      "active": true,
+      "am": 0,
+      "pm": 0,
+      "ph": 0,
+      "al": 1,
+      "source": "Invented test dictionary"
+    },
+    {
+      "code": "PH",
+      "credit_minutes": 0,
+      "is_working": false,
+      "active": true,
+      "am": 0,
+      "pm": 0,
+      "ph": 1,
+      "al": 0,
+      "source": "Invented test dictionary"
+    },
+    {
+      "code": "NO",
+      "credit_minutes": 0,
+      "is_working": false,
+      "active": true,
+      "am": 0,
+      "pm": 0,
+      "ph": 0,
+      "al": 0,
+      "source": "Invented test dictionary"
+    }
+  ],
+  "roles": [
+    {
+      "rank": "CW",
+      "weekly_minutes": 2640,
+      "ph_minutes": 480,
+      "min_rest_minutes": 660,
+      "max_weekly_minutes": 2640,
+      "allowed_codes": [
+        "A",
+        "P"
+      ],
+      "leave_codes": {
+        "annual": "AL"
+      }
+    }
+  ],
+  "demand": [
+    {
+      "code": "A",
+      "rank": "CW",
+      "weekdays": [
+        0,
+        1,
+        2,
+        3,
+        4
+      ],
+      "count": 1,
+      "source": "Invented planning target"
+    }
+  ],
+  "off_code": "O",
+  "duty_officer_task_code": "#",
+  "holiday_dates": [
+    "2026-12-25",
+    "2026-12-26",
+    "2027-01-01"
+  ]
+}

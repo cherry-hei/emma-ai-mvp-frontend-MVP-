@@ -38,6 +38,8 @@ class StaffInput:
     prior_night_counts: tuple[tuple[int, int, int], ...] = ()   # (year, month, count)
     long_shift_cost_scaled: int = 100             # 100 = 1.0; Home B imported 12h = 130
     work_pattern: WorkPatternInput = WorkPatternInput()
+    max_weekly_minutes: int | None = None  # explicit reviewed cap, Monday-start weeks
+    weekly_credit_offsets: tuple[tuple[Date, int], ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -171,6 +173,7 @@ class SolverInputs:
     exclude_staff_ids: frozenset[str] = frozenset()
     night_shift_types: frozenset[str] = frozenset()
     agency_limits: AgencyLimitsInput = AgencyLimitsInput()
+    nonworking_cells: tuple[tuple[str, Date, str, int], ...] = ()
 
     @property
     def period_days(self) -> int:

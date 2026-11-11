@@ -11,6 +11,7 @@ class _Query:
     def __init__(self, db, name):
         self.db, self.name = db, name
         self.op, self.payload, self.filters, self.ins = "select", None, [], []
+        self.row_range = None
 
     def select(self, *_a, **_k):
         return self
@@ -31,6 +32,9 @@ class _Query:
         self.filters.append((col, val))
         return self
 
+    def is_(self, col, val):
+        return self.eq(col, None if val == 'null' else val)
+
     def in_(self, col, vals):
         self.ins.append((col, {str(v) for v in vals}))
         return self
@@ -39,6 +43,10 @@ class _Query:
         return self
 
     def limit(self, *_a, **_k):
+        return self
+
+    def range(self, start, end):
+        self.row_range = (start, end)
         return self
 
     def _hit(self):
@@ -63,7 +71,10 @@ class _Query:
             hit = self._hit()
             self.db.tables[self.name] = [r for r in rows if r not in hit]
             return _Result(hit)
-        return _Result(self._hit())
+        selected = self._hit()
+        if self.row_range is not None:
+            selected = selected[self.row_range[0]:self.row_range[1]+1]
+        return _Result(selected)
 
 
 class _Result:

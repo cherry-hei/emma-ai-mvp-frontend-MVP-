@@ -133,16 +133,33 @@ def operative_version(client, facility_id: str, period_id: str) -> dict | None:
 IN_CHUNK = 120
 
 
+def fetch_all(query_factory) -> list[dict]:
+    """Read every row in stable primary-key order, below PostgREST's row cap.
+
+    A fresh query keeps offsets/ordering from accumulating. Use scoped factories;
+    paging is not a replacement for facility/version filters or database RLS.
+    """
+    rows: list[dict] = []
+    while True:
+        page = query_factory().order("id").range(len(rows), len(rows) + 499).execute().data
+        if not page:
+            return rows
+        rows.extend(page)
+        # Continue until empty, including when the server's cap is below 500.
+
+
 def fetch_in(client, table: str, column: str, values, *, select: str = "*",
              filters: dict | None = None) -> list[dict]:
     """`select <select> from <table> where <column> = any(:values)`, chunked."""
     values = list(values)
     rows: list[dict] = []
     for start in range(0, len(values), IN_CHUNK):
-        query = client.table(table).select(select)
-        for key, value in (filters or {}).items():
-            query = query.eq(key, value)
-        rows.extend(query.in_(column, values[start:start + IN_CHUNK]).execute().data)
+        def query():
+            q = client.table(table).select(select)
+            for key, value in (filters or {}).items():
+                q = q.eq(key, value)
+            return q.in_(column, values[start:start + IN_CHUNK])
+        rows.extend(fetch_all(query))
     return rows
 
 

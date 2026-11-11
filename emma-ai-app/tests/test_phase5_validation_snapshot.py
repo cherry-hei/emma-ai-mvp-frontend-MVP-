@@ -19,6 +19,7 @@ class FakeQuery:
         self.action = "select"
         self.filters: list[tuple[str, str, object]] = []
         self.row_limit: int | None = None
+        self.row_range = None
 
     def select(self, _columns: str = "*"):
         return self
@@ -61,6 +62,10 @@ class FakeQuery:
     def order(self, _column: str, **_kwargs):
         return self
 
+    def range(self, start, end):
+        self.row_range = (start, end)
+        return self
+
     def _matches(self, row: dict) -> bool:
         for operation, column, expected in self.filters:
             actual = row.get(column)
@@ -80,6 +85,8 @@ class FakeQuery:
             return SimpleNamespace(data=[])
         rows = [deepcopy(row) for row in self.client.rows.get(self.table, ())
                 if self._matches(row)]
+        if self.row_range is not None:
+            rows = rows[self.row_range[0]:self.row_range[1]+1]
         return SimpleNamespace(data=rows[:self.row_limit] if self.row_limit else rows)
 
 

@@ -19,6 +19,7 @@ from .organisations import org_id_for
 # The keys the importer and the engine agree on. Free-form keys are allowed - a
 # home can carry its own - but these are the ones the platform reads.
 KNOWN_KEYS = (
+    "roster_analysis",       # reviewed evidence -> generation and linked export
     "scheduling_cycle",     # cycle type, days, current period
     "shift_dictionary",     # per-sheet duty windows as printed in the roster
     "request_quota",        # staff duty/leave requests allowed per day
@@ -194,6 +195,9 @@ def put_config(client, facility_id: str, *, config_key: str, config_json: dict,
         raise ValueError("config_json must be an object")
     if not config_key or len(config_key) > 64:
         raise ValueError("config_key must be 1-64 characters")
+    if config_key == "roster_analysis":
+        from .roster_analysis import parse
+        config_json = parse(config_json).model_dump(mode="json")
     # SQL: select version from facility_json_configs
     #      where facility_id = :facility_id and config_key = :config_key
     #      order by version desc limit 1

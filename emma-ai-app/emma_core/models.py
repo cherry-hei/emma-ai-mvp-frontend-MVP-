@@ -151,6 +151,9 @@ class OptimizeRequest(BaseModel):
     rule_profile_id: str | None = None
     plan_mode: PlanMode | None = None                    # None => generate all three
     source_version_id: str | None = None                 # default: latest 'manual' for period
+    analysis_config_id: str | None = None
+    # Overwritten by the authenticated route; never trust a caller's snapshot.
+    analysis_snapshot: dict | None = None
     locked_assignments: list[dict] = Field(default_factory=list)   # {staff_id, slot_id, pin?}
     approved_leave_request_ids: list[str] = Field(default_factory=list)  # forward-compat
     include_staff_ids: list[str] = Field(default_factory=list)

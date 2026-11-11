@@ -20,7 +20,7 @@ from typing import Iterable, Mapping
 from ..constants import can_cover_rank
 from ..shifttime import envelope, paid_minutes, to_minutes
 from . import compliance, scheduling
-from ._common import assignments_for_shifts
+from ._common import assignments_for_shifts, fetch_all
 from .organisations import org_id_for
 
 
@@ -110,6 +110,8 @@ class RosterSnapshot:
     period_end: Date
     facility: dict
     version_content_updated_at: str | None = None
+    analysis_snapshot: dict | None = None
+    analysis_incomplete: bool = False
     shifts: tuple[dict, ...] = ()
     assignments: tuple[dict, ...] = ()
     staff: tuple[dict, ...] = ()
@@ -1849,14 +1851,12 @@ def _load_prior_nights(
     )
     if not versions:
         return []
-    shifts = (
+    shifts = fetch_all(lambda:
         client.table("shifts")
         .select("id,date,shift_type")
         .eq("facility_id", facility_id)
         .in_("roster_version_id", [row["id"] for row in versions])
         .in_("shift_type", ["AN", "N", "7P"])
-        .execute()
-        .data
     )
     if not shifts:
         return []
@@ -1925,13 +1925,11 @@ def load_snapshot(client, facility_id: str, roster_version_id: str) -> RosterSna
         .data
     )
     facility = facilities[0] if facilities else {"id": facility_id}
-    shifts = (
+    shifts = fetch_all(lambda:
         client.table("shifts")
         .select("*")
         .eq("facility_id", facility_id)
         .eq("roster_version_id", roster_version_id)
-        .execute()
-        .data
     )
     assignments = []
     if shifts:
@@ -1959,13 +1957,11 @@ def load_snapshot(client, facility_id: str, roster_version_id: str) -> RosterSna
         .execute()
         .data
     )
-    task_assignments = (
+    task_assignments = fetch_all(lambda:
         client.table("task_assignments")
         .select("*")
         .eq("facility_id", facility_id)
         .eq("roster_version_id", roster_version_id)
-        .execute()
-        .data
     )
     task_assignments = [row for row in task_assignments if not row.get("suspended_by_leave")]
     staff_qualifications = []
@@ -2081,6 +2077,7 @@ def load_snapshot(client, facility_id: str, roster_version_id: str) -> RosterSna
         .execute()
         .data
     )
+    from .roster_analysis import for_version, INCOMPLETE_MARKER
     return RosterSnapshot(
         facility_id=facility_id,
         roster_version_id=roster_version_id,
@@ -2089,6 +2086,8 @@ def load_snapshot(client, facility_id: str, roster_version_id: str) -> RosterSna
         period_end=period_end,
         facility=facility,
         version_content_updated_at=version.get("content_updated_at"),
+        analysis_snapshot=for_version(client, facility_id, roster_version_id),
+        analysis_incomplete=INCOMPLETE_MARKER in (version.get("label") or ""),
         shifts=tuple(shifts),
         assignments=tuple(assignments),
         staff=tuple(staff),
@@ -2216,6 +2215,12 @@ def validate_roster(
     """Run the complete fresh Phase 4+5 ruleset for one roster version."""
     snapshot = load_snapshot(client, facility_id, roster_version_id)
     violations = evaluate_core_constraints(snapshot)
+    if snapshot.analysis_incomplete or snapshot.analysis_snapshot:
+        violations.append(_violation(
+            "analysis_review_required",
+            "Generated analysis draft: opening carry, PH allocation and complete task review are not recorded; publication remains blocked.",
+            details={"reason": "unsettled_analysis_inputs"},
+        ))
     if not any(row.get("is_working", True) for row in snapshot.shifts):
         violations.append(_violation(
             "required_coverage",

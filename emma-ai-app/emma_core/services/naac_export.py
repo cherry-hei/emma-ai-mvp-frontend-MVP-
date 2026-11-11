@@ -19,10 +19,12 @@ from openpyxl.workbook.properties import CalcProperties
 from ..config import settings
 from ..importers.naac import load_shift_codes
 from . import audit
+from . import roster_analysis
 from ._common import (
     as_date,
     assignments_for_shifts,
     fetch_in,
+    fetch_all,
     iso,
     operative_version,
     resolve_period,
@@ -62,13 +64,13 @@ def load_context(
         version = operative_version(client, facility_id, period_id)
     if not version:
         raise ValueError("roster version not found")
-    shifts = (
+    if roster_analysis.INCOMPLETE_MARKER in (version.get("label") or ""):
+        raise ValueError("roster generation did not finish; generate again before exporting")
+    shifts = fetch_all(lambda:
         client.table("shifts")
         .select("*")
         .eq("facility_id", facility_id)
         .eq("roster_version_id", version["id"])
-        .execute()
-        .data
     )
     assignments = [
         a
@@ -223,11 +225,11 @@ def render(context: dict, template: bytes, mapping: dict) -> bytes:
     expected = mapping.get("sheet_names")
     if (
         not isinstance(expected, list)
-        or len(expected) != 18
+        or expected != list(roster_analysis.SHEETS)
         or workbook.sheetnames != expected
     ):
         raise ValueError(
-            "approved template must have the exact mapped 18-sheet structure"
+            "approved template must have the exact mapped 17-sheet structure"
         )
     weeks = mapping.get("weeks") or []
     if len(weeks) != 6 or len({w["sheet"] for w in weeks}) != 6:
@@ -285,7 +287,12 @@ def render(context: dict, template: bytes, mapping: dict) -> bytes:
             for day, column in enumerate(columns):
                 cell = data["cells"].get((person["id"], week_index * 7 + day))
                 target = sheet.cell(row, column)
-                target.value = _text(cell["text"]) if cell else None
+                target.value = _text(cell["code"]) if cell else None
+                if cell and cell["labels"]:
+                    task_columns = plan.get("task_columns") or []
+                    if len(task_columns) != 7:
+                        raise ValueError("linked export needs separate task columns; never append tasks to a shift code")
+                    sheet.cell(row, task_columns[day], _text(" / ".join(cell["labels"])))
                 if cell and cell["code"] in ("O", "O,"):
                     font = copy(target.font)
                     font.color = "FF0000" if cell["code"] == "O" else "000000"
@@ -347,19 +354,22 @@ def export(
     version_id: str | None = None,
     profile_id: str | None = None,
 ) -> tuple[bytes, str]:
-    if not settings.naac_workbook_template or not settings.naac_workbook_mapping:
-        raise ValueError(
-            "NAAC workbook requires its approved template and cell mapping"
-        )
     context = load_context(client, facility_id, period_id, version_id)
-    try:
-        mapping = json.loads(_asset(settings.naac_workbook_mapping))
-        template = _asset(settings.naac_workbook_template)
-    except (OSError, json.JSONDecodeError):
+    snapshot = roster_analysis.for_version(client, facility_id, context["version"]["id"])
+    if snapshot:
+        from .linked_roster_export import render as render_linked
+        content = render_linked(context, snapshot)
+    elif not settings.naac_workbook_template or not settings.naac_workbook_mapping:
         raise ValueError(
-            "NAAC template configuration is unavailable or invalid"
-        ) from None
-    content = render(context, template, mapping)
+            "This version has no frozen analysis profile; configure a reviewed template/mapping or generate with confirmed analysis settings."
+        )
+    else:
+        try:
+            mapping = json.loads(_asset(settings.naac_workbook_mapping))
+            template = _asset(settings.naac_workbook_template)
+        except (OSError, json.JSONDecodeError):
+            raise ValueError("NAAC template configuration is unavailable or invalid") from None
+        content = render(context, template, mapping)
     audit.record(
         client,
         facility_id=facility_id,
@@ -369,7 +379,9 @@ def export(
         actor_profile_id=profile_id,
         after={
             "format": "naac_tahduty_xlsx",
-            "sheet_count": 18,
+            "sheet_count": 17,
+            "version_id": context["version"]["id"],
+            "analysis_digest": snapshot["digest"] if snapshot else None,
             "period_id": period_id,
             "status": context["version"]["status"],
         },

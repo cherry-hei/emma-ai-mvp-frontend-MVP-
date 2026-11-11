@@ -2,6 +2,7 @@
 
 # dependencies
 /node_modules
+/.venv/
 /.pnp
 .pnp.*
 .yarn/*
@@ -73,6 +74,11 @@ __pycache__/
 !/docs/naac/
 /docs/naac/*
 !/docs/naac/*.md
+!/docs/tasks/
+/docs/tasks/*
+!/docs/tasks/*.md
+!/docs/naac/roster-analysis.schema.json
+!/docs/naac/roster-analysis.synthetic.json
 !/docs/nov04-integration/
 /docs/nov04-integration/*
 !/docs/nov04-integration/*.md
