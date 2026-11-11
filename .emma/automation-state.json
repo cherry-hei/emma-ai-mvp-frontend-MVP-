@@ -1,13 +1,13 @@
 {
   "schema_version": 2,
-  "revision": 3,
-  "updated_at": "2026-11-11T13:16:07.000Z",
+  "revision": 4,
+  "updated_at": "2026-11-11T13:18:52.000Z",
   "purpose": "Technical progress for the approved draft lint fixes; this control branch is not an application release.",
   "repository": "cherry-hei/emma-ai-mvp-frontend-MVP-",
   "source": {
     "branch": "agent/phone-dev-lint-20261111",
     "pr": 17,
-    "head": "bc0251f0373634fc04ab9c05ac8c85caed2d4122",
+    "head": "838fd3671dbdcaa3f92eab87c61afbb74c464ee3",
     "base_branch": "fix/care-home-workflows-20261111",
     "base_sha": "b9095a7a296e31cd0a72f58d16d9b2ad5a1e67b5"
   },
@@ -24,7 +24,7 @@
   "publication_intent": {
     "task_id": "LINT-002",
     "claim_token": "2a705ed4-7b7f-4e7d-ab75-5c2e886fd4f4",
-    "status": "prepared",
+    "status": "published",
     "branch": "agent/phone-dev-lint-20261111",
     "expected_head": "bc0251f0373634fc04ab9c05ac8c85caed2d4122",
     "paths": [
@@ -53,7 +53,11 @@
       },
       "source_review": "independent byte-for-byte identifier-only review passed"
     },
-    "prepared_at": "2026-11-11T13:16:07.000Z"
+    "prepared_at": "2026-11-11T13:16:07.000Z",
+    "result_commit": "838fd3671dbdcaa3f92eab87c61afbb74c464ee3",
+    "result_tree": "55cac90a85dfc96634f2c446fa4c4949c1a774d1",
+    "pr_url": "https://github.com/cherry-hei/emma-ai-mvp-frontend-MVP-/pull/17",
+    "observed_published_at": "2026-11-11T13:18:52.000Z"
   },
   "policy": {
     "writes": "Only this technical state file and scoped source changes on the owned Draft PR branch. All mutations require a fresh state/ownership read and a current content/ref guard.",
@@ -113,7 +117,7 @@
     },
     {
       "id": "LINT-002",
-      "status": "publishing",
+      "status": "awaiting_ci",
       "priority": 1,
       "scope": [
         "src/lib/api.test.mjs",
@@ -124,7 +128,10 @@
         "19 local Node tests pass with zero skipped",
         "No assertion removal or unrelated code change",
         "Exact-head CI fixture suite, TypeScript and targeted ESLint pass"
-      ]
+      ],
+      "result_commit": "838fd3671dbdcaa3f92eab87c61afbb74c464ee3",
+      "pr_url": "https://github.com/cherry-hei/emma-ai-mvp-frontend-MVP-/pull/17",
+      "result": "Two test-local module bindings renamed to apiModule; 19/19 local tests passed before and after. Exact-head CI collection pending."
     },
     {
       "id": "LINT-003",
@@ -212,6 +219,43 @@
       "code_changed": false,
       "state_claim_written": false,
       "source_head_unchanged": "bc0251f0373634fc04ab9c05ac8c85caed2d4122"
+    },
+    {
+      "kind": "manual_user_initiated_continuation",
+      "run_id": "lint002-2a705ed4-7b7f-4e7d-ab75-5c2e886fd4f4",
+      "task_id": "LINT-002",
+      "claim_token": "2a705ed4-7b7f-4e7d-ab75-5c2e886fd4f4",
+      "started_at": "2026-11-11T13:13:40Z",
+      "updated_at": "2026-11-11T13:18:52.000Z",
+      "status": "awaiting_ci",
+      "source_sha": "bc0251f0373634fc04ab9c05ac8c85caed2d4122",
+      "result_sha": "838fd3671dbdcaa3f92eab87c61afbb74c464ee3",
+      "changed_paths": [
+        "src/lib/api.test.mjs",
+        "src/lib/api-write-confirmation.test.mjs"
+      ],
+      "runtime": {
+        "node": "24.22.1",
+        "npm": "11.9.0",
+        "git": "2.52.0"
+      },
+      "command": "NEXT_PUBLIC_API_URL=http://localhost:8000 node --experimental-strip-types --test src/lib/api.test.mjs src/lib/api-write-confirmation.test.mjs",
+      "before": {
+        "collected": 19,
+        "passed": 19,
+        "failed": 0,
+        "skipped": 0,
+        "exit_code": 0
+      },
+      "after": {
+        "collected": 19,
+        "passed": 19,
+        "failed": 0,
+        "skipped": 0,
+        "exit_code": 0
+      },
+      "source_review": "Identifier-only diff; assertions and test definitions preserved; independent review passed",
+      "pr_url": "https://github.com/cherry-hei/emma-ai-mvp-frontend-MVP-/pull/17"
     }
   ]
 }
