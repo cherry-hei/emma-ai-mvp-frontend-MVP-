@@ -130,3 +130,27 @@ def test_staff_name_cannot_be_written_as_an_excel_formula(context, template):
     cell = workbook["Week1"]["B3"]
     assert cell.data_type != "f"
     assert cell.value.startswith("'=")
+
+
+def test_provisional_layout_preserves_literal_codes_and_leaves_unknown_hours_blank(context, template):
+    raw, mapping = template
+    mapping["provisional"] = True
+    mapping["summaries"] = []
+    mapping["recorded_hours"] = {
+        "sheet": "Summary1", "staff_rows": [3], "week_start_columns": [3, 12, 21, 30, 39, 48],
+    }
+    for week in mapping["weeks"]:
+        week["meal_columns"] = list(range(13, 20))
+        week["task_columns"] = list(range(20, 27))
+    context["shifts"][0].update(shift_type="=literal shift", paid_minutes=None)
+    context["assignments"][0].update(meal_code=">1")
+    context["tasks"][0].update(task_label="肌")
+    workbook = load_workbook(BytesIO(naac_export.render(context, raw, mapping)))
+    week = workbook["Week1"]
+    assert week["D3"].value == "=literal shift" and week["D3"].data_type == "s"
+    assert week["M3"].value == ">1"
+    assert week["T3"].value == "肌"
+    hours = workbook["Summary1"]
+    assert [hours[f"{col}3"].value for col in "CDE"] == [None, 8, 0]
+    assert hours["J3"].value == '=IF(COUNT(C3:I3)=7,SUM(C3:I3),"")'
+    assert workbook.properties.title == "NAAC TAHDuty PREVIEW"

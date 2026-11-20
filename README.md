@@ -54,9 +54,9 @@ through the caller's facility before using a service client for trusted writes.
   thresholds and roster validation. Missing or ambiguous input needs clarification.
 - Bedrock supports configured Grok and Kimi profiles. The backend
   remains responsible for verdicts, eligibility and replacement ranking.
-- NAAC workbook export uses an approved 18-sheet template and cell mapping.
-  The engine is implemented; source-workbook comparison still needs the actual
-  workbook. The rules PDFs, RBAC document and addendum are not that template.
+- NAAC workbook export supports an 18-sheet preview based on the translated
+  28 September to 8 November TAHDuty layout. Weekly grids keep meal, shift and
+  task columns separate. Code and rule confirmation remains with NAAC.
 - Report previews ignore responses from an old period or signed-in identity.
   Downloads refresh expired sessions, retain draft filenames and reject empty
   or unexpected file responses. Changing the period cancels an active download.
@@ -85,8 +85,23 @@ python scripts/provision_tenant.py scripts/tenants/naac.json
 
 For the full workbook, configure `NAAC_WORKBOOK_TEMPLATE` and
 `NAAC_WORKBOOK_MAPPING`. Each accepts a local path or private `s3://` object.
-The deployment role needs read access to those objects. Inspect the approved
-workbook before writing its mapping:
+The application's task role needs read access to those objects. To prepare a
+private preview template and mapping from the two reviewed English workbooks,
+run from `emma-ai-app`:
+
+```powershell
+python scripts/prepare_naac_workbook.py "path/to/roster.xlsx" "path/to/confirmation.xlsx" ../docs/naac-m3-preview
+```
+
+Point the two settings at the generated `tahduty-template.xlsx` and
+`tahduty-mapping.json`. The template keeps the source tabs and weekly grid
+layout without copying historical roster values, formulas or notes. The
+preview uses recorded paid minutes. Unknown hours and unavailable meal codes
+stay blank. The rule and reference sheets remain marked pending. The preview
+has room for 44 staff, based on the sample. Keep source and output files out
+of git.
+
+For a different, approved template, inspect it before writing a mapping:
 
 ```powershell
 python scripts/inspect_naac_template.py path/to/approved.xlsx --output path/to/mapping.json
@@ -199,8 +214,13 @@ separately rather than automatically reversing accepted staff decisions.
 The migration preflight runs with read-only transactions and reports aggregate
 counts. Missing schema is skipped only for unapplied migrations; permission,
 timeout and drift errors block the release. It does not verify backup freshness.
-When Bedrock is enabled, CI verifies the task role before migrations; its deployer
-needs `iam:GetRole` and `iam:PassRole` on that exact role.
+For private S3 workbook assets, set both NAAC workbook variables and
+`ECS_TASK_ROLE_ARN` even when Bedrock is off. The task role needs
+`s3:GetObject` on the two exact asset keys. Use version-specific keys and
+grant `kms:Decrypt` only if the objects use a customer-managed encryption key.
+CI verifies the task role before migrations. Its deployer needs `iam:GetRole`
+and `iam:PassRole` on that role. Existing Bedrock deployments can still use
+`BEDROCK_TASK_ROLE_ARN` when the general task role setting is empty.
 
 Prepare scoped policies, workflow variables, migration hashes and rollback notes
 without changing AWS resources:

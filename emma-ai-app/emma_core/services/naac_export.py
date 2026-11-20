@@ -14,6 +14,7 @@ from openpyxl import load_workbook
 from openpyxl.cell.cell import MergedCell
 from openpyxl.packaging.core import DocumentProperties
 from openpyxl.utils.cell import range_boundaries
+from openpyxl.utils import get_column_letter
 from openpyxl.workbook.properties import CalcProperties
 
 from ..config import settings
@@ -27,6 +28,17 @@ from ._common import (
     operative_version,
     resolve_period,
 )
+
+
+def _all_rows(query) -> list[dict]:
+    page_size = 500
+    query = query.order("id")
+    rows = []
+    while True:
+        batch = query.range(len(rows), len(rows) + page_size - 1).execute().data
+        if not batch:
+            return rows
+        rows.extend(batch)
 
 
 def load_context(
@@ -47,6 +59,8 @@ def load_context(
     )
     if not home:
         raise ValueError("facility not found")
+    if home[0]["code"] != "NAAC":
+        raise ValueError("TAHDuty export is available only for NAAC")
     if version_id:
         versions = (
             client.table("roster_versions")
@@ -62,13 +76,11 @@ def load_context(
         version = operative_version(client, facility_id, period_id)
     if not version:
         raise ValueError("roster version not found")
-    shifts = (
+    shifts = _all_rows(
         client.table("shifts")
         .select("*")
         .eq("facility_id", facility_id)
         .eq("roster_version_id", version["id"])
-        .execute()
-        .data
     )
     assignments = [
         a
@@ -115,6 +127,12 @@ def _text(value):
     return "'" + value if value.startswith(("=", "+", "-", "@")) else value
 
 
+def _literal(cell, value):
+    cell.value = value
+    if isinstance(value, str):
+        cell.data_type = "s"
+
+
 def _asset(location: str) -> bytes:
     if location.startswith("s3://"):
         from urllib.parse import urlparse
@@ -132,11 +150,11 @@ def _asset(location: str) -> bytes:
     return Path(location).read_bytes()
 
 
-def summarize(context: dict) -> dict:
+def summarize(context: dict, *, provisional: bool = False) -> dict:
     start = as_date(context["period"]["period_start"])
     shifts = {s["id"]: s for s in context["shifts"]}
     definitions = {d["shift_type"]: d for d in context["definitions"]}
-    specs = load_shift_codes()
+    specs = {} if provisional else load_shift_codes()
     task_labels = defaultdict(list)
     for task in context["tasks"]:
         if task.get("suspended_by_leave"):
@@ -171,11 +189,11 @@ def summarize(context: dict) -> dict:
         if key in cells:
             raise ValueError("multiple shifts occupy the same staff/day cell")
         code = shift["shift_type"]
-        if code not in definitions or code not in specs:
+        if not provisional and (code not in definitions or code not in specs):
             raise ValueError(
                 f"Duty code {code!r} has no confirmed NAAC summary mapping"
             )
-        spec = specs[code]
+        spec = specs.get(code)
         labels = list(
             dict.fromkeys(
                 [*(assignment.get("tasks") or []), *task_labels[assignment["id"]]]
@@ -187,9 +205,12 @@ def summarize(context: dict) -> dict:
             "labels": labels,
             "paid_minutes": shift.get("paid_minutes")
             if shift.get("paid_minutes") is not None
-            else spec.paid_minutes,
+            else spec.paid_minutes if spec else None,
+            "meal_code": assignment.get("meal_code"),
         }
         total = totals[assignment["staff_id"]]
+        if provisional:
+            continue
         total["hours"] += cells[key]["paid_minutes"] / 60
         total["working_days"] += int(bool(shift.get("is_working")) and spec.is_working)
         total["rest_days"] += int(code == "O")
@@ -215,6 +236,25 @@ def summarize(context: dict) -> dict:
     return {"staff": people, "cells": cells, "totals": dict(totals), "start": start}
 
 
+def _write_hours(workbook, plan: dict, data: dict) -> None:
+    sheet = workbook[plan["sheet"]]
+    rows = plan["staff_rows"]
+    if len(rows) < len(data["staff"]):
+        raise ValueError("hours sheet has too few staff rows")
+    for person, row in zip(data["staff"], rows):
+        _literal(sheet.cell(row, 1), person["rank"])
+        _literal(sheet.cell(row, 2), person.get("name") or person.get("name_en"))
+        for week, first in enumerate(plan["week_start_columns"]):
+            for day in range(7):
+                cell = data["cells"].get((person["id"], week * 7 + day))
+                if cell and cell["paid_minutes"] is not None:
+                    sheet.cell(row, first + day, cell["paid_minutes"] / 60)
+            left = get_column_letter(first)
+            right = get_column_letter(first + 6)
+            span = f"{left}{row}:{right}{row}"
+            sheet.cell(row, first + 7, f'=IF(COUNT({span})=7,SUM({span}),"")')
+
+
 def render(context: dict, template: bytes, mapping: dict) -> bytes:
     """Keep approved layout and formulas; populate only declared input cells."""
     workbook = load_workbook(BytesIO(template), keep_links=False)
@@ -232,7 +272,8 @@ def render(context: dict, template: bytes, mapping: dict) -> bytes:
     weeks = mapping.get("weeks") or []
     if len(weeks) != 6 or len({w["sheet"] for w in weeks}) != 6:
         raise ValueError("mapping must identify six separate weekly roster sheets")
-    data = summarize(context)
+    provisional = mapping.get("provisional") is True
+    data = summarize(context, provisional=provisional)
     # Only explicitly approved labels/reference cells survive from a source file.
     preserve = defaultdict(set)
     for sheet, ranges in (mapping.get("preserve_ranges") or {}).items():
@@ -273,23 +314,35 @@ def render(context: dict, template: bytes, mapping: dict) -> bytes:
         if len(rows) < len(data["staff"]):
             raise ValueError("approved workbook has too few staff rows")
         for index, address in enumerate(plan["date_cells"]):
-            sheet[address] = data["start"] + timedelta(days=week_index * 7 + index)
-            sheet[address].number_format = "yyyy-mm-dd"
+            day = data["start"] + timedelta(days=week_index * 7 + index)
+            sheet[address] = day
+            sheet[address].number_format = plan.get("date_format", "yyyy-mm-dd")
+            if "weekday_cells" in plan:
+                sheet[plan["weekday_cells"][index]] = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")[day.weekday()]
         for person, row in zip(data["staff"], rows):
-            sheet.cell(
-                row,
-                plan["name_column"],
-                _text(person.get("name") or person.get("name_en")),
-            )
-            sheet.cell(row, plan["rank_column"], _text(person["rank"]))
+            name = person.get("name") or person.get("name_en")
+            if "task_columns" in plan:
+                _literal(sheet.cell(row, plan["name_column"]), name)
+                _literal(sheet.cell(row, plan["rank_column"]), person["rank"])
+            else:
+                sheet.cell(row, plan["name_column"], _text(name))
+                sheet.cell(row, plan["rank_column"], _text(person["rank"]))
             for day, column in enumerate(columns):
                 cell = data["cells"].get((person["id"], week_index * 7 + day))
                 target = sheet.cell(row, column)
-                target.value = _text(cell["text"]) if cell else None
+                if "task_columns" in plan:
+                    if cell:
+                        _literal(target, cell["code"])
+                        _literal(sheet.cell(row, plan["task_columns"][day]), " ".join(cell["labels"]) or None)
+                        _literal(sheet.cell(row, plan["meal_columns"][day]), cell["meal_code"])
+                else:
+                    target.value = _text(cell["text"]) if cell else None
                 if cell and cell["code"] in ("O", "O,"):
                     font = copy(target.font)
                     font.color = "FF0000" if cell["code"] == "O" else "000000"
                     target.font = font
+    if "recorded_hours" in mapping:
+        _write_hours(workbook, mapping["recorded_hours"], data)
     for plan in mapping.get("summaries") or []:
         sheet = workbook[plan["sheet"]]
         rows = plan.get("staff_rows") or []
@@ -329,7 +382,7 @@ def render(context: dict, template: bytes, mapping: dict) -> bytes:
         creator="Emma AI",
         lastModifiedBy="Emma AI",
         description="NAAC six week roster export",
-        title="NAAC TAHDuty"
+        title="NAAC TAHDuty PREVIEW" if provisional else "NAAC TAHDuty"
         if context["version"]["status"] == "published"
         else "DRAFT NAAC TAHDuty",
     )
@@ -374,4 +427,4 @@ def export(
             "status": context["version"]["status"],
         },
     )
-    return content, context["version"]["status"]
+    return content, "preview" if mapping.get("provisional") is True else context["version"]["status"]

@@ -137,7 +137,8 @@ def naac_tahduty(period_id: str = Query(...), version_id: str | None = Query(def
     from emma_core.services import naac_export
     content, status = naac_export.export(ctx.client, ctx.facility_id, period_id,
                                  version_id=version_id, profile_id=ctx.profile_id)
-    filename = "NAAC-TAHDuty.xlsx" if status == "published" else "NAAC-TAHDuty-DRAFT.xlsx"
+    suffix = {"published": "", "preview": "-PREVIEW"}.get(status, "-DRAFT")
+    filename = f"NAAC-TAHDuty{suffix}.xlsx"
     return Response(content, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     headers={"Content-Disposition": f'attachment; filename="{filename}"'})
 
