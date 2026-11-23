@@ -242,8 +242,9 @@ def _write_hours(workbook, plan: dict, data: dict) -> None:
     if len(rows) < len(data["staff"]):
         raise ValueError("hours sheet has too few staff rows")
     for person, row in zip(data["staff"], rows):
+        name = person.get("name") or person.get("name_en")
         _literal(sheet.cell(row, 1), person["rank"])
-        _literal(sheet.cell(row, 2), person.get("name") or person.get("name_en"))
+        _literal(sheet.cell(row, 2), name)
         for week, first in enumerate(plan["week_start_columns"]):
             for day in range(7):
                 cell = data["cells"].get((person["id"], week * 7 + day))
@@ -253,6 +254,17 @@ def _write_hours(workbook, plan: dict, data: dict) -> None:
             right = get_column_letter(first + 6)
             span = f"{left}{row}:{right}{row}"
             sheet.cell(row, first + 7, f'=IF(COUNT({span})=7,SUM({span}),"")')
+        summary = plan.get("print_summary")
+        if summary:
+            for column in summary["name_columns"]:
+                _literal(sheet.cell(row, column), name)
+            start = summary["week_start_column"]
+            for week, first in enumerate(plan["week_start_columns"]):
+                weekly_total = f"{get_column_letter(first + 7)}{row}"
+                sheet.cell(row, start + week, f'=IF(ISNUMBER({weekly_total}),{weekly_total},"")')
+            span = f"{get_column_letter(start)}{row}:{get_column_letter(start + 5)}{row}"
+            for column in summary["total_columns"]:
+                sheet.cell(row, column, f'=IF(COUNT({span})=6,SUM({span}),"")')
 
 
 def render(context: dict, template: bytes, mapping: dict) -> bytes:
@@ -307,6 +319,7 @@ def render(context: dict, template: bytes, mapping: dict) -> bytes:
         sheet = workbook[plan["sheet"]]
         rows = plan.get("staff_rows") or []
         columns = plan.get("day_columns") or []
+        weekdays = plan.get("weekday_labels", ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"))
         if len(columns) != 7 or len(plan.get("date_cells") or []) != 7:
             raise ValueError(
                 "each weekly mapping needs seven date cells and duty columns"
@@ -318,7 +331,7 @@ def render(context: dict, template: bytes, mapping: dict) -> bytes:
             sheet[address] = day
             sheet[address].number_format = plan.get("date_format", "yyyy-mm-dd")
             if "weekday_cells" in plan:
-                sheet[plan["weekday_cells"][index]] = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")[day.weekday()]
+                sheet[plan["weekday_cells"][index]] = weekdays[day.weekday()]
         for person, row in zip(data["staff"], rows):
             name = person.get("name") or person.get("name_en")
             if "task_columns" in plan:

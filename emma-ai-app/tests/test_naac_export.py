@@ -138,10 +138,14 @@ def test_provisional_layout_preserves_literal_codes_and_leaves_unknown_hours_bla
     mapping["summaries"] = []
     mapping["recorded_hours"] = {
         "sheet": "Summary1", "staff_rows": [3], "week_start_columns": [3, 12, 21, 30, 39, 48],
+        "print_summary": {"name_columns": [57, 67], "week_start_column": 68, "total_columns": [63, 74]},
     }
     for week in mapping["weeks"]:
         week["meal_columns"] = list(range(13, 20))
         week["task_columns"] = list(range(20, 27))
+        week["weekday_cells"] = [f"{col}1" for col in "DEFGHIJ"]
+        week["weekday_labels"] = list("一二三四五六日")
+        week["date_format"] = 'm"月"d"日"'
     context["shifts"][0].update(shift_type="=literal shift", paid_minutes=None)
     context["assignments"][0].update(meal_code=">1")
     context["tasks"][0].update(task_label="肌")
@@ -150,7 +154,12 @@ def test_provisional_layout_preserves_literal_codes_and_leaves_unknown_hours_bla
     assert week["D3"].value == "=literal shift" and week["D3"].data_type == "s"
     assert week["M3"].value == ">1"
     assert week["T3"].value == "肌"
+    assert week["D1"].value == "日" and week["E1"].value == "一"
+    assert week["D2"].number_format == 'm"月"d"日"'
     hours = workbook["Summary1"]
     assert [hours[f"{col}3"].value for col in "CDE"] == [None, 8, 0]
     assert hours["J3"].value == '=IF(COUNT(C3:I3)=7,SUM(C3:I3),"")'
+    assert hours["BO3"].value == "Synthetic RN"
+    assert hours["BP3"].value == '=IF(ISNUMBER(J3),J3,"")'
+    assert hours["BV3"].value == '=IF(COUNT(BP3:BU3)=6,SUM(BP3:BU3),"")'
     assert workbook.properties.title == "NAAC TAHDuty PREVIEW"

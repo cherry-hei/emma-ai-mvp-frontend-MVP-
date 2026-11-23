@@ -54,7 +54,7 @@ through the caller's facility before using a service client for trusted writes.
   thresholds and roster validation. Missing or ambiguous input needs clarification.
 - Bedrock supports configured Grok and Kimi profiles. The backend
   remains responsible for verdicts, eligibility and replacement ranking.
-- NAAC workbook export supports an 18-sheet preview based on the translated
+- NAAC workbook export supports an 18-sheet preview based on the original
   28 September to 8 November TAHDuty layout. Weekly grids keep meal, shift and
   task columns separate. Code and rule confirmation remains with NAAC.
 - Report previews ignore responses from an old period or signed-in identity.
@@ -86,18 +86,21 @@ python scripts/provision_tenant.py scripts/tenants/naac.json
 For the full workbook, configure `NAAC_WORKBOOK_TEMPLATE` and
 `NAAC_WORKBOOK_MAPPING`. Each accepts a local path or private `s3://` object.
 The application's task role needs read access to those objects. To prepare a
-private preview template and mapping from the two reviewed English workbooks,
+private preview template and mapping from the reviewed Chinese originals
+(the earlier reviewed English copies are also supported),
 run from `emma-ai-app`:
 
 ```powershell
-python scripts/prepare_naac_workbook.py "path/to/roster.xlsx" "path/to/confirmation.xlsx" ../docs/naac-m3-preview
+python scripts/prepare_naac_workbook.py "path/to/TAHDuty20260928-20261108 new2.xlsx" "path/to/NAAC 更期及工作代號確認表 (1).xlsx" ../docs/naac-m3-original-preview
 ```
 
 Point the two settings at the generated `tahduty-template.xlsx` and
 `tahduty-mapping.json`. The template keeps the source tabs and weekly grid
-layout without copying historical roster values, formulas or notes. The
-preview uses recorded paid minutes. Unknown hours and unavailable meal codes
-stay blank. The rule and reference sheets remain marked pending. The preview
+layout, merged cells and print areas without copying historical roster values,
+formulas or notes. The Chinese layout also fills the printed hours summary
+from recorded paid minutes. Unknown hours and unavailable meal codes stay blank.
+Broken formula cells stay empty and are listed on their sheets. The rule and
+reference sheets remain marked pending. The preview
 has room for 44 staff, based on the sample. Keep source and output files out
 of git.
 
